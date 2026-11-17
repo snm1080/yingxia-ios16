@@ -1,0 +1,6 @@
+// Used only by Scripts/build-ios-ipa.py. Device code is arm64; build-time
+// Swift macros run on this Mac and never need the other Mac architecture.
+ARCHS[sdk=iphoneos*] = arm64
+ARCHS[sdk=macosx*] = $(NATIVE_ARCH_ACTUAL)
+ONLY_ACTIVE_ARCH[sdk=macosx*] = YES
+EXCLUDED_ARCHS[sdk=macosx*] = $(LOCAL_EXCLUDED_HOST_ARCHS)

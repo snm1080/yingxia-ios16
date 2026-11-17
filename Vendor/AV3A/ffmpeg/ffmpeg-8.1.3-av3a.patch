@@ -1,0 +1,105 @@
+--- a/configure
++++ b/configure
+@@ -2002,6 +2002,7 @@
+ "
+ 
+ EXTERNAL_LIBRARY_NONFREE_LIST="
++    libtvav3a
+     decklink
+     libfdk_aac
+     libmpeghdec
+@@ -3765,6 +3766,9 @@
+ libcelt_decoder_deps="libcelt"
+ libcodec2_decoder_deps="libcodec2"
+ libcodec2_encoder_deps="libcodec2"
++libtvav3a_decoder_deps="libtvav3a"
++libtvav3a_decoder_select="av3a_parser"
++av3a_parser_deps="libtvav3a"
+ libdav1d_decoder_deps="libdav1d"
+ libdav1d_decoder_select="atsc_a53 dovi_rpudec"
+ libdavs2_decoder_deps="libdavs2"
+@@ -7257,6 +7261,7 @@
+                                die "ERROR: libcelt must be installed and version must be >= 0.11.0."; }
+ enabled libcaca           && require_pkg_config libcaca caca caca.h caca_create_canvas
+ enabled libcodec2         && require libcodec2 codec2/codec2.h codec2_create -lcodec2
++enabled libtvav3a         && require_pkg_config libtvav3a tvav3a tvav3a.h tv_av3a_create
+ enabled libdav1d          && require_pkg_config libdav1d "dav1d >= 1.0.0" "dav1d/dav1d.h" dav1d_version
+ enabled libdavs2          && require_pkg_config libdavs2 "davs2 >= 1.6.0" davs2.h davs2_decoder_open
+ enabled libdc1394         && require_pkg_config libdc1394 libdc1394-2 dc1394/dc1394.h dc1394_new
+--- a/libavcodec/codec_id.h
++++ b/libavcodec/codec_id.h
+@@ -566,6 +566,7 @@
+     AV_CODEC_ID_LC3,
+     AV_CODEC_ID_G728,
+     AV_CODEC_ID_AHX,
++    AV_CODEC_ID_AV3A, /* Local AVS3A audio edition; preserves stock codec IDs. */
+ 
+     /* subtitle codecs */
+     AV_CODEC_ID_FIRST_SUBTITLE = 0x17000,          ///< A dummy ID pointing at the start of subtitle codecs.
+--- a/libavcodec/codec_desc.c
++++ b/libavcodec/codec_desc.c
+@@ -3568,6 +3568,13 @@
+         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSY,
+     },
+ 
++    {
++        .id        = AV_CODEC_ID_AV3A,
++        .type      = AVMEDIA_TYPE_AUDIO,
++        .name      = "av3a",
++        .long_name = NULL_IF_CONFIG_SMALL("AVS3A Audio Vivid"),
++        .props     = AV_CODEC_PROP_LOSSY,
++    },
+     /* subtitle codecs */
+     {
+         .id        = AV_CODEC_ID_DVD_SUBTITLE,
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -787,6 +787,7 @@
+ extern const FFCodec ff_libcelt_decoder;
+ extern const FFCodec ff_libcodec2_encoder;
+ extern const FFCodec ff_libcodec2_decoder;
++extern const FFCodec ff_libtvav3a_decoder;
+ extern const FFCodec ff_libdav1d_decoder;
+ extern const FFCodec ff_libdavs2_decoder;
+ extern const FFCodec ff_libfdk_aac_encoder;
+--- a/libavcodec/parsers.c
++++ b/libavcodec/parsers.c
+@@ -37,6 +37,7 @@
+ FF_ENABLE_DEPRECATION_WARNINGS
+ #endif
+ 
++extern const FFCodecParser ff_av3a_parser;
+ extern const FFCodecParser ff_aac_parser;
+ extern const FFCodecParser ff_aac_latm_parser;
+ extern const FFCodecParser ff_ac3_parser;
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1174,6 +1174,8 @@
+ OBJS-$(CONFIG_LIBCELT_DECODER)            += libcelt_dec.o
+ OBJS-$(CONFIG_LIBCODEC2_DECODER)          += libcodec2.o
+ OBJS-$(CONFIG_LIBCODEC2_ENCODER)          += libcodec2.o
++OBJS-$(CONFIG_LIBTVAV3A_DECODER)             += libtvav3a.o
++OBJS-$(CONFIG_AV3A_PARSER)                   += av3a_parser.o
+ OBJS-$(CONFIG_LIBDAV1D_DECODER)           += libdav1d.o av1_parse.o
+ OBJS-$(CONFIG_LIBDAVS2_DECODER)           += libdavs2.o
+ OBJS-$(CONFIG_LIBFDK_AAC_DECODER)         += libfdk-aacdec.o
+--- a/libavformat/mpegts.c
++++ b/libavformat/mpegts.c
+@@ -837,6 +837,7 @@
+     { STREAM_TYPE_VIDEO_DIRAC,    AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC      },
+     { STREAM_TYPE_VIDEO_AVS2,     AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_AVS2       },
+     { STREAM_TYPE_VIDEO_AVS3,     AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_AVS3       },
++    { 0xd5,                       AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AV3A       },
+     { STREAM_TYPE_VIDEO_VC1,      AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VC1        },
+     { 0 },
+ };
+--- a/libavformat/isom_tags.c
++++ b/libavformat/isom_tags.c
+@@ -309,6 +309,7 @@
+ };
+ 
+ const AVCodecTag ff_codec_movaudio_tags[] = {
++    { AV_CODEC_ID_AV3A,            MKTAG('a', 'v', '3', 'a') },
+     { AV_CODEC_ID_AAC,             MKTAG('m', 'p', '4', 'a') },
+     { AV_CODEC_ID_AC3,             MKTAG('a', 'c', '-', '3') }, /* ETSI TS 102 366 Annex F */
+     { AV_CODEC_ID_AC3,             MKTAG('s', 'a', 'c', '3') }, /* Nero Recode */

@@ -1,0 +1,31 @@
+// Configure the placeholder deployment resources for your Cloudflare account before deployment.
+// Receives the app's error reports (Sources/TVCore/ErrorReports.swift) and keeps them in D1 for 30 days,
+// and posts its feedback (Sources/TVCore/Feedback.swift) as GitHub issues.
+// Deploy: ../../website/node_modules/.bin/wrangler deploy (from this folder). Read: Scripts/error-reports.py.
+{
+  "$schema": "../../website/node_modules/wrangler/config-schema.json",
+  "name": "yingxia-error-reports",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "routes": [{ "pattern": "reports.example.com", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [{ "binding": "DB", "database_name": "yingxia-reports", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  // Per IP address (kept in memory only). An app sends reports at most once every six hours, and asks
+  // for its feedback's replies (/v1/feedback/replies) when Send Feedback opens.
+  "ratelimits": [
+    { "name": "LIMITER", "namespace_id": "YOUR_REPORT_LIMITER_NAMESPACE_ID", "simple": { "limit": 10, "period": 60 } },
+    // Feedback is typed by hand: two a minute is plenty (FEEDBACK_PER_MINUTE in src/index.ts, which also caps each day).
+    { "name": "FEEDBACK_LIMITER", "namespace_id": "YOUR_FEEDBACK_LIMITER_NAMESPACE_ID", "simple": { "limit": 2, "period": 60 } },
+    // Pictures, videos and the log added to feedback, one request each (UPLOADS_PER_MINUTE in src/index.ts).
+    { "name": "UPLOAD_LIMITER", "namespace_id": "YOUR_UPLOAD_LIMITER_NAMESPACE_ID", "simple": { "limit": 10, "period": 60 } }
+  ],
+  // Feedback's pictures, videos and logs (/v1/feedback/uploads), next to the releases on downloads.example.com:
+  // yingxia/feedback/ (public, linked from the issues) and yingxia/feedback-logs/ (random names, deleted after 30 days).
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "YOUR_FEEDBACK_BUCKET_NAME" }],
+  // Feedback becomes an issue here. The token is a secret: wrangler secret put GITHUB_TOKEN.
+  "vars": { "FILES_URL": "https://downloads.example.com", "FEEDBACK_REPO": "YOUR_GITHUB_OWNER/YOUR_GITHUB_REPOSITORY" },
+  // Daily: drop reports older than 30 days, and uploads no feedback took within a day.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": false }
+}

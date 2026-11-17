@@ -1,0 +1,85 @@
+#if !os(tvOS)
+import SwiftUI
+import Perception
+import TVCore
+
+/// Catalog-only actions alongside the existing native transport controls. The episodes have their own button
+/// (`PlayerEpisodesButton`, #524).
+struct CatalogPlaybackActions: View {
+    let channel: Channel
+    let session: PlaybackSession
+    @Environment(Store.self) private var store
+    @State private var showsSkip = false
+    @State private var showsDanmaku = false
+
+    var body: some View {
+        WithPerceptionTracking {
+            if channel.historyContext != nil {
+                Menu {
+                    WithPerceptionTracking {
+                        if store.catalog(for: channel) != nil {
+                            Toggle(L10n.text("Auto-play next episode"), isOn: Binding(
+                                get: { store.autoPlayNext }, set: { store.autoPlayNext = $0 }))
+                        }
+                        Toggle(L10n.text("Automatically skip intro and outro"), isOn: Binding(
+                            get: { session.skipSettings.enabled },
+                            set: { value in
+                                var settings = session.skipSettings
+                                settings.enabled = value
+                                session.applySkipSettings(settings)
+                            }))
+                        Button(L10n.text("Skip intro / outro")) { showsSkip = true }
+                            .accessibilityIdentifier("player.skip")
+                        if channel.historyContext?.sourceKey != Bilibili.siteKey {
+                            Button(L10n.text("Danmaku")) { showsDanmaku = true }
+                                .accessibilityIdentifier("player.danmaku")
+                        }
+                        if let error = store.episodeError { Text(error) }
+                    }
+                } label: {
+                    WithPerceptionTracking {
+                        #if os(macOS)
+                        Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium))
+                            .frame(width: 34, height: 34).contentShape(Circle())
+                        #else
+                        Image(systemName: "ellipsis.circle").font(.headline).frame(width: 22, height: 22)
+                        #endif
+                    }
+                }
+                #if os(macOS)
+                // The same 34 pt glass circle as the window's other buttons; a bordered menu drew a wider capsule, and a
+                // borderless one drew its icon at the leading edge of the circle instead of the centre.
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                .fixedSize()
+                .glassSurface(.regular.interactive(), in: Circle())
+                .help(L10n.text("Playback Options"))
+                #else
+                .chromeButton()
+                #endif
+                .accessibilityLabel(L10n.text("Playback Options"))
+                .accessibilityIdentifier("player.catalogOptions")
+                .sheet(isPresented: $showsSkip) { WithPerceptionTracking { EpisodeSkipSettingsView(session: session).playerSheet() } }
+                .sheet(isPresented: $showsDanmaku) {
+                    WithPerceptionTracking {
+                        CatalogDanmakuSettingsView(model: session.catalogDanmaku, channelName: channel.name).playerSheet()
+                    }
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    /// A settings sheet over the player, dark like the player. A player at the top of a page makes only its own views
+    /// dark (`PlayerScheme`); before iOS 26 a sheet it opens inherits that for its text but keeps the phone's light
+    /// background, so on a phone in light mode the sheet showed white text on a white form (#533).
+    /// The Mac's sheets keep the window's appearance, as before.
+    @ViewBuilder func playerSheet() -> some View {
+        #if os(iOS)
+        preferredColorScheme(.dark)
+        #else
+        self
+        #endif
+    }
+}
+#endif

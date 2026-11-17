@@ -1,0 +1,90 @@
+name: build-ipa
+
+# Reproduces the author's local pipeline (README.md):
+#   python3 Scripts/prepare-ios-dependencies.py --av3a-archive <pinned archive>
+#   python3 Scripts/build-ios-ipa.py --build-number 1
+# and publishes the unsigned IPA to the fixed `latest` release.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Build number passed to build-ios-ipa.py"
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16.x if available (maintainer env is Xcode 16.1 / SDK 18.1)
+        run: |
+          ls -d /Applications/Xcode_*.app || true
+          XC="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "$XC" ]; then
+            echo "Selecting $XC"
+            sudo xcode-select -s "$XC"
+          else
+            echo "No Xcode 16.x found; keeping the runner default"
+          fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          df -h /
+
+      - name: Install CLI tools (per README)
+        run: brew install python xcodegen ripgrep pkgconf
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: yingxia-build-${{ runner.os }}-${{ hashFiles('Scripts/**', 'Vendor/dependency-downloads.json', 'Vendor/AV3A/SOURCE-INVENTORY.json', 'Package.resolved', 'project.yml') }}
+          restore-keys: |
+            yingxia-build-${{ runner.os }}-
+
+      - name: Fetch pinned AV3A archive (URL and SHA-256 recorded in Vendor/AV3A/UPSTREAM.md)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/av3a.tar.gz" \
+            "https://codeload.github.com/Dreamello/av3a/tar.gz/b44b5321862385a06ad6c427de5791e18f16c16b"
+          echo "036d238f0e2bbeb43107a25e74dc5ab77b245aa5e8a8d06385df5def2f28dea0  $RUNNER_TEMP/av3a.tar.gz" | shasum -a 256 -c -
+
+      - name: Prepare dependencies
+        run: python3 Scripts/prepare-ios-dependencies.py --av3a-archive "$RUNNER_TEMP/av3a.tar.gz"
+
+      - name: Build unsigned IPA
+        run: |
+          BN="${{ github.event.inputs.build_number }}"
+          BN="${BN:-1}"
+          python3 Scripts/build-ios-ipa.py --build-number "$BN"
+          ls -lh artifacts/latest/
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yingxia-unsigned-ipa
+          path: artifacts/latest/*.ipa
+          if-no-files-found: error
+
+      - name: Publish to fixed latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IPA="$(ls artifacts/latest/*.ipa | head -1)"
+          echo "Publishing $IPA"
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest "$IPA" \
+            --title "Yingxia iOS 16.2 unsigned IPA (latest)" \
+            --notes "Unsigned IPA built by GitHub Actions from this repository (author pipeline: prepare-ios-dependencies.py + build-ios-ipa.py). Install requires your own signing (e.g. TrollStore)."

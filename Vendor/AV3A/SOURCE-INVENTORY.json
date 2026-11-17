@@ -1,0 +1,242 @@
+{
+  "repository": "https://github.com/Dreamello/av3a",
+  "commit": "b44b5321862385a06ad6c427de5791e18f16c16b",
+  "archive_sha256": "036d238f0e2bbeb43107a25e74dc5ab77b245aa5e8a8d06385df5def2f28dea0",
+  "files": [
+    {
+      "path": "reference/common/Instruction.h",
+      "upstream_path": "av3adecoder/libavs3_common/Instruction.h",
+      "sha256": "686864fbffc9344827014fd81eb44a4962e5709f3aeb99cb0639b419dc336170"
+    },
+    {
+      "path": "reference/common/activation_func.c",
+      "upstream_path": "av3adecoder/libavs3_common/activation_func.c",
+      "sha256": "950dbd90515031504f75cfe8e071556fcf43ebb0ea3a204457f4e5899a7f8093"
+    },
+    {
+      "path": "reference/common/avs3_cnst_com.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_cnst_com.h",
+      "sha256": "b9014588b4e75b366138f64d13270a0eefd395262c413fd18411dab604184f03"
+    },
+    {
+      "path": "reference/common/avs3_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_com.c",
+      "sha256": "1dfda814d7ad399670c3702204a6b1a07b05148dc5a406477dae0934bacd37a1"
+    },
+    {
+      "path": "reference/common/avs3_const_meta.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_const_meta.h",
+      "sha256": "a6565d0d5051eb70a9761990fa11428841f4e1981512aeff6778dafce7ccebd6"
+    },
+    {
+      "path": "reference/common/avs3_dec_lib.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_dec_lib.h",
+      "sha256": "a4e9806198d9bd9da5fc3aa6ed5bbe1df12e8abea779c8706ec9236d62c1aa54"
+    },
+    {
+      "path": "reference/common/avs3_hoa_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_hoa_com.c",
+      "sha256": "40c601747a950d1b710e4c08e3245946509396b343964516f8f98340ee4d5dec"
+    },
+    {
+      "path": "reference/common/avs3_mc_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_mc_com.c",
+      "sha256": "e288b731f78ac75e79d5300eebf3658e3b2a8318a1e1664c12688ccf5cdf4093"
+    },
+    {
+      "path": "reference/common/avs3_options.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_options.h",
+      "sha256": "141c7eb2d01d8669b6c5ed93bd2fe42b379c60973ae85a8321b4e3a5ef254f5a"
+    },
+    {
+      "path": "reference/common/avs3_prot_com.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_prot_com.h",
+      "sha256": "e22d49114f2c06b90674e040eeaac7ab97dd07370ba50014a184a659fd4ee4c8"
+    },
+    {
+      "path": "reference/common/avs3_rom_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_rom_com.c",
+      "sha256": "f905a6e7a9ac0074d12750eb6c5b4d0133e614bbc0ec0d824d79e48d8cd17e5f"
+    },
+    {
+      "path": "reference/common/avs3_rom_com.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_rom_com.h",
+      "sha256": "b97181aedcfcd3119b363b3188368824c21d52e7f26cf8a90469666a83652a5c"
+    },
+    {
+      "path": "reference/common/avs3_stat_com.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_stat_com.h",
+      "sha256": "59ca631616c50ff927851055fa107acf8c602d4fb61afdfc8834c4e72f0d3c7b"
+    },
+    {
+      "path": "reference/common/avs3_stat_meta.h",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_stat_meta.h",
+      "sha256": "13c79c4996f24760e57bcb529995921d5647e6b72fa65083821c0ae03d643dca"
+    },
+    {
+      "path": "reference/common/avs3_stereo_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/avs3_stereo_com.c",
+      "sha256": "fe2b4cd3777b86d410d9aad1c0e6c41c039aa67c85940d578cd7a9534a43f91c"
+    },
+    {
+      "path": "reference/common/bwe_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/bwe_com.c",
+      "sha256": "249d890a1a771886c778f3a93ab9fed60c15725b7020b0131b4292ae38cafbf3"
+    },
+    {
+      "path": "reference/common/bwe_dec.c",
+      "upstream_path": "av3adecoder/libavs3_common/bwe_dec.c",
+      "sha256": "e90c168a3c2d065dc1f025e88ef658713f11093e803b8899d866be43fc2f7da3"
+    },
+    {
+      "path": "reference/common/cnn_layer.c",
+      "upstream_path": "av3adecoder/libavs3_common/cnn_layer.c",
+      "sha256": "b377c4ab5a6c67a255a62e11652016cd06ca6ada188298b03229f11c2b180775"
+    },
+    {
+      "path": "reference/common/fd_spectrum_shaping_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/fd_spectrum_shaping_com.c",
+      "sha256": "c019a79cec6f62218fc7188d764db628f2e9ecb29f991e6245039f8c91af4759"
+    },
+    {
+      "path": "reference/common/fd_spectrum_shaping_dec.c",
+      "upstream_path": "av3adecoder/libavs3_common/fd_spectrum_shaping_dec.c",
+      "sha256": "790709aa52daaa15140b38e73f32cbc196fa41857f499f0a35ab799cafc7cac0"
+    },
+    {
+      "path": "reference/common/fft.c",
+      "upstream_path": "av3adecoder/libavs3_common/fft.c",
+      "sha256": "a37fdebac8b54d03d33d57af22e82cfdcd73c0eaa7bb06f74ae48bd6838c3a7d"
+    },
+    {
+      "path": "reference/common/latent_quant.c",
+      "upstream_path": "av3adecoder/libavs3_common/latent_quant.c",
+      "sha256": "38de64553c4531a5475872dd38744a9e7254c10defa57e75b29ac4098cb59413"
+    },
+    {
+      "path": "reference/common/load_free_model.c",
+      "upstream_path": "av3adecoder/libavs3_common/load_free_model.c",
+      "sha256": "bc7ee243b5748b5e664a0cab959215d1d13b25a4fc05f568013d5a214be19338"
+    },
+    {
+      "path": "reference/common/lsf_dec.c",
+      "upstream_path": "av3adecoder/libavs3_common/lsf_dec.c",
+      "sha256": "8f0d5cfb6a1a6069c04971127f8824ba4b7bd0dc3bd0879fe7c410b7b216e521"
+    },
+    {
+      "path": "reference/common/mcr_com.c",
+      "upstream_path": "av3adecoder/libavs3_common/mcr_com.c",
+      "sha256": "7405a5f339e42179771dc4e99814d0bb264635f3ee39a95b07f24f9cc53eb24c"
+    },
+    {
+      "path": "reference/common/mdct.c",
+      "upstream_path": "av3adecoder/libavs3_common/mdct.c",
+      "sha256": "907193cf76876f0fd2ef64348ccadd6aa9e806de80ee8a8feee176bc28ae7f69"
+    },
+    {
+      "path": "reference/common/mdct_dequant_decode.c",
+      "upstream_path": "av3adecoder/libavs3_common/mdct_dequant_decode.c",
+      "sha256": "1cdf3207ed52597481b3758499022872d6b41f3796d84f5158ac1da785ea5650"
+    },
+    {
+      "path": "reference/common/mdct_quant_encode.c",
+      "upstream_path": "av3adecoder/libavs3_common/mdct_quant_encode.c",
+      "sha256": "07a727e69aaa0c68f0e1fc5905db44e1823529303a37f3feaf12c1984bbba712"
+    },
+    {
+      "path": "reference/common/model.h",
+      "upstream_path": "av3adecoder/libavs3_common/model.h",
+      "sha256": "6e536aadeca4abccca2ea53c72a731cd59bfe72e7706d810993edede4989141d"
+    },
+    {
+      "path": "reference/common/noise_filling.c",
+      "upstream_path": "av3adecoder/libavs3_common/noise_filling.c",
+      "sha256": "298c12680b8ace6efa87aadfa5560ef6fcf8028c6c21b0321e5f340442736774"
+    },
+    {
+      "path": "reference/common/range_coder.c",
+      "upstream_path": "av3adecoder/libavs3_common/range_coder.c",
+      "sha256": "106f4fa75a69b2d930022dfc51e4ae81bff14174c66ea6a0f14a32ed7cc392e5"
+    },
+    {
+      "path": "reference/common/tns.c",
+      "upstream_path": "av3adecoder/libavs3_common/tns.c",
+      "sha256": "c52e122899aad54514d7a9065b220cdc1fe159a86564b82f858de2c43d5fe159"
+    },
+    {
+      "path": "reference/common/tools.c",
+      "upstream_path": "av3adecoder/libavs3_common/tools.c",
+      "sha256": "76007e55e1bf338a7354caef254dd11bf65cdb6fff70e16624dfb6ea567579eb"
+    },
+    {
+      "path": "reference/decoder/avs3_bitstream_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_bitstream_dec.c",
+      "sha256": "4e335afebc353340caceae7d47590e4acbd7b4f403d43a243c96133d743e08ec"
+    },
+    {
+      "path": "reference/decoder/avs3_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_dec.c",
+      "sha256": "0facd95feb60cea51d2c25f32a2c57dad540e405e0efe15fea74c78eea977c2b"
+    },
+    {
+      "path": "reference/decoder/avs3_hoa_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_hoa_dec.c",
+      "sha256": "8cce479d2c121264c3cf80a12b8aa0aeaa60beef7c6e0a67e6a09c795cc6bb37"
+    },
+    {
+      "path": "reference/decoder/avs3_init_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_init_dec.c",
+      "sha256": "93bb440af4b0488697367addcb29f3b1d7ad7fd184362d814554e9ba58a784d7"
+    },
+    {
+      "path": "reference/decoder/avs3_mc_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_mc_dec.c",
+      "sha256": "c646f812991935550d4507bb4c7ae1ea93f909de33a32d0405f3d9822cbff9eb"
+    },
+    {
+      "path": "reference/decoder/avs3_metadata_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_metadata_dec.c",
+      "sha256": "6f9e7617cfd05deff17a6dd24685e85994d0c3facb69bf8789f5ec6cd7653e28"
+    },
+    {
+      "path": "reference/decoder/avs3_mix_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_mix_dec.c",
+      "sha256": "7454bd34ad8d7d02b90d87458805101418eb02ab302b1d7775a8744f09e7ce1a"
+    },
+    {
+      "path": "reference/decoder/avs3_mono_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_mono_dec.c",
+      "sha256": "740ee89d45a99e1c58dcd2b09e10fcd9daaa9aaac247fb0265a24b412f2c38d6"
+    },
+    {
+      "path": "reference/decoder/avs3_stereo_dec.c",
+      "upstream_path": "av3adecoder/avs3Decoder/src/avs3_stereo_dec.c",
+      "sha256": "36e1865e66a8054ed53a961ba1b4463c85cfbbf8516cbf9c59ebd480eab2baf6"
+    },
+    {
+      "path": "reference/decoder/Version.h",
+      "upstream_path": "av3adecoder/avs3Decoder/include/Version.h",
+      "sha256": "3eba3b3d1061b7b7bf516740a2c60bf2bf47b384c7ad09629e9477c40c23b77e"
+    },
+    {
+      "path": "reference/decoder/avs3_prot_dec.h",
+      "upstream_path": "av3adecoder/avs3Decoder/include/avs3_prot_dec.h",
+      "sha256": "ffeb437d8bf6505954cb987a3e7d9a6ec072be96b69a59f02d4228ae9c39cb43"
+    },
+    {
+      "path": "reference/decoder/avs3_stat_dec.h",
+      "upstream_path": "av3adecoder/avs3Decoder/include/avs3_stat_dec.h",
+      "sha256": "377a61182753c381d216daeb0d55e4a06e99fed27209ecf6d3a3ab6b79e8fc43"
+    },
+    {
+      "path": "reference/common/avs3_debug.c",
+      "upstream_path": "av3adecoder/libavs3_debug/avs3_debug.c",
+      "sha256": "f318cef814b2d05fedc63e1de25408488ef134f3950da2f9e494d6bf7a0652e9"
+    },
+    {
+      "path": "reference/common/avs3_debug.h",
+      "upstream_path": "av3adecoder/libavs3_debug/avs3_debug.h",
+      "sha256": "cea5d76c62dbca0267688caf849a672d3e9ae24b651a6675220579669cc35e5e"
+    }
+  ]
+}

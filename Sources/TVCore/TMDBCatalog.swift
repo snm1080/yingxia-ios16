@@ -1,0 +1,95 @@
+import Foundation
+
+/// TMDB catalogs served by the same credential-holding Worker as title matching.
+public enum TMDBCatalog {
+    public enum Feed: String, Codable, CaseIterable, Sendable {
+        case trending, movies, television, onTheAir, nowPlaying, upcoming, topMovies, topTelevision, animation, chinese, korean, variety
+        case family, kids, netflix, disney, appleTV, hbo, warner, universal, paramount, sony
+        /// Discover's featured carousel: IMDb's popular charts mixed with Douban's hot lists, as TMDB titles (#631).
+        case featured
+    }
+
+    public struct Item: Codable, Hashable, Sendable, Identifiable {
+        public let id: Int
+        public let mediaType: TMDBMatch.MediaType
+        public let name: String
+        public let originalName: String
+        public let year: Int?
+        public let date: String?
+        public let overview: String
+        public let poster: URL?
+        public let backdrop: URL?
+        public let rating: Double?
+        public let genreIDs: [Int]
+        public var key: String { "\(mediaType.rawValue):\(id)" }
+
+        public init(id: Int, mediaType: TMDBMatch.MediaType, name: String, originalName: String, year: Int?, overview: String,
+                    poster: URL?, backdrop: URL?, rating: Double?, genreIDs: [Int], date: String? = nil) {
+            self.id = id; self.mediaType = mediaType; self.name = name; self.originalName = originalName
+            self.year = year; self.overview = overview; self.poster = poster; self.backdrop = backdrop
+            self.rating = rating; self.genreIDs = genreIDs; self.date = date
+        }
+    }
+
+    public struct Page: Codable, Sendable {
+        public let items: [Item]
+        public let page: Int
+        public let totalPages: Int
+        /// Local fetch time survives reuse by a new Home model. It is not part of the remote protocol.
+        public var fetchedAt: Date? = nil
+        private enum CodingKeys: String, CodingKey { case items, page, totalPages }
+    }
+
+    public struct Person: Codable, Sendable, Identifiable {
+        public let id: Int
+        public let name: String
+        public let profile: URL?
+        public let works: [Item]
+    }
+
+    public struct Brand: Codable, Sendable, Identifiable {
+        public let feed: Feed
+        public let name: String
+        public let logo: URL?
+        public var id: Feed { feed }
+    }
+
+    public struct Collections: Codable, Sendable {
+        public let people: [Person]
+        public let networks: [Brand]
+        public let companies: [Brand]
+    }
+
+    public static func collections(language: String = TMDBMatch.language, session: URLSession = .shared) async throws -> Collections {
+        if let custom = TMDBServiceSettings.load().custom {
+            return try await CustomTMDBService.collections(language: language, config: custom, session: session)
+        }
+        var parts = URLComponents(url: TMDBMatch.base.appending(path: "catalog/collections"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "language", value: language)]
+        let (data, response) = try await session.data(from: parts.url!)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode(Collections.self, from: data)
+    }
+
+    public static func page(_ feed: Feed, page: Int = 1, language: String = TMDBMatch.language, session: URLSession = .shared, refresh: Bool = false) async throws -> Page {
+        if feed == .featured { return try await FeaturedCatalog.page(language: language, session: session, refresh: refresh) }
+        if let custom = TMDBServiceSettings.load().custom {
+            return try await CustomTMDBService.page(feed, page: page, language: language, config: custom, session: session, refresh: refresh)
+        }
+        return try await builtinPage(feed, page: page, language: language, session: session, refresh: refresh)
+    }
+
+    static func builtinPage(_ feed: Feed, page: Int, language: String, session: URLSession, refresh: Bool = false) async throws -> Page {
+        var parts = URLComponents(url: TMDBMatch.base.appending(path: "catalog"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "feed", value: feed.rawValue), URLQueryItem(name: "page", value: String(page)),
+                            URLQueryItem(name: "language", value: language)]
+        var request = URLRequest(url: parts.url!, timeoutInterval: feed == .featured ? 8 : 30)
+        request.cachePolicy = refresh ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
+        if refresh { request.setValue("no-cache", forHTTPHeaderField: "Cache-Control") }
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse, response.statusCode == 200 else {
+            throw TMDBMatch.Failure(code: "http", message: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        }
+        return try JSONDecoder().decode(Page.self, from: data)
+    }
+}

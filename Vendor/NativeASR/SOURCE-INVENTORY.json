@@ -1,0 +1,36 @@
+{
+  "sherpaVersion": "1.13.4",
+  "onnxRuntimeVersion": "1.27.0",
+  "files": [
+    {
+      "path": "sources/sherpa-onnx-v1.13.4-ios-no-tts.tar.bz2",
+      "sha256": "dcc5f1748144e88bdb17dfb7b9e5d06d194f478cdb6047adc133f9480c473b1a",
+      "bytes": 41692409,
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-ios-no-tts.tar.bz2"
+    },
+    {
+      "path": "sources/sherpa-onnx-v1.13.4-source.tar.gz",
+      "sha256": "3243cb386d3a4ac87596adf7d2c89fddf23e2948b154942b987b4d91c1fee295",
+      "bytes": 9840376,
+      "url": "https://codeload.github.com/k2-fsa/sherpa-onnx/tar.gz/refs/tags/v1.13.4"
+    },
+    {
+      "path": "sources/openfst-1.8.5-2026-04-11.tar.gz",
+      "sha256": "57fbc4b950ae81b1a0e1e298af15652da968a6723a592b7874e9b4027a80a5b4",
+      "bytes": 1501059,
+      "url": "https://codeload.github.com/csukuangfj/openfst/tar.gz/refs/tags/v1.8.5-2026-04-11"
+    },
+    {
+      "path": "sources/kaldifst-1.8.0.tar.gz",
+      "sha256": "3f247b7e5a2409071202f5e2bc6200060f66728c0a3443c03923ad2723e040b3",
+      "bytes": 172147,
+      "url": "https://codeload.github.com/k2-fsa/kaldifst/tar.gz/refs/tags/v1.8.0"
+    },
+    {
+      "path": "sources/eigen-5.0.1.tar.gz",
+      "sha256": "e9c326dc8c05cd1e044c71f30f1b2e34a6161a3b6ecf445d56b53ff1669e3dec",
+      "bytes": 2967272,
+      "url": "https://gitlab.com/libeigen/eigen/-/archive/5.0.1/eigen-5.0.1.tar.gz"
+    }
+  ]
+}

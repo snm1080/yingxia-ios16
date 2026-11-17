@@ -1,0 +1,217 @@
+{
+  "date": "2026-11-08",
+  "purpose": "Functional migration from MacCat; portable Node builtins only, no desktop processes",
+  "files": [
+    {
+      "file": "lib/ai-subtitles.mjs",
+      "source": "ioscat/runtime/lib/ai-subtitles.mjs",
+      "sha256": "bc00dd0f5de0fc31b3329fe1fb591ef8990745275adea35acf087408be7fa5a2"
+    },
+    {
+      "file": "lib/cache-file-lock.mjs",
+      "source": "ioscat/runtime/lib/cache-file-lock.mjs",
+      "sha256": "6907b9df5f239f468edeb8ec8304d53b96e9caf00234cc2272b120820dc83f3e"
+    },
+    {
+      "file": "lib/catalog.mjs",
+      "source": "ioscat/runtime/lib/catalog.mjs",
+      "sha256": "c1c301bf1100f71eb98c4e2ae9eeb08c40c0bc1453ec99b9752ec385e12eb535"
+    },
+    {
+      "file": "lib/danmaku-bas.mjs",
+      "source": "ioscat/runtime/lib/danmaku-bas.mjs",
+      "sha256": "ef067b57e8d1c583f919d2b78d14e50e1c5e682d0899b41ef9419e974cc570d7"
+    },
+    {
+      "file": "lib/danmaku-cache.mjs",
+      "source": "ioscat/runtime/lib/danmaku-cache.mjs",
+      "sha256": "d114eabdcc31f67a221093138f334f56800fc93f5bb1f092498b9534755fd4d4"
+    },
+    {
+      "file": "lib/danmaku-effects.mjs",
+      "source": "ioscat/runtime/lib/danmaku-effects.mjs",
+      "sha256": "9f2b155ef4a6d0c9a0d4273c511b26bb40dd61a4b3d9bc81960e63eb95294bb8"
+    },
+    {
+      "file": "lib/danmaku-index.mjs",
+      "source": "ioscat/runtime/lib/danmaku-index.mjs",
+      "sha256": "d6114a81546e71f581ae3895d9ce1395daa7991c050384e7d3f84019da1ec0fa"
+    },
+    {
+      "file": "lib/danmaku.mjs",
+      "source": "ioscat/runtime/lib/danmaku.mjs",
+      "sha256": "97ebc8acd6b70ca21d50ecc2681f593af452417b6c76dfda6e3872b1c44f2255"
+    },
+    {
+      "file": "lib/episode-numbers.mjs",
+      "source": "ioscat/runtime/lib/episode-numbers.mjs",
+      "sha256": "5bc9408e5cec0570f71a1154711a3c49b2ef6001b324b54ada3caa0536516c6a"
+    },
+    {
+      "file": "lib/errors.mjs",
+      "source": "ioscat/runtime/lib/errors.mjs",
+      "sha256": "6294b2313d464ecad4851c19b4e98b4f03d320972b1538e12237b9eead06e543"
+    },
+    {
+      "file": "lib/files.mjs",
+      "source": "ioscat/runtime/lib/files.mjs",
+      "sha256": "d35f243bb4196b91272e4aec3917af30266367dac7f453a1d00995cf5beb93a8"
+    },
+    {
+      "file": "lib/hls-ad-markers.mjs",
+      "source": "ioscat/runtime/lib/hls-ad-markers.mjs",
+      "sha256": "35642cf82c49e569474943500845a074d989c521f0cdeef3fadca3d4b6090e7c"
+    },
+    {
+      "file": "lib/hls-ad-splices.mjs",
+      "source": "ioscat/runtime/lib/hls-ad-splices.mjs",
+      "sha256": "be3931de0ee99d43c9ae739998e0570cef6d956053e66adab7515bd0d90f185c"
+    },
+    {
+      "file": "lib/hls-cleaner.mjs",
+      "source": "ioscat/runtime/lib/hls-cleaner.mjs",
+      "sha256": "3ca3cf027e630eafb938e20727390a56df0dc1d7f787f4d3c9fedbc71fa26250"
+    },
+    {
+      "file": "lib/hls-proxy.mjs",
+      "source": "ioscat/runtime/lib/hls-proxy.mjs",
+      "sha256": "6d0aa1886fc33884b22989d3e5d64cc2487f3b695566a60a349aa3ba1abe3fe8"
+    },
+    {
+      "file": "lib/home-library.mjs",
+      "source": "ioscat/runtime/lib/home-library.mjs",
+      "sha256": "22d0e460ce4293e06e3dca2ade10c61ade45e6524eea2560c4c92e2cf22a30bb"
+    },
+    {
+      "file": "lib/http.mjs",
+      "source": "ioscat/runtime/lib/http.mjs",
+      "sha256": "69b7348bff77dd51a8db0c90240ff45e7c21cff926265d3f4d44092080722a34"
+    },
+    {
+      "file": "lib/live-danmaku-config.mjs",
+      "source": "ioscat/runtime/lib/live-danmaku-config.mjs",
+      "sha256": "fffdf801c0773922751cdbda155ba884e1296ca970f7d00337d5e36d7c0f1420"
+    },
+    {
+      "file": "lib/live-danmaku-douyin.mjs",
+      "source": "ioscat/runtime/lib/live-danmaku-douyin.mjs",
+      "sha256": "fc57c38a443a7a7e33cf5137c22a2aa3378ed367b1c2778e143ab4939d015595"
+    },
+    {
+      "file": "lib/live-danmaku-protocols.mjs",
+      "source": "ioscat/runtime/lib/live-danmaku-protocols.mjs",
+      "sha256": "cbe5491ec546698ed69595bf06134624c80284713f39e8683869ffb07d9d258c"
+    },
+    {
+      "file": "lib/live-danmaku.mjs",
+      "source": "ioscat/runtime/lib/live-danmaku.mjs",
+      "sha256": "59b8cf4d1ee0435a4cb44b2b20add82a5389b3175dfc53af403d565dcc3a8435"
+    },
+    {
+      "file": "lib/live-websocket.mjs",
+      "source": "ioscat/runtime/lib/live-websocket.mjs",
+      "sha256": "1f5904c15a8c7076443e338b06499f82a95bf309e1d0d683b6d072ec89305eaa"
+    },
+    {
+      "file": "lib/lyrics.mjs",
+      "source": "ioscat/runtime/lib/lyrics.mjs",
+      "sha256": "187d2d3766778ee77420ad054eb982d8d81ab3a87368f891399a58533041af48"
+    },
+    {
+      "file": "lib/media-cache.mjs",
+      "source": "ioscat/runtime/lib/media-cache.mjs",
+      "sha256": "42120ad9ee5dfa6a0deaa31a33cadb3316ecf10615dd48fd44e0d3f0dcd2986c"
+    },
+    {
+      "file": "lib/media-identity.mjs",
+      "source": "ioscat/runtime/lib/media-identity.mjs",
+      "sha256": "8934cd96d0622634a7cb5bbda2869ea3d08c3a631436871eb93f16c35aa7eae0"
+    },
+    {
+      "file": "lib/media-streams.mjs",
+      "source": "ioscat/runtime/lib/media-streams.mjs",
+      "sha256": "745722af9d2473c27fabb5dd0bf4b0d0f837e0ba9328d3bbc85a5439097eb65f"
+    },
+    {
+      "file": "lib/memory-budget.mjs",
+      "source": "ioscat/runtime/lib/memory-budget.mjs",
+      "sha256": "c109c19dc06f9a379b67928bc63e70f7e669af3786fb3ecce7bbdb87b3831065"
+    },
+    {
+      "file": "lib/online-subtitles.mjs",
+      "source": "ioscat/runtime/lib/online-subtitles.mjs",
+      "sha256": "faa68a1e6d0fbea780ac0660402d8ccb26d37c0598f8ece1f8661632b6e8d3ca"
+    },
+    {
+      "file": "lib/pan-link-checker.mjs",
+      "source": "ioscat/runtime/lib/pan-link-checker.mjs",
+      "sha256": "305d4b29e66247218c2b458084629b49d8b534389c86626f5e2d96bfbf1981a8"
+    },
+    {
+      "file": "lib/pan-search-options.mjs",
+      "source": "ioscat/runtime/lib/pan-search-options.mjs",
+      "sha256": "66ddc51a33f3bdbc6b1ae12464017d180b44c8c2a468162f5813605c446b5960"
+    },
+    {
+      "file": "lib/playback.mjs",
+      "source": "ioscat/runtime/lib/playback.mjs",
+      "sha256": "ab4319e3fdcc1fbdfbc664e29ec08d6642b38e56321ac87681d001bcac07681a"
+    },
+    {
+      "file": "lib/provider-http.mjs",
+      "source": "ioscat/runtime/lib/provider-http.mjs",
+      "sha256": "903c04ee5d6cac50d93887c2ef446387c69a1eab39c08ea41e3cb02a579c5a5c"
+    },
+    {
+      "file": "lib/proxy-http.mjs",
+      "source": "ioscat/runtime/lib/proxy-http.mjs",
+      "sha256": "19913a974847d9a04a9fa48c55377f3170d41b526b4a8ffb5b754acfa4d79f8f"
+    },
+    {
+      "file": "lib/proxy-settings.mjs",
+      "source": "ioscat/runtime/lib/proxy-settings.mjs",
+      "sha256": "69d41b052f0584ae30326dacd568bf4ef996242af4c1b22f8f0b4829e1a49b2a"
+    },
+    {
+      "file": "lib/request-budget.mjs",
+      "source": "ioscat/runtime/lib/request-budget.mjs",
+      "sha256": "015dfcc45ec08998f33a906e4026abf8b16f3f809123c07cdc31debd93d7ddef"
+    },
+    {
+      "file": "lib/source-media.mjs",
+      "source": "ioscat/runtime/lib/source-media.mjs",
+      "sha256": "a570c0b785c0d73a71d0c53b63d5d6b61a8a693c4e259a61e0700ae83b5ee6ad"
+    },
+    {
+      "file": "lib/subtitle-query.mjs",
+      "source": "ioscat/runtime/lib/subtitle-query.mjs",
+      "sha256": "356ea5219b6716faf2bb726026f2bf461c370659a566ce6d2a9d46eee7c80ae7"
+    },
+    {
+      "file": "lib/subtitle-remote-hash.mjs",
+      "source": "ioscat/runtime/lib/subtitle-remote-hash.mjs",
+      "sha256": "35e33c317ff9c7037fc0d5890e5840673c389396a652357a3f0cd7d634a0a589"
+    },
+    {
+      "file": "lib/subtitle-web-providers.mjs",
+      "source": "ioscat/runtime/lib/subtitle-web-providers.mjs",
+      "sha256": "1f3ab350a57c8a35ce7b63d5188c2e13364c587f4072d9054c5d12f8671ce4f1"
+    },
+    {
+      "file": "lib/tmdb-matching.mjs",
+      "source": "ioscat/runtime/lib/tmdb-matching.mjs",
+      "sha256": "61aa89b95479bd168683817c3b77862c2b5d097f7c01151ba99370fa01a3fb47"
+    },
+    {
+      "file": "lib/tmdb.mjs",
+      "source": "ioscat/runtime/lib/tmdb.mjs",
+      "sha256": "bc45f6a99be4ac8e67c7eac3e174b6e8c1bb366c10ab3760d3adc9f9cc93bd1d"
+    },
+    {
+      "file": "pan-types.json",
+      "source": "ioscat/runtime/pan-types.json",
+      "sha256": "920ba3f3c21c32164e931cf366a23723cf4854359c6cb351fb1ec762b20aedb0"
+    }
+  ],
+  "hashesDescribe": "Original MacCat reference snapshot at migration time; not checksums of the current exported files."
+}

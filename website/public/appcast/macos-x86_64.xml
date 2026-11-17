@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Yingxia</title>
+        <item>
+            <title>1.8.13</title>
+            <pubDate>Sat, 07 Nov 2026 00:55:20 +0800</pubDate>
+            <sparkle:version>51</sparkle:version>
+            <sparkle:shortVersionString>1.8.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://download.getmegaportal.com/yingxia/1.8.13/Yingxia-1.8.13-macos-x86_64.dmg" length="218476447" type="application/octet-stream" sparkle:edSignature="WdjuFjiXT0BtysFjKj4nbynzMaHX5Zu1k7SBftAxs9JoNUb7HnRNAPG3k0G4FK/5HX/2QRuLoqcZ/GDdezfWCw=="/>
+            <sparkle:deltas>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.13/Yingxia51-50-x86_64.delta" sparkle:deltaFrom="50" length="23882582" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="3IgHDYTllAcpdLE1vV/58eoiP7xeUjG/r4Sea0plERYUQwepxuoTFPYkEJ9cu+V/4VVMn3SqncQHn+3dATNUCg=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.13/Yingxia51-49-x86_64.delta" sparkle:deltaFrom="49" length="23856066" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="PKBjVMaryrp0fHe616KB9nGptXEO9djlj4ZOhKKAZVg47lmfR5fi3E0Kc4462JDAgsk01TVy6E+QO5u3qjGfCw=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.13/Yingxia51-47-x86_64.delta" sparkle:deltaFrom="47" length="24839122" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="k9zzyylYOkr26htXJka05QbCKmoLx8q6dG5AYvA9ssaERQIyPrlzBaQ9k/sqlu93oNefOS9+zERlVv3rY0AXDw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.8.12</title>
+            <pubDate>Fri, 06 Nov 2026 04:52:38 +0800</pubDate>
+            <sparkle:version>50</sparkle:version>
+            <sparkle:shortVersionString>1.8.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://download.getmegaportal.com/yingxia/1.8.12/Yingxia-1.8.12-macos-x86_64.dmg" length="209700670" type="application/octet-stream" sparkle:edSignature="tmA1uws5sSxB+WpMXaZOXgN42bAfCcjZLN8/sdPxyWeEY04e+BVn3XqQM/bGCbxm1+OR7ljTtSq8JaOEZkzaDQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.12/Yingxia50-49-x86_64.delta" sparkle:deltaFrom="49" length="2953394" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Q2uvo0unRxh9oTJX3uyn8/rRfLsD+O44HfiNRKPOp0PaDoIK+QfIR2yf5FX+QsaqJfHT7uvWfyS+g46LsCJEBw=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.12/Yingxia50-47-x86_64.delta" sparkle:deltaFrom="47" length="4780934" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Xh+ZR2SeblgwGKjxUdO78LMNiRbmqPyUNDgAr6OOEbFrZ5eI5yovo8Pnn4gIgNY0R+kuYL93sErbwrpVihl5CQ=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.12/Yingxia50-46-x86_64.delta" sparkle:deltaFrom="46" length="16774146" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Bpwu+if2KVP2ptQYJmh30VRMJ1GuDodKfv53KT2TTh/L2EFplTLZVcC/wuzd5nbQrDCvXWe+ZYRjA22A43ZzCA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
+            <title>1.8.11</title>
+            <pubDate>Fri, 06 Nov 2026 00:57:36 +0800</pubDate>
+            <sparkle:version>49</sparkle:version>
+            <sparkle:shortVersionString>1.8.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://download.getmegaportal.com/yingxia/1.8.11/Yingxia-1.8.11-macos-x86_64.dmg" length="204251353" type="application/octet-stream" sparkle:edSignature="3MbdoxY/fa4FOynqwJbDixshnJehRFgrFR2nRaKMNr/rJQLQAHN3cE2BKGrB7/+q1XnSvQG34n5GlSSFcjeOBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.11/Yingxia49-47-x86_64.delta" sparkle:deltaFrom="47" length="4778594" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="FUQratoAnVobKlywADdgmbkKEHW3SnEAKWpPQPCZGhAq7JId4grGf6JhWRaYgBmiXOlvZF5lvdCxM0U7DXnsAg=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.11/Yingxia49-46-x86_64.delta" sparkle:deltaFrom="46" length="16815086" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="1+CW9+TI2jDQ4ix0s9Ad2oeTcaJM9ASvAWXXG1TKz02+ZlUGoEzcm6qWmZT/Sh+JpAmL+euZo+jHKAsL7SFpDg=="/>
+                <enclosure url="https://download.getmegaportal.com/yingxia/1.8.11/Yingxia49-45-x86_64.delta" sparkle:deltaFrom="45" length="18854482" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="479392" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="LNi0iTAyneds2ONW4JE2u55KmodqtW1wBkhLxlfIrUUtGBfqEPPDMDrikbl/Ez3g4vWchqwGb/dbApGBTcYtBw=="/>
+            </sparkle:deltas>
+        </item>
+    </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: NoGF/4eSDj62BhzCZeOXZPe9CgpyLGt1W+5CNtl4ssG/WObv8tqiXRJmOzAazkTR1SfHujfvAf4KHx2KN1djAg==
+length: 6025
+-->

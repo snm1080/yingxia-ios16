@@ -1,0 +1,59 @@
+[
+  {
+    "id": "zh",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23",
+    "revision": "204ad334e2e683fd295359930cc16fc0432a23ac",
+    "license": "apache-2.0"
+  },
+  {
+    "id": "yue",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10",
+    "revision": "c911764e8227cf372ee60adc75f7f407e5b8c905",
+    "license": "apache-2.0",
+    "upstream": "https://huggingface.co/ASLP-lab/WSYue-ASR",
+    "evidence": "Pinned conversion README links upstream; upstream model card declares Apache-2.0."
+  },
+  {
+    "id": "en",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+    "revision": "d42f2d9f7ca24806fb667456a18a9f1b60f70d16",
+    "license": "apache-2.0"
+  },
+  {
+    "id": "de",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
+    "revision": "887db3d083240198c2d2b99fb66cfcfe6948ced8",
+    "license": "upstream-custom-unresolved",
+    "upstream": "https://huggingface.co/Banafo/Kroko-ASR",
+    "evidence": "Pinned conversion README links upstream; upstream card declares other/license_name=test and LICENSE file is empty. No commercial redistribution rights are inferred."
+  },
+  {
+    "id": "fr",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
+    "revision": "08b84b7b7cf519be9817e9c16919d96a7a8bad91",
+    "license": "upstream-custom-unresolved",
+    "upstream": "https://huggingface.co/Banafo/Kroko-ASR",
+    "evidence": "Pinned conversion README links upstream; upstream card declares other/license_name=test and LICENSE file is empty. No commercial redistribution rights are inferred."
+  },
+  {
+    "id": "es",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
+    "revision": "20cf7a4921613397841d31168796cade5b866585",
+    "license": "upstream-custom-unresolved",
+    "upstream": "https://huggingface.co/Banafo/Kroko-ASR",
+    "evidence": "Pinned conversion README links upstream; upstream card declares other/license_name=test and LICENSE file is empty. No commercial redistribution rights are inferred."
+  },
+  {
+    "id": "ja",
+    "repository": "https://huggingface.co/csukuangfj2/sherpa-onnx-moonshine-tiny-ja-quantized-2026-02-27",
+    "revision": "550e2eb0a8b33092f3b394f64649ee1b3d9eb506",
+    "license": "Moonshine AI Community License",
+    "evidence": "LICENSE at pinned model revision: non-English models have community terms; free commercial use depends on revenue threshold. See full bundled notice."
+  },
+  {
+    "id": "zh-en",
+    "repository": "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+    "revision": "98590b7ed6443e77b714204da2757d75e1a642f4",
+    "license": "apache-2.0"
+  }
+]

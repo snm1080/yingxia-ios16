@@ -1,0 +1,51 @@
+{
+  "files": [
+    {
+      "name": "davs2",
+      "repository": "xatabhk/davs2-10bit",
+      "revision": "21d64c8f8e36af71fc7a488cd6f789c86cdd1200",
+      "url": "https://codeload.github.com/xatabhk/davs2-10bit/tar.gz/21d64c8f8e36af71fc7a488cd6f789c86cdd1200",
+      "sha256": "b048fb17c976d4733b6ac21114db648f16c906e1f9fd67de639b4fe80c518d25",
+      "bytes": 546603,
+      "path": "sources/davs2.tar.gz"
+    },
+    {
+      "name": "uavs3d",
+      "repository": "uavs3/uavs3d",
+      "revision": "0e20d2c291853f196c68922a264bcd8471d75b68",
+      "url": "https://codeload.github.com/uavs3/uavs3d/tar.gz/0e20d2c291853f196c68922a264bcd8471d75b68",
+      "sha256": "1c1eb778b6080bc01493180ea7ae671c6444ce3aa760b5d021ba882eb0f9e3a0",
+      "bytes": 629567,
+      "path": "sources/uavs3d.tar.gz"
+    },
+    {
+      "name": "0001-enable-10bit-build-and-propagate-frame-packet-position.patch",
+      "repository": "nilaoda/mpv-iina-avs",
+      "revision": "0c8f04194d23ef17cac0b5928f021d177421e03c",
+      "url": "https://raw.githubusercontent.com/nilaoda/mpv-iina-avs/0c8f04194d23ef17cac0b5928f021d177421e03c/tools/patches/davs2-10bit/0001-enable-10bit-build-and-propagate-frame-packet-position.patch",
+      "sha256": "2e83a0f00092c58a4d5a3350ca6f48b1f411dbe088b9dd5c8812dcd2e5986f65",
+      "path": "patches/0001-enable-10bit-build-and-propagate-frame-packet-position.patch"
+    },
+    {
+      "name": "0010-export-sequence-display-color-description.patch",
+      "repository": "nilaoda/mpv-iina-avs",
+      "revision": "0c8f04194d23ef17cac0b5928f021d177421e03c",
+      "url": "https://raw.githubusercontent.com/nilaoda/mpv-iina-avs/0c8f04194d23ef17cac0b5928f021d177421e03c/tools/patches/davs2-10bit/0010-export-sequence-display-color-description.patch",
+      "sha256": "64aa309b9217269c83ccd7183aad3b7980da76515a9700bbce9499cb85d58460",
+      "path": "patches/0010-export-sequence-display-color-description.patch"
+    },
+    {
+      "name": "davs2-GPL-2.0-or-later.txt",
+      "path": "licenses/davs2-GPL-2.0-or-later.txt",
+      "sha256": "971f09fd8dedc915472df12845fb7c653563689672fb1a658e28004887ba4a07"
+    },
+    {
+      "name": "uavs3d-BSD-3-Clause.txt",
+      "path": "licenses/uavs3d-BSD-3-Clause.txt",
+      "sha256": "5a8dcb7da222df8a81b6e334000f859248196335e2d28e1db9f3c552827d7cdf"
+    }
+  ],
+  "source_origin": "Pinned upstream inputs; retrieve with Scripts/fetch-vendor-dependencies.py",
+  "davs2_license": "GPL-2.0-or-later",
+  "uavs3d_license": "BSD-3-Clause"
+}

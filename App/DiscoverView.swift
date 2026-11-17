@@ -1,0 +1,2181 @@
+import SwiftUI
+import Perception
+import TVCore
+
+/// Catalog browsing is independent of the subscription; opening a title can search the viewer's sources.
+@MainActor @Perceptible private final class DiscoverModel {
+    private(set) var pages: [TMDBCatalog.Feed: TMDBCatalog.Page] = [:]
+    private(set) var failures = Set<TMDBCatalog.Feed>()
+    private(set) var collections: TMDBCatalog.Collections?
+    private(set) var collectionsFailed = false
+    private(set) var loading = false
+    /// A resolved carousel snapshot. Shelf responses never replace it while its own request is pending.
+    private(set) var featured: [TMDBCatalog.Item] = []
+    private var featuredSource: TMDBCatalog.Feed?
+    private var refreshedAt: [TMDBCatalog.Feed: Date] = [:]
+    /// Douban's hot lists, only fetched while their section is shown. A list that fails is just left out.
+    private(set) var douban: [DoubanCatalog.Feed: [DoubanCatalog.Item]] = [:]
+    private var doubanLoading = false
+    private var loadGeneration = UUID()
+    private var loadTask: Task<Void, Never>?
+    private var carouselLoading = false
+    private var serviceIdentity = TMDBServiceSettings.identity + "|" + TMDBMatch.language
+    /// This week's airing calendars (the Airing Today shelves). One that fails is just left out.
+    private(set) var calendar: [TMDBCalendar.Kind: TMDBCalendar.Week] = [:]
+    static let feeds: [TMDBCatalog.Feed] = [.featured, .trending, .nowPlaying, .onTheAir, .variety, .chinese, .animation, .topMovies, .topTelevision, .family, .kids, .netflix, .disney, .appleTV, .hbo, .warner, .universal, .paramount, .sony]
+    func items(_ feed: TMDBCatalog.Feed) -> [TMDBCatalog.Item] { pages[feed]?.items ?? [] }
+
+    init() {
+        if let page = TMDBCatalog.cachedFeatured() {
+            pages[.featured] = page
+            featured = Array(page.items.filter { $0.poster != nil }.prefix(10))
+            featuredSource = .featured
+            refreshedAt[.featured] = page.fetchedAt
+        }
+    }
+
+    func load(refresh: Bool = false, now: Date = Date()) async {
+        guard !Task.isCancelled else { return }
+        let identity = TMDBServiceSettings.identity + "|" + TMDBMatch.language
+        let changedService = identity != serviceIdentity
+        if identity != serviceIdentity {
+            serviceIdentity = identity
+            pages = [:]; collections = nil; calendar = [:]; failures = []
+            featured = []; featuredSource = nil; refreshedAt = [:]
+        }
+        // Coalesce only while the carousel itself is pending. A slow shelf or calendar
+        // must not suppress a new Home opening after both carousel replies arrived.
+        guard loadTask == nil || loadTask?.isCancelled == true || !carouselLoading || refresh || changedService else { return }
+        let expired = Set(Self.feeds.filter { now.timeIntervalSince(refreshedAt[$0] ?? .distantPast) >= 900 })
+        // Each Home activation checks the carousel without clearing the visible snapshot.
+        // Unrelated shelves retain their normal lifetime; overlapping activations coalesce above.
+        let carousel: Set<TMDBCatalog.Feed> = [.featured, .trending]
+        let pending = Self.feeds.filter { refresh || carousel.contains($0) || pages[$0] == nil || expired.contains($0) }
+        guard !pending.isEmpty || collections == nil || collectionsFailed else { return }
+        loadTask?.cancel()
+        let generation = UUID()
+        loadGeneration = generation
+        loading = true
+        carouselLoading = true
+        let task = Task {
+            defer { if loadGeneration == generation { loading = false; carouselLoading = false } }
+            var received: [TMDBCatalog.Feed: TMDBCatalog.Page] = [:]
+            var answered = Set<TMDBCatalog.Feed>()
+            async let metadata = try? TMDBCatalog.collections()
+            async let anime = try? TMDBCalendar.week(.anime)
+            async let series = try? TMDBCalendar.week(.tv)
+            await withTaskGroup(of: (TMDBCatalog.Feed, TMDBCatalog.Page?).self) { group in
+                for feed in pending {
+                    let reload = refresh || carousel.contains(feed) || (refreshedAt[feed] != nil && expired.contains(feed))
+                    group.addTask { (feed, try? await TMDBCatalog.page(feed, refresh: reload)) }
+                }
+                for await (feed, page) in group {
+                    guard !Task.isCancelled, loadGeneration == generation else { group.cancelAll(); continue }
+                    answered.insert(feed)
+                    if carousel.isSubset(of: answered) { carouselLoading = false }
+                    if let page {
+                        // Fetch time is bookkeeping, not visible content. Publishing an
+                        // identical page needlessly invalidates the entire Home view.
+                        if pages[feed]?.items != page.items || pages[feed]?.page != page.page || pages[feed]?.totalPages != page.totalPages {
+                            pages[feed] = page
+                        }
+                        received[feed] = page; refreshedAt[feed] = page.fetchedAt ?? now; failures.remove(feed)
+                        if feed == .featured {
+                            let items = page.items.filter { $0.poster != nil }
+                            if !items.isEmpty {
+                                let snapshot = Array(items.prefix(10))
+                                if featured != snapshot { featured = snapshot }
+                                featuredSource = .featured
+                            }
+                        }
+                    }
+                    else if feed != .featured { failures.insert(feed) }
+                    if answered.contains(.featured), received[.featured]?.items.contains(where: { $0.poster != nil }) != true,
+                       !pending.contains(.trending) || answered.contains(.trending),
+                       featured.isEmpty || featuredSource == .trending {
+                        // Commit the fallback when both hero feeds have answered. Slow unrelated shelves
+                        // must not leave an otherwise usable homepage blank.
+                        let fallback = (received[.trending] ?? pages[.trending])?.items.filter { $0.poster != nil } ?? []
+                        if !fallback.isEmpty {
+                            let snapshot = Array(fallback.prefix(10))
+                            if featured != snapshot { featured = snapshot }
+                            featuredSource = .trending
+                        }
+                    }
+                }
+            }
+            let fresh = await metadata
+            let weeks = (anime: await anime, series: await series)
+            if !Task.isCancelled, loadGeneration == generation {
+                if let week = weeks.anime { calendar[.anime] = week }
+                if let week = weeks.series { calendar[.tv] = week }
+            }
+            if !Task.isCancelled, loadGeneration == generation {
+                if let fresh { collections = fresh; collectionsFailed = false }
+                else { collectionsFailed = true }
+            }
+        }
+        loadTask = task
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        if loadGeneration == generation { loadTask = nil }
+    }
+
+    func loadDouban(refresh: Bool = false) async {
+        guard !doubanLoading else { return }
+        doubanLoading = true
+        defer { doubanLoading = false }
+        let pending = DoubanCatalog.Feed.allCases.filter { refresh || douban[$0] == nil }
+        await withTaskGroup(of: (DoubanCatalog.Feed, [DoubanCatalog.Item]?).self) { group in
+            for feed in pending {
+                group.addTask {
+                    do { return (feed, try await DoubanCatalog.items(feed)) } catch {
+                        if !(error is CancellationError) { Diagnostics.shared.record(.warning, "douban", "list=\(feed.rawValue) failed=\(String(reflecting: error))") }
+                        return (feed, nil)
+                    }
+                }
+            }
+            for await (feed, items) in group where !Task.isCancelled {
+                if let items, !items.isEmpty { douban[feed] = items }
+            }
+        }
+    }
+}
+
+/// Catalog layout: a 1.5:1 portrait hero, 17 pt gutters,
+/// 116 × 174 pt covers, and a wider landscape rail for the weekly trend list.
+struct DiscoverView: View {
+    @Environment(Store.self) private var store
+    #if os(iOS)
+    @Environment(\.isLocalPageActive) private var localPageActive
+    #endif
+    @State private var model: DiscoverModel
+    @State private var heroState: DiscoverHeroState
+    @State private var onScreen = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var editing = false
+    @State private var searchShown = false
+    #if os(iOS)
+    @State private var calendarShown = false
+    @State private var calendarKind: TMDBCalendar.Kind = .anime
+    @State private var calendarRoute: Route?
+    #endif
+    @Environment(\.openRoute) private var openRoute
+    #if os(tvOS)
+    @FocusState private var tvFocus: DiscoverTVFocus?
+    #endif
+    @AppStorage("discover.hiddenSections") private var hiddenSections = ""
+    /// Douban's lists are in Chinese: shown by default only when the app is.
+    @AppStorage("discover.doubanShown") private var doubanShown = TMDBMatch.language.hasPrefix("zh")
+    /// IMDb/Douban charts, or a resolved trending fallback from the same load.
+    private var featured: [TMDBCatalog.Item] { heroState.items }
+
+    init() {
+        let model = DiscoverModel()
+        _model = State(initialValue: model)
+        _heroState = State(initialValue: DiscoverHeroState(items: model.featured))
+    }
+    var body: some View {
+        WithPerceptionTracking {
+            // Turning Featured Titles off in Edit Layout also drops its backdrop, trailer and colours (#447).
+            let heroShown = visible(.hero)
+            GeometryReader { proxy in
+                WithPerceptionTracking {
+                    let heroHeight = DiscoverLayout.heroHeight(proxy.size.width)
+                    ZStack(alignment: .top) {
+                        if heroShown {
+                            DiscoverHeroBackground(state: heroState, items: featured, width: proxy.size.width, height: heroHeight,
+                                                   active: previewActive)
+                        } else {
+                            DiscoverBackdrop(paint: nil, width: proxy.size.width, heroHeight: heroHeight, scrollY: 0, trailer: nil, playsTrailer: false)
+                        }
+                        ScrollView {
+                            WithPerceptionTracking {
+                                LazyVStack(alignment: .leading, spacing: 30) {
+                                    WithPerceptionTracking {
+                                        if featured.isEmpty, model.loading {
+                                            ProgressView().frame(maxWidth: .infinity).frame(height: heroShown ? min(proxy.size.width * 1.5, 660) : 160)
+                                        }
+                                        ForEach(DiscoverSection.allCases.filter(visible)) { section in
+                                            WithPerceptionTracking {
+                                                sectionView(section, width: proxy.size.width)
+                                                #if os(iOS)
+                                                if section == .hero { LocalContinueWatching() }
+                                                #endif
+                                            }
+                                        }
+                                        #if os(iOS)
+                                        if !heroShown { LocalContinueWatching() }
+                                        #endif
+                                        if !model.failures.isEmpty || model.collectionsFailed {
+                                            Button { Task { await model.load() } } label: {
+                                                Label(L10n.text("Some lists couldn't load. Try again."), systemImage: "arrow.clockwise")
+                                                    #if !os(tvOS)
+                                                    .font(.subheadline).frame(maxWidth: .infinity).padding()
+                                                    #endif
+                                            }
+                                            #if os(tvOS)
+                                            .controlButton().frame(maxWidth: .infinity)
+                                            #else
+                                            .buttonStyle(.plain)
+                                            #endif
+                                            .accessibilityIdentifier("discover.retry")
+                                        }
+                                        if !model.loading, model.pages.values.allSatisfy({ $0.items.isEmpty }) {
+                                            EmptyResults(symbol: "film", title: L10n.text("No Titles Available"), message: L10n.text("Please try again later."),
+                                                         // The failure row above already offers a retry.
+                                                         action: model.failures.isEmpty && !model.collectionsFailed ? L10n.text("Try Again") : nil) { Task { await model.load() } }
+                                        }
+                                        Button { editing = true } label: {
+                                            Label(L10n.text("Edit Layout"), systemImage: "slider.horizontal.3")
+                                                #if !os(tvOS)
+                                                .font(.subheadline).padding(18).glassSurface(.regular, in: Capsule())
+                                                #endif
+                                        }
+                                        // On tvOS .plain lays its focus platter under the glass capsule; one glass control instead.
+                                        #if os(tvOS)
+                                        .controlButton()
+                                        #else
+                                        .buttonStyle(.plain)
+                                        #endif
+                                        .frame(maxWidth: .infinity).padding(.top, 10)
+                                        HStack(spacing: 8) {
+                                            TMDBBadge()
+                                            Text(L10n.text("This product uses the TMDB API but is not endorsed or certified by TMDB."))
+                                                .font(.caption2).foregroundStyle(.white.opacity(0.5))
+                                        }.padding(.horizontal, DiscoverLayout.gutter).padding(.vertical, 20)
+                                    }
+                                }
+                                .padding(.bottom, 28)
+                                #if os(tvOS)
+                                // Without the hero the first shelf would sit under the search button.
+                                .padding(.top, heroShown ? 0 : 150)
+                                #endif
+                                .background {
+                                    WithPerceptionTracking {
+                                        GeometryReader { geometry in
+                                            WithPerceptionTracking {
+                                                Color.clear.preference(key: DiscoverScrollKey.self, value: -geometry.frame(in: .named("discoverScroll")).minY)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .coordinateSpace(name: "discoverScroll")
+                        .modifier(DiscoverScrollObserver(offset: Binding(get: { heroState.scrollY }, set: { heroState.scrollY = $0 })))
+                        .scrollIndicators(.hidden)
+                        .refreshable {
+                            if doubanShown {
+                                async let douban: Void = model.loadDouban(refresh: true)
+                                await model.load(refresh: true)
+                                await douban
+                            } else { await model.load(refresh: true) }
+                        }
+                    }
+                }
+            }
+            .modifier(DiscoverHeroTheme(state: heroState, hero: heroShown))
+            .historyDetailsDestination()
+            .navigationTitle("")
+            #if !os(macOS)
+            .toolbar(.visible, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            #if os(tvOS)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            #else
+            .toolbarColorScheme(heroShown && heroState.paint?.isDark == false ? .light : .dark, for: .navigationBar)
+            #endif
+            #endif
+            #if os(tvOS)
+            .overlay(alignment: .topTrailing) {
+                WithPerceptionTracking {
+                    Button { searchShown = true } label: {
+                        Image(systemName: "text.magnifyingglass").font(.system(size: 28))
+                            .frame(width: 76, height: 76).glassSurface(.regular, in: Circle())
+                    }.tileButton()
+                        .focused($tvFocus, equals: .search)
+                        .onMoveCommand { direction in
+                            if direction == .down, heroShown, !featured.isEmpty {
+                                tvFocus = .page(featured.firstIndex { $0.key == heroState.id } ?? 0)
+                            }
+                        }
+                        .accessibilityLabel(L10n.text("Search Catalog"))
+                        .accessibilityIdentifier("discover.home.search")
+                        .padding(.trailing, 50)
+                        .frame(maxWidth: .infinity, alignment: .trailing).focusSection()
+                        .padding(.top, 50)
+                }
+            }
+            #else
+            .toolbar { WithPerceptionTracking {
+
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { searchShown = true } label: { Image(systemName: "text.magnifyingglass") }
+                            .accessibilityLabel(L10n.text("Search Catalog"))
+                            .accessibilityIdentifier("discover.home.search")
+                    }
+
+             }}
+            #endif
+            #if os(iOS)
+            .modifier(DiscoverHomeSearchPresentation(isPresented: $searchShown, featured: featured))
+            .localGlassDialog(isPresented: $calendarShown, title: "播出日历", maxWidth: 760, layout: .calendar, onDismiss: {
+                if let route = calendarRoute { calendarRoute = nil; openRoute?(route) }
+            }) {
+                // The dialog already owns its header and material. A nested NavigationStack
+                // paints an opaque canvas across the calendar below that header on iOS 16.
+                DiscoverCalendarView(initial: model.calendar, kind: calendarKind)
+                    .environment(\.openRoute, RouteOpener { route in
+                        calendarRoute = route
+                        calendarShown = false
+                    })
+            }
+            #else
+            .modifier(DiscoverSearchPresentation(isPresented: $searchShown))
+            #endif
+            #if os(tvOS)
+            .ignoresSafeArea()
+            #else
+            // Only the hero runs under the status and navigation bars; without it the first shelf starts below them.
+            .ignoresSafeArea(edges: heroShown ? .top : [])
+            #endif
+            .onAppear { onScreen = true }
+            .onReceive(NotificationCenter.default.publisher(for: TMDBServiceSettings.changed)) { _ in
+                Task { await model.load(refresh: true) }
+            }
+            .onDisappear { onScreen = false }
+            .task(id: model.featured) { _ = heroState.prepare(model.featured) }
+            .task(id: catalogActive) { if catalogActive { await model.load() } }
+            .task(id: doubanShown) { if doubanShown { await model.loadDouban() } }
+            .sheet(isPresented: $editing) {
+                WithPerceptionTracking {
+                    NavigationStack {
+                        WithPerceptionTracking {
+                            Form {
+                                ForEach(DiscoverSection.allCases) { section in
+                                    WithPerceptionTracking {
+                                        Toggle(section.title, isOn: shown(section))
+                                            #if !os(tvOS)
+                                            .settingsSwitch()
+                                            #endif
+                                    }
+                                }
+                            }
+                            .navigationTitle(L10n.text("Edit Layout"))
+                            .toolbar { WithPerceptionTracking {  ToolbarItem(placement: .confirmationAction) { Button(L10n.text("Done")) { editing = false } }   }}
+                        }
+                    }.preferredColorScheme(.dark).discoverSheetSize(width: 420, height: 560)
+                }
+            }
+        }
+    }
+
+    private var previewActive: Bool {
+        #if os(iOS)
+        onScreen && localPageActive && scenePhase == .active && store.playing == nil && store.music.track == nil
+        #else
+        onScreen && scenePhase == .active
+        #endif
+    }
+
+    private var catalogActive: Bool {
+        #if os(iOS)
+        onScreen && localPageActive && scenePhase == .active
+        #else
+        onScreen && scenePhase == .active
+        #endif
+    }
+
+    private func visible(_ section: DiscoverSection) -> Bool {
+        section == .douban ? doubanShown : !hiddenSections.split(separator: ",").contains(Substring(section.rawValue))
+    }
+
+    /// Whether Edit Layout shows the section on the page.
+    private func shown(_ section: DiscoverSection) -> Binding<Bool> {
+        Binding(get: { visible(section) }, set: { shown in
+            if section == .douban { doubanShown = shown; return }
+            var hidden = Set(hiddenSections.split(separator: ",").map(String.init))
+            if shown { hidden.remove(section.rawValue) } else { hidden.insert(section.rawValue) }
+            hiddenSections = hidden.sorted().joined(separator: ",")
+        })
+    }
+
+    @ViewBuilder private func sectionView(_ section: DiscoverSection, width: CGFloat) -> some View {
+        switch section {
+        case .hero:
+            if !featured.isEmpty {
+                #if os(tvOS)
+                DiscoverHeroCarousel(items: featured, state: heroState, width: width, tvFocus: $tvFocus).padding(.bottom, -15)
+                #else
+                DiscoverHeroCarousel(items: featured, state: heroState, width: width).padding(.bottom, -15)
+                #endif
+            }
+        case .douban: doubanShelves
+        case .airingAnime: airing(.anime)
+        case .airingSeries: airing(.tv)
+        case .nowPlaying: shelf(.nowPlaying)
+        case .onTheAir: shelf(.onTheAir)
+        case .trending: shelf(.trending, landscape: true)
+        case .collections: collections(width: width)
+        case .animation: shelf(.animation)
+        case .people: people
+        case .networks: brands(model.collections?.networks ?? [], title: section.title, width: 302)
+        case .genres: genreCards
+        case .rankings: rankings(width: width)
+        case .companies: brands(model.collections?.companies ?? [], title: section.title, width: 197, studio: true)
+        }
+    }
+
+    /// Today's anime or series from the one before the next to air, as a shelf; its heading opens the week.
+    @ViewBuilder private func airing(_ kind: TMDBCalendar.Kind) -> some View {
+        if let today = model.calendar[kind]?.today(), !today.items.isEmpty {
+            let next = DiscoverAiring.next(today.items)
+            VStack(alignment: .leading, spacing: 0) {
+                #if os(tvOS)
+                // The native row, as the TMDB shelves: Left from the first title brings out See All (the week page).
+                sectionHeading(kind.shelfTitle)
+                let items = DiscoverAiring.fromNow(today.items)
+                DiscoverTVNativeShelf(entries: items.map { DiscoverAiring.entry($0, next: $0.id == next) }, identifier: "calendar.\(kind.rawValue)") { index in
+                    if let index {
+                        let item = items[index]
+                        openRoute?(Route { AnyView(DiscoverAiring.destination(item)) })
+                    } else {
+                        openRoute?(Route { AnyView(DiscoverCalendarView(initial: model.calendar, kind: kind)) })
+                    }
+                }.frame(height: DiscoverLayout.posterWidth * 1.5 + DiscoverLayout.captionHeight + 48)
+                #else
+                #if os(iOS)
+                Button { calendarKind = kind; calendarShown = true } label: {
+                    HStack {
+                        Text(kind.shelfTitle).font(.system(size: DiscoverLayout.heading, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.forward").font(.system(size: 14, weight: .semibold))
+                    }.frame(height: DiscoverLayout.headingHeight, alignment: .top).contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.horizontal, DiscoverLayout.gutter)
+                    .accessibilityIdentifier("discover.more.calendar.\(kind.rawValue)")
+                #else
+                moreHeading(kind.shelfTitle, identifier: "discover.more.calendar.\(kind.rawValue)") {
+                    DiscoverCalendarView(initial: model.calendar, kind: kind)
+                }
+                #endif
+                DiscoverRail(arrowCenter: 87) {
+                    LazyHStack(alignment: .top, spacing: DiscoverLayout.spacing) {
+                        WithPerceptionTracking {
+                            ForEach(DiscoverAiring.fromNow(today.items)) { item in
+                                WithPerceptionTracking {
+                                    DiscoverAiringLink(item: item) {
+                                        DiscoverAiringTile(item: item, next: item.id == next).frame(width: DiscoverLayout.posterWidth)
+                                    }
+                                    .accessibilityIdentifier("discover.calendar.\(item.id)")
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter)
+                }
+                #endif
+            }
+        }
+    }
+
+    #if !os(tvOS)
+    /// A shelf's heading that opens its full list, as the TMDB shelves' do.
+    private func moreHeading<Destination: View>(_ title: String, identifier: String,
+                                                @ViewBuilder destination: @escaping @MainActor () -> Destination) -> some View {
+        RouteLink(destination: destination) {
+            WithPerceptionTracking {
+                HStack {
+                    Text(title).font(.system(size: DiscoverLayout.heading, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "chevron.forward").font(.system(size: 14, weight: .semibold))
+                }.frame(height: DiscoverLayout.headingHeight, alignment: .top).contentShape(Rectangle())
+            }
+        }
+        .buttonStyle(.plain).padding(.horizontal, DiscoverLayout.gutter)
+        .accessibilityIdentifier(identifier)
+    }
+    #endif
+
+    private func sectionHeading(_ title: String) -> some View {
+        Text(title).font(.system(size: DiscoverLayout.heading, weight: .semibold))
+            .frame(maxWidth: .infinity, alignment: .leading).frame(height: DiscoverLayout.headingHeight, alignment: .top)
+            .padding(.horizontal, DiscoverLayout.gutter)
+    }
+
+    @ViewBuilder private var people: some View {
+        if let people = model.collections?.people, !people.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionHeading(L10n.text("People"))
+                #if os(tvOS)
+                // Round photos that take the system's focus lift and glass rim themselves, as in Rex: a card plate
+                // drew a rectangle around the circle.
+                DiscoverTVRow {
+                    WithPerceptionTracking {
+                        ForEach(people) { person in
+                            WithPerceptionTracking {
+                                RouteLink {
+                                    WithPerceptionTracking {
+                                        DiscoverPersonView(id: person.id, name: person.name, profile: person.profile)
+                                    }
+                                } label: {
+                                    WithPerceptionTracking {
+                                        VStack(spacing: 16) {
+                                            PosterImage(url: person.profile, symbol: "person.fill").frame(width: 200, height: 200)
+                                            Text(person.name).font(.system(size: 26, weight: .medium)).lineLimit(1).cardCaption()
+                                        }.frame(width: 200)
+                                    }
+                                }
+                                .cardButton(.circle)
+                                .accessibilityIdentifier("discover.person.\(person.id)")
+                            }
+                        }
+                    }
+                }
+                #else
+                DiscoverRail(arrowCenter: 41.5) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        WithPerceptionTracking {
+                            ForEach(people) { person in
+                                WithPerceptionTracking {
+                                    RouteLink {
+                                        WithPerceptionTracking {
+                                            DiscoverPersonView(id: person.id, name: person.name, profile: person.profile)
+                                        }
+                                    } label: {
+                                        WithPerceptionTracking {
+                                            VStack(spacing: 7) {
+                                                PosterImage(url: person.profile, symbol: "person.fill").frame(width: DiscoverLayout.personWidth, height: DiscoverLayout.personWidth).clipShape(Circle())
+                                                Text(person.name).font(.system(size: DiscoverLayout.caption)).lineLimit(1)
+                                            }.frame(width: DiscoverLayout.personWidth)
+                                        }
+                                    }.tmdbCardButton()
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter)
+                }
+                #endif
+            }
+        }
+    }
+
+    @ViewBuilder private func brands(_ brands: [TMDBCatalog.Brand], title: String, width: CGFloat, studio: Bool = false) -> some View {
+        if !brands.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionHeading(title)
+                #if os(tvOS)
+                DiscoverTVRow {
+                    WithPerceptionTracking {
+                        ForEach(brands) { brand in
+                            WithPerceptionTracking {
+                                RouteLink { WithPerceptionTracking { DiscoverBrowseView(title: brand.name, filter: brand.feed.brandFilter, logo: brand.logo) } } label: {
+                                    WithPerceptionTracking {
+                                        if studio {
+                                            DiscoverTVStudioCard(brand: brand, backdrop: model.items(brand.feed).lazy.compactMap(\.backdrop).first)
+                                        } else {
+                                            DiscoverTVNetworkCard(brand: brand, items: Array(model.items(brand.feed).filter { $0.poster != nil }.prefix(9)))
+                                        }
+                                    }
+                                }.panelCardButton(cornerRadius: studio ? 20 : 24).accessibilityLabel(brand.name)
+                            }
+                        }
+                    }
+                }
+                #else
+                DiscoverRail {
+                    LazyHStack(spacing: 13) {
+                        WithPerceptionTracking {
+                            ForEach(brands) { brand in
+                                WithPerceptionTracking {
+                                    RouteLink { WithPerceptionTracking { DiscoverBrowseView(title: brand.name, filter: brand.feed.brandFilter, logo: brand.logo) } } label: {
+                                        WithPerceptionTracking {
+                                            DiscoverBrandCard(brand: brand, items: Array(model.items(brand.feed).prefix(4)), width: width)
+                                        }
+                                    }.tmdbCardButton().accessibilityLabel(brand.name)
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter)
+                }
+                #endif
+            }
+        }
+    }
+
+    private var genreCards: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeading(L10n.text("Browse by Genre"))
+            #if os(tvOS)
+            DiscoverTVRow {
+                WithPerceptionTracking {
+                    ForEach(tvGenres) { genre in
+                        WithPerceptionTracking {
+                            RouteLink { WithPerceptionTracking { DiscoverBrowseView(title: genre.title, filter: genre.filter) } } label: {
+                                WithPerceptionTracking {
+                                    DiscoverTVGenreCard(title: genre.title, posters: genre.posters)
+                                }
+                            }.panelCardButton(cornerRadius: 20).accessibilityIdentifier("discover.genre.\(genre.id)")
+                        }
+                    }
+                }
+            }
+            #else
+            DiscoverRail {
+                HStack(spacing: 13) {
+                    ForEach([TMDBCatalog.Feed.family, .animation, .kids], id: \.self) { feed in
+                        WithPerceptionTracking {
+                            RouteLink { WithPerceptionTracking { DiscoverBrowseView(title: feed.title, filter: .genre(feed == .family ? 10751 : feed == .kids ? 10762 : 16, type: feed == .family ? .movie : .tv)) } } label: {
+                                WithPerceptionTracking {
+                                    HStack(spacing: 15) {
+                                        ZStack {
+                                            ForEach(Array(model.items(feed).prefix(3).enumerated()).reversed(), id: \.element.key) { index, item in
+                                                WithPerceptionTracking {
+                                                    PosterImage(url: item.poster).frame(width: 49, height: 73).clipShape(RoundedRectangle(cornerRadius: 6))
+                                                        .rotationEffect(.degrees(Double(index) * 5)).offset(x: CGFloat(index) * 9)
+                                                }
+                                            }
+                                        }.frame(width: 72, height: 80)
+                                        Text(feed.title).font(.system(size: 19, weight: .semibold))
+                                    }
+                                    .frame(width: 197, height: 92).background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 22))
+                                }
+                            }.tmdbCardButton()
+                        }
+                    }
+                }.padding(.horizontal, DiscoverLayout.gutter)
+            }
+            #endif
+        }
+    }
+
+    #if os(tvOS)
+    /// Family, animation and kids from their own feeds, then the common genres with covers from every loaded row.
+    private var tvGenres: [DiscoverTVGenre] {
+        let feeds: [(TMDBCatalog.Feed, Int, TMDBMatch.MediaType)] = [(.family, 10751, .movie), (.animation, 16, .tv), (.kids, 10762, .tv)]
+        var genres = feeds.map { feed, id, type in DiscoverTVGenre(id: id, title: feed.title, filter: .genre(id, type: type), posters: model.items(feed).compactMap(\.poster)) }
+        let loaded = model.pages.values.flatMap(\.items)
+        for id in [878, 28, 35, 80, 18, 9648, 53, 27, 10749, 14, 12, 99] where !genres.contains(where: { $0.id == id }) {
+            var seen = Set<URL>()
+            let posters = loaded.filter { $0.genreIDs.contains(id) }.compactMap(\.poster).filter { seen.insert($0).inserted }
+            guard posters.count >= 3, let name = DiscoverGenres.names[id] else { continue }
+            genres.append(DiscoverTVGenre(id: id, title: L10n.text(name), filter: .genre(id, type: .movie), posters: posters))
+        }
+        return genres
+    }
+    #endif
+
+    private func rankings(width: CGFloat) -> some View {
+        #if os(tvOS)
+        DiscoverTVRow {
+            WithPerceptionTracking {
+                ForEach([TMDBCatalog.Feed.topTelevision, .topMovies], id: \.self) { feed in
+                    WithPerceptionTracking {
+                        RouteLink { WithPerceptionTracking { DiscoverListView(feed: feed, initial: model.pages[feed]) } } label: {
+                            WithPerceptionTracking {
+                                DiscoverTVRankingCard(title: feed.title, items: Array(model.items(feed).filter { $0.poster != nil }.prefix(18)))
+                            }
+                        }.panelCardButton(cornerRadius: 28).accessibilityIdentifier("discover.ranking.\(feed.rawValue)")
+                    }
+                }
+            }
+        }
+        #else
+        DiscoverRail {
+            HStack(spacing: 13) {
+                ForEach([TMDBCatalog.Feed.topTelevision, .topMovies], id: \.self) { feed in
+                    WithPerceptionTracking {
+                        RouteLink { WithPerceptionTracking { DiscoverListView(feed: feed, initial: model.pages[feed]) } } label: {
+                            WithPerceptionTracking {
+                                DiscoverRankingCard(feed: feed, items: Array(model.items(feed).prefix(15)), width: min(width - 33, 520))
+                            }
+                        }.tmdbCardButton()
+                    }
+                }
+            }.padding(.horizontal, DiscoverLayout.gutter)
+        }
+        #endif
+    }
+
+    /// Douban's hot lists, captioned with Douban's score. A title opens as the TMDB one it matches.
+    private var doubanShelves: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            ForEach(DoubanCatalog.Feed.allCases, id: \.self) { feed in
+                WithPerceptionTracking {
+                    let items = model.douban[feed] ?? []
+                    if !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            #if os(tvOS)
+                            // The native row, as the TMDB shelves: Left from the first title brings out See All.
+                            sectionHeading(feed.title)
+                            DiscoverTVNativeShelf(entries: items.map { .init(key: $0.id, title: $0.title, detail: $0.caption, image: $0.cover) },
+                                                  identifier: "douban.\(feed.rawValue)") { index in
+                                if let index {
+                                    let item = items[index]
+                                    openRoute?(Route { AnyView(DoubanTitleView(item: item)) })
+                                } else {
+                                    openRoute?(Route { AnyView(DoubanListView(feed: feed, initial: items)) })
+                                }
+                            }.frame(height: DiscoverLayout.posterWidth * 1.5 + DiscoverLayout.captionHeight + 48)
+                            #else
+                            moreHeading(feed.title, identifier: "discover.more.douban.\(feed.rawValue)") {
+                                DoubanListView(feed: feed, initial: items)
+                            }
+                            DiscoverRail(arrowCenter: 87) {
+                                LazyHStack(alignment: .top, spacing: DiscoverLayout.spacing) {
+                                    WithPerceptionTracking {
+                                        ForEach(items) { item in
+                                            WithPerceptionTracking {
+                                                RouteLink { WithPerceptionTracking { DoubanTitleView(item: item) } } label: {
+                                                    WithPerceptionTracking {
+                                                        DoubanTile(item: item).frame(width: DiscoverLayout.posterWidth)
+                                                    }
+                                                }
+                                                .tmdbCardButton()
+                                                .accessibilityIdentifier("discover.douban.\(feed.rawValue).\(item.id)")
+                                            }
+                                        }
+                                    }
+                                }.padding(.horizontal, DiscoverLayout.gutter)
+                            }
+                            #endif
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func shelf(_ feed: TMDBCatalog.Feed, landscape: Bool = false) -> some View {
+        let items = model.items(feed)
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                #if os(tvOS)
+                sectionHeading(feed.title)
+                #else
+                RouteLink { WithPerceptionTracking { DiscoverListView(feed: feed, initial: model.pages[feed]) } } label: {
+                    WithPerceptionTracking {
+                        HStack {
+                            Text(feed.title).font(.system(size: DiscoverLayout.heading, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "chevron.forward").font(.system(size: 14, weight: .semibold))
+                        }.frame(height: DiscoverLayout.headingHeight, alignment: .top).contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(.plain).padding(.horizontal, DiscoverLayout.gutter)
+                .accessibilityIdentifier("discover.more.\(feed.rawValue)")
+                #endif
+                #if os(tvOS)
+                DiscoverTVShelf(feed: feed, items: items, initial: model.pages[feed], landscape: landscape)
+                #else
+                DiscoverRail(arrowCenter: landscape ? 50 : 87) {
+                    LazyHStack(alignment: .top, spacing: DiscoverLayout.spacing) {
+                        WithPerceptionTracking {
+                            ForEach(items, id: \.key) { item in
+                                WithPerceptionTracking {
+                                    RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: {
+                                        WithPerceptionTracking {
+                                            DiscoverTile(item: item, landscape: landscape)
+                                                .frame(width: landscape ? DiscoverLayout.landscapeWidth : DiscoverLayout.posterWidth)
+                                        }
+                                    }
+                                    .tmdbCardButton()
+                                    .accessibilityIdentifier("discover.title.\(feed.rawValue).\(item.key)")
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter)
+                }
+                #endif
+            }
+        }
+    }
+
+    @ViewBuilder private func collections(width: CGFloat) -> some View {
+        let feeds: [TMDBCatalog.Feed] = [.variety, .chinese]
+        if feeds.contains(where: { !model.items($0).isEmpty }) {
+            #if os(tvOS)
+            ScrollView(.horizontal) {
+                WithPerceptionTracking {
+                    LazyHStack(spacing: 50) {
+                        WithPerceptionTracking {
+                            ForEach(feeds.filter { !model.items($0).isEmpty }, id: \.self) { feed in
+                                WithPerceptionTracking {
+                                    DiscoverTVCollection(feed: feed, items: Array(model.items(feed).prefix(10)))
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter).padding(.vertical, 24)
+                }
+            }.appScrollClipDisabled().focusSection()
+            #else
+            DiscoverRail {
+                HStack(spacing: 13) {
+                    ForEach(feeds, id: \.self) { feed in
+                        WithPerceptionTracking {
+                            if !model.items(feed).isEmpty {
+                                DiscoverCollection(feed: feed, items: Array(model.items(feed).prefix(8)))
+                                    .frame(width: min(width - 33, 520))
+                            }
+                        }
+                    }
+                }.padding(.horizontal, DiscoverLayout.gutter)
+            }
+            #endif
+        }
+    }
+}
+
+/// Interaction state is read only by the hero and its background. A scroll offset or page
+/// change must not re-evaluate all of the poster rails and their navigation destinations.
+@MainActor @Perceptible private final class DiscoverHeroState {
+    private(set) var items: [TMDBCatalog.Item] = []
+    private var pendingItems: [TMDBCatalog.Item]?
+    var id: String?
+    var scrollY: CGFloat = 0
+    var details: [String: TMDBMatch.Details] = [:]
+    var paints: [String: DiscoverPaint] = [:]
+    var firstKey: String?
+    var pageProgress: CGFloat = 0
+    private(set) var dragging = false
+    private var resources: [String: TMDBCatalog.Item] = [:]
+    private(set) var generation = UUID()
+    var paint: DiscoverPaint? { paints[id ?? firstKey ?? ""] }
+    var trailer: TMDBMatch.Trailer? { details[id ?? firstKey ?? ""]?.playableTrailer }
+
+    init(items: [TMDBCatalog.Item] = []) { _ = prepare(items) }
+
+    func prepare(_ items: [TMDBCatalog.Item]) -> UUID {
+        guard !dragging else {
+            pendingItems = items
+            return generation
+        }
+        pendingItems = nil
+        guard self.items != items else { return generation }
+        self.items = items
+        generation = UUID()
+        let unchanged = Set(items.filter { resources[$0.key] == $0 }.map(\.key))
+        details = details.filter { unchanged.contains($0.key) }
+        paints = paints.filter { unchanged.contains($0.key) }
+        resources = Dictionary(items.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        firstKey = items.first?.key
+        if id == nil || !items.contains(where: { $0.key == id }) {
+            id = firstKey
+            pageProgress = 0
+            dragging = false
+        } else {
+            pageProgress = CGFloat(items.firstIndex { $0.key == id } ?? 0)
+        }
+        return generation
+    }
+
+    func setDragging(_ dragging: Bool) {
+        self.dragging = dragging
+        if !dragging, let pendingItems { _ = prepare(pendingItems) }
+    }
+
+    func receive(_ details: TMDBMatch.Details?, paint: DiscoverPaint?, for item: TMDBCatalog.Item, generation: UUID) {
+        guard self.generation == generation, resources[item.key] == item else { return }
+        if let details, details.id == item.id, details.mediaType == item.mediaType { self.details[item.key] = details }
+        if let paint { paints[item.key] = paint }
+    }
+}
+
+private struct DiscoverHeroTheme: ViewModifier {
+    let state: DiscoverHeroState
+    /// Off: Featured Titles is hidden, and the page keeps the plain dark backdrop's colours.
+    let hero: Bool
+    func body(content: Content) -> some View {
+        WithPerceptionTracking {
+            #if os(tvOS)
+            content.foregroundStyle(.white).environment(\.colorScheme, .dark)
+            #else
+            let light = hero && state.paint?.isDark == false
+            content.foregroundStyle(light ? Color.black : Color.white)
+                .environment(\.colorScheme, light ? .light : .dark)
+            #endif
+        }
+    }
+}
+
+private struct DiscoverHeroBackground: View {
+    let state: DiscoverHeroState
+    let items: [TMDBCatalog.Item]
+    let width: CGFloat
+    let height: CGFloat
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        WithPerceptionTracking {
+            Group {
+                if state.dragging, !items.isEmpty {
+                    let position = min(max(state.pageProgress, 0), CGFloat(items.count - 1))
+                    let first = Int(position.rounded(.down))
+                    let next = min(first + 1, items.count - 1)
+                    let mix = position - CGFloat(first)
+                    ZStack {
+                        DiscoverBackdrop(paint: state.paints[items[first].key], width: width, heroHeight: height, scrollY: state.scrollY,
+                                         trailer: nil, playsTrailer: false)
+                        DiscoverBackdrop(paint: state.paints[items[next].key], width: width, heroHeight: height, scrollY: state.scrollY,
+                                         trailer: nil, playsTrailer: false).opacity(mix)
+                    }
+                } else {
+                    DiscoverBackdrop(paint: state.paint, width: width, heroHeight: height, scrollY: state.scrollY,
+                                     trailer: state.trailer, playsTrailer: active && state.scrollY < height * 0.35)
+                    #if os(tvOS)
+                        .id(state.id ?? items.first?.key)
+                        .transition(.opacity)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state.id)
+                    #endif
+                }
+            }
+                .task(id: items) {
+                    let generation = state.generation
+                    // A small bounded warm-up runs outside the main actor. Cache logos and processed
+                    // covers before a swipe so the drag itself performs no image decode or network work.
+                    await withTaskGroup(of: (TMDBCatalog.Item, TMDBMatch.Details?, DiscoverPaint?).self) { group in
+                        var remaining = items.makeIterator()
+                        func enqueue(_ item: TMDBCatalog.Item) {
+                            group.addTask {
+                                let response = try? await TMDBMatch.details(item.mediaType, id: item.id, season: nil)
+                                let details = response.flatMap { $0.id == item.id && $0.mediaType == item.mediaType ? $0 : nil }
+                                #if os(tvOS)
+                                let url = details?.backdrop ?? item.backdrop ?? item.poster
+                                #else
+                                let url = details?.heroPoster ?? item.poster
+                                #endif
+                                let paint = if let url { await DiscoverPainter.shared.paint(url) } else { nil as DiscoverPaint? }
+                                return (item, details, paint)
+                            }
+                        }
+                        for _ in 0..<2 { if let item = remaining.next() { enqueue(item) } }
+                        for await (item, details, paint) in group {
+                            guard !Task.isCancelled else { group.cancelAll(); break }
+                            state.receive(details, paint: paint, for: item, generation: generation)
+                            if let next = remaining.next() { enqueue(next) }
+                        }
+                    }
+                }
+        }
+    }
+}
+
+private struct DiscoverHeroCarousel: View {
+    let items: [TMDBCatalog.Item]
+    let state: DiscoverHeroState
+    let width: CGFloat
+    #if os(macOS)
+    @State private var hovering = false
+    @Environment(\.openRoute) private var openRoute
+    #endif
+    #if os(tvOS)
+    var tvFocus: FocusState<DiscoverTVFocus?>.Binding
+    #endif
+    var body: some View {
+        WithPerceptionTracking {
+            let height = DiscoverLayout.heroHeight(width)
+            let selectedID = state.id ?? items.first?.key
+            ZStack(alignment: .bottom) {
+                #if os(tvOS)
+                DiscoverTVHeroPager(items: items, details: state.details, selection: Binding(get: { selectedID }, set: { state.id = $0 }), focus: tvFocus)
+                    .frame(width: width, height: height)
+                #elseif os(iOS)
+                DiscoverNativeHeroPager(items: items, details: state.details, dark: state.paint?.isDark ?? true, selection: Binding(get: { selectedID }, set: { state.id = $0 }),
+                                        progress: { state.pageProgress = $0 }, dragging: { state.setDragging($0) })
+                #elseif os(macOS)
+                // One title at a time: in the split view's detail a horizontal scroll view takes the sidebar's width as
+                // a content inset, which shifted every page. The arrows and the dots move between titles.
+                let index = items.firstIndex { $0.key == selectedID } ?? 0
+                // A plain button pushes the title: a NavigationLink here also took the clicks on the arrows over it, so
+                // an arrow moved to the next title and then opened it.
+                ZStack {
+                    Button {
+                        let item = items[index]
+                        openRoute?(Route { AnyView(DiscoverDetailView(item: item)) })
+                    } label: {
+                        DiscoverHero(item: items[index], details: state.details[items[index].key])
+                            .frame(width: width, height: height)
+                    }
+                    .buttonStyle(.plain).id(items[index].key).transition(.opacity)
+                    .accessibilityIdentifier("discover.hero.\(items[index].key)")
+                    HStack {
+                        heroArrow("chevron.left", label: L10n.text("Previous"), to: index - 1)
+                        Spacer()
+                        heroArrow("chevron.right", label: L10n.text("Next"), to: index + 1)
+                    }.padding(.horizontal, 20).opacity(hovering ? 1 : 0).animation(.easeOut(duration: 0.2), value: hovering)
+                }
+                .onHover { hovering = $0 }
+                #else
+                ScrollView(.horizontal) {
+                    WithPerceptionTracking {
+                        LazyHStack(spacing: 0) {
+                            WithPerceptionTracking {
+                                ForEach(items, id: \.key) { item in
+                                    WithPerceptionTracking {
+                                        RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: {
+                                            WithPerceptionTracking {
+                                                DiscoverHero(item: item, details: state.details[item.key])
+                                                    .frame(width: width, height: height)
+                                            }
+                                        }
+                                        .buttonStyle(.plain).id(item.key)
+                                        .accessibilityIdentifier("discover.hero.\(item.key)")
+                                    }
+                                }
+                            }
+                        }.scrollTargetLayout()
+                    }
+                }
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: Binding(get: { state.id ?? items.first?.key }, set: { state.id = $0 }))
+                .scrollIndicators(.hidden)
+                #endif
+                #if os(iOS)
+                DiscoverPageControl(count: items.count, selection: Binding(get: {
+                    items.firstIndex { $0.key == (state.id ?? items.first?.key) } ?? 0
+                }, set: { index in
+                    guard items.indices.contains(index), items[index].key != selectedID else { return }
+                    state.setDragging(true)
+                    withAnimation(.easeInOut(duration: 0.35)) { state.id = items[index].key }
+                })).frame(height: 24).padding(.bottom, 0)
+                #elseif os(tvOS)
+                // The tvOS pager supplies a focusable group of page dots.
+                #else
+                HStack(spacing: 8) {
+                    ForEach(items, id: \.key) { item in
+                        WithPerceptionTracking {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.35)) { state.id = item.key }
+                            } label: {
+                                Circle().fill(Color.primary.opacity(item.key == (state.id ?? items.first?.key) ? 1 : 0.3))
+                                    .frame(width: 7, height: 7).frame(width: 18, height: 24).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(item.name)
+                            .accessibilityIdentifier("discover.pageDot.\(item.key)")
+                            .accessibilityAddTraits(item.key == (state.id ?? items.first?.key) ? [.isSelected] : [])
+                        }
+                    }
+                }.padding(.bottom, 0)
+                #endif
+            }
+            .frame(height: height)
+        }
+    }
+
+    #if os(macOS)
+    private func heroArrow(_ symbol: String, label: String, to index: Int) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.35)) { state.id = items[(index + items.count) % items.count].key }
+        } label: {
+            // A plain button takes clicks only on what it draws: without the shape a click between the chevron's
+            // strokes fell through to the title under it and opened that.
+            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).frame(width: 44, height: 44).glassSurface(.regular, in: Circle())
+                .contentShape(Circle())
+        }.buttonStyle(.plain).accessibilityLabel(label)
+    }
+    #endif
+}
+
+#if os(iOS)
+/// Native paging keeps touch tracking and deceleration in UIKit. Cells and destinations stay
+/// stable while the finger moves; SwiftUI receives only the final selection and backdrop progress.
+private struct DiscoverNativeHeroPager: UIViewRepresentable {
+    @Environment(\.openRoute) private var openRoute
+    let items: [TMDBCatalog.Item]
+    let details: [String: TMDBMatch.Details]
+    let dark: Bool
+    @Binding var selection: String?
+    let progress: (CGFloat) -> Void
+    let dragging: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UICollectionView {
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.minimumLineSpacing = 0; layout.minimumInteritemSpacing = 0
+        let view = HeroPagerCollectionView(frame: .zero, collectionViewLayout: layout)
+        view.page = { [weak coordinator = context.coordinator] in coordinator?.selectedIndex ?? 0 }
+        view.backgroundColor = .clear; view.isPagingEnabled = true
+        view.isDirectionalLockEnabled = true; view.decelerationRate = .fast
+        view.showsHorizontalScrollIndicator = false
+        view.contentInsetAdjustmentBehavior = .never
+        view.dataSource = context.coordinator; view.delegate = context.coordinator
+        view.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "hero")
+        return view
+    }
+    func updateUIView(_ view: UICollectionView, context: Context) {
+        // UIKit may request another cell before the drag ends. Keep its data source paired
+        // with the cells already on screen until the deferred reload can be applied.
+        if view.isDragging || view.isDecelerating {
+            context.coordinator.pending = self
+            return
+        }
+        let previous = context.coordinator.parent
+        context.coordinator.pending = nil
+        context.coordinator.parent = self
+        if previous.items != items || previous.details != details || previous.dark != dark { context.coordinator.needsReload = true }
+        if context.coordinator.needsReload { context.coordinator.needsReload = false; view.reloadData() }
+        let index = selection.flatMap { key in items.firstIndex { $0.key == key } } ?? 0
+        if !items.isEmpty, view.bounds.width > 0 {
+            let target = CGFloat(index) * view.bounds.width
+            if abs(view.contentOffset.x - target) > 1 {
+                dragging(true)
+                view.setContentOffset(CGPoint(x: target, y: 0), animated: context.transaction.animation != nil)
+                if context.transaction.animation == nil { context.coordinator.finish(view) }
+            }
+        }
+    }
+    @MainActor final class Coordinator: NSObject, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+        var parent: DiscoverNativeHeroPager
+        var pending: DiscoverNativeHeroPager?
+        var needsReload = false
+        init(_ parent: DiscoverNativeHeroPager) { self.parent = parent }
+        var selectedIndex: Int { parent.selection.flatMap { key in parent.items.firstIndex { $0.key == key } } ?? 0 }
+        func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { parent.items.count }
+        func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize { collectionView.bounds.size }
+        func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "hero", for: indexPath)
+            let item = parent.items[indexPath.item]
+            let details = parent.details[item.key]
+            let open = parent.openRoute
+            let dark = parent.dark
+            cell.backgroundColor = .clear
+            cell.contentConfiguration = UIHostingConfiguration {
+                WithPerceptionTracking {
+                    Button { open?(Route { AnyView(DiscoverDetailView(item: item)) }) } label: {
+                        DiscoverHero(item: item, details: details).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }.buttonStyle(.plain).foregroundStyle(dark ? Color.white : Color.black)
+                        .accessibilityIdentifier("discover.hero.\(item.key)")
+                }
+            }.margins(.all, 0)
+            return cell
+        }
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { parent.dragging(true) }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0 else { return }
+            parent.progress(scrollView.contentOffset.x / scrollView.bounds.width)
+        }
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { finish(scrollView) }
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { finish(scrollView) }
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { if !decelerate { finish(scrollView) } }
+        func finish(_ scrollView: UIScrollView) {
+            guard scrollView.bounds.width > 0, !parent.items.isEmpty else { parent.dragging(false); return }
+            let index = min(max(Int((scrollView.contentOffset.x / scrollView.bounds.width).rounded()), 0), parent.items.count - 1)
+            let selected = parent.items[index].key
+            if let next = pending {
+                pending = nil
+                needsReload = parent.items != next.items || parent.details != next.details || parent.dark != next.dark
+                parent = next
+            }
+            let current = parent.items.firstIndex { $0.key == selected } ?? 0
+            parent.selection = parent.items.indices.contains(current) ? parent.items[current].key : nil
+            if needsReload, let view = scrollView as? UICollectionView { needsReload = false; view.reloadData() }
+            let target = CGFloat(current) * scrollView.bounds.width
+            if abs(scrollView.contentOffset.x - target) > 1 {
+                scrollView.setContentOffset(CGPoint(x: target, y: 0), animated: false)
+            }
+            parent.progress(CGFloat(current))
+            parent.dragging(false)
+        }
+    }
+}
+
+/// Each page is as wide as the pager. When the pager changes size (an iPhone turned sideways, an iPad window resized),
+/// the flow layout kept the old page size and the old offset, so the titles slid out of line (#516). A new size lays
+/// the pages out again and goes back to the selected one.
+private final class HeroPagerCollectionView: UICollectionView {
+    var page: () -> Int = { 0 }
+    private var pageSize: CGSize = .zero
+    override func layoutSubviews() {
+        guard bounds.size != pageSize, bounds.width > 0 else { return super.layoutSubviews() }
+        pageSize = bounds.size
+        collectionViewLayout.invalidateLayout()
+        super.layoutSubviews()
+        guard !isDragging, !isDecelerating else { return }
+        let x = min(CGFloat(page()) * bounds.width, max(0, contentSize.width - bounds.width))
+        if abs(contentOffset.x - x) > 0.5 { contentOffset = CGPoint(x: x, y: 0) }
+    }
+}
+
+private struct DiscoverPageControl: UIViewRepresentable {
+    let count: Int
+    @Binding var selection: Int
+    func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
+    func makeUIView(context: Context) -> UIPageControl {
+        let view = UIPageControl()
+        view.numberOfPages = count
+        view.pageIndicatorTintColor = UIColor.label.withAlphaComponent(0.3)
+        view.currentPageIndicatorTintColor = .label
+        view.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        view.accessibilityIdentifier = "discover.pageControl"
+        return view
+    }
+    func updateUIView(_ view: UIPageControl, context: Context) {
+        context.coordinator.selection = $selection
+        view.numberOfPages = count
+        view.currentPage = selection
+    }
+    @MainActor final class Coordinator: NSObject {
+        var selection: Binding<Int>
+        init(selection: Binding<Int>) { self.selection = selection }
+        @objc func changed(_ sender: UIPageControl) { selection.wrappedValue = sender.currentPage }
+    }
+}
+#endif
+
+struct DiscoverCanvas: View {
+    let poster: URL?
+    @State private var paint: DiscoverPaint?
+    var body: some View {
+        WithPerceptionTracking {
+            (paint?.color ?? Color(white: 0.06))
+                .overlay(.black.opacity(0.4)).discoverFullBleed()
+                .task(id: poster) {
+                    guard let poster else { return }
+                    let value = await DiscoverPainter.shared.paint(poster)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.4)) { paint = value }
+                }
+        }
+    }
+}
+
+/// A horizontal rail. On the Mac, where a mouse wheel scrolls only up and down, it is a `ScrollStrip`: it can be
+/// dragged like a swipe, and arrows float over its ends, centred `arrowCenter` from the top (the middle of the
+/// artwork rather than of artwork and caption).
+struct DiscoverRail<Content: View>: View {
+    var arrowCenter: CGFloat? = nil
+    @ViewBuilder let content: Content
+    var body: some View {
+        WithPerceptionTracking {
+            #if os(macOS)
+            ScrollStrip(leftLabel: "Previous", rightLabel: "Next", overlayArrows: true, arrowCenter: arrowCenter) { WithPerceptionTracking { content } }
+            #else
+            ScrollView(.horizontal) { WithPerceptionTracking { content } }.scrollIndicators(.hidden)
+            #endif
+        }
+    }
+}
+
+/// A button in a rail. On the Mac the card under the pointer gets the mouse-up that ends a drag, which must not
+/// press it.
+struct DiscoverButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder let label: Label
+    @Environment(\.stripDrag) private var drag
+    var body: some View { WithPerceptionTracking { Button { if drag?.active != true { action() } } label: { label } } }
+}
+
+struct DiscoverScrollKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+struct DiscoverScrollObserver: ViewModifier {
+    @Binding var offset: CGFloat
+    @ViewBuilder func body(content: Content) -> some View {
+        WithPerceptionTracking {
+            if #available(iOS 18, macOS 15, tvOS 18, *) {
+                content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentOffset.y + geometry.contentInsets.top
+                } action: { _, value in offset = value }
+            } else {
+                content.onPreferenceChange(DiscoverScrollKey.self) { offset = $0 }
+            }
+        }
+    }
+}
+
+private struct DiscoverHero: View {
+    let item: TMDBCatalog.Item
+    let details: TMDBMatch.Details?
+    var body: some View {
+        WithPerceptionTracking {
+            GeometryReader { proxy in
+                WithPerceptionTracking {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        Group {
+                            if let logo = details?.logo {
+                                TMDBArtwork(url: logo, maxPixels: 1000, fill: false)
+                                    .accessibilityLabel(item.name)
+                            } else {
+                                Text(item.name).font(.system(size: 40, weight: .semibold))
+                                    .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6)
+                            }
+                        }
+                        .frame(width: proxy.size.width * 0.8, height: 145, alignment: .bottom)
+                        .padding(.bottom, 15)
+                        Text([details?.genres.prefix(2).joined(separator: " / ") ?? item.genreNames,
+                              details?.date ?? item.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: 14)).lineLimit(1).frame(height: 17)
+                        Text("「\(item.name)」" + item.overview)
+                            .font(.system(size: 12)).lineLimit(2).multilineTextAlignment(.center)
+                            .frame(height: 34, alignment: .top).padding(.top, 5)
+                        HStack(spacing: 4) {
+                            if let rating = item.rating {
+                                TMDBBadge()
+                                Text(rating, format: .number.precision(.fractionLength(1))).font(.system(size: 11))
+                            }
+                        }.frame(height: 14).padding(.top, 5)
+                    }
+                    .padding(.horizontal, 30).padding(.bottom, 42)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .contentShape(Rectangle())
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+struct DiscoverTile: View {
+    let item: TMDBCatalog.Item
+    var landscape = false
+    /// Shows the score under the title, as the lists' pages do (#467).
+    var showsRating = false
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 0) {
+                Color.clear.aspectRatio(landscape ? 16.0 / 9 : 2.0 / 3, contentMode: .fit)
+                    .overlay { WithPerceptionTracking { PosterImage(url: landscape ? item.backdrop ?? item.poster : item.poster) } }
+                    .posterClip(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5) } }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.name).font(.system(size: DiscoverLayout.caption)).lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let year = item.year { Text(String(year)) }
+                        if landscape, !item.genreNames.isEmpty { Text(item.genreNames).lineLimit(1) }
+                        if showsRating, let rating = item.rating {
+                            Text("★ " + rating.formatted(.number.precision(.fractionLength(1))))
+                        }
+                    }.font(.system(size: DiscoverLayout.secondary, design: .rounded)).foregroundStyle(.primary.opacity(0.56))
+                }.frame(maxWidth: .infinity, alignment: .leading).frame(height: DiscoverLayout.captionHeight)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// Scale the 450-point editorial composition as a unit to preserve its proportions across phones.
+private struct DiscoverCollection: View {
+    let feed: TMDBCatalog.Feed
+    let items: [TMDBCatalog.Item]
+    @State private var paint: DiscoverPaint?
+    var body: some View {
+        WithPerceptionTracking {
+            GeometryReader { proxy in
+                WithPerceptionTracking {
+                    let scale = proxy.size.width / 450
+                    VStack(alignment: .leading, spacing: 0) {
+                        RouteLink { WithPerceptionTracking { DiscoverListView(feed: feed, initial: nil) } } label: {
+                            WithPerceptionTracking {
+                                ZStack(alignment: .bottom) {
+                                    PosterImage(url: items.first?.backdrop ?? items.first?.poster)
+                                    LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .center, endPoint: .bottom)
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "laurel.leading").font(.system(size: 38))
+                                        VStack(spacing: 4) {
+                                            Text(feed.collectionTitle).font(.system(size: 34, weight: .semibold))
+                                            Text(items.first?.name ?? "").font(.system(size: 14)).opacity(0.8)
+                                        }
+                                        Image(systemName: "laurel.trailing").font(.system(size: 38))
+                                    }.padding(.horizontal, 16).padding(.bottom, 24)
+                                }.frame(width: 450, height: 270).clipped()
+                            }
+                        }.buttonStyle(.plain)
+                        ScrollView(.horizontal) {
+                            WithPerceptionTracking {
+                                HStack(alignment: .top, spacing: 27.5) {
+                                    ForEach(items, id: \.key) { item in
+                                        WithPerceptionTracking {
+                                            RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: {
+                                                WithPerceptionTracking {
+                                                    DiscoverTile(item: item, landscape: true).frame(width: 160)
+                                                }
+                                            }.tmdbCardButton()
+                                        }
+                                    }
+                                }.padding(.horizontal, 20).padding(.top, 20)
+                            }
+                        }.scrollIndicators(.hidden).frame(height: 180, alignment: .top)
+                    }
+                    .frame(width: 450, height: 450)
+                    .background(paint?.color ?? Color(white: 0.12))
+                    .foregroundStyle(.white)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: proxy.size.width, height: proxy.size.width, alignment: .topLeading)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5) } }
+                }
+            }.aspectRatio(1, contentMode: .fit)
+            .task(id: items.first?.poster) {
+                if let url = items.first?.poster { paint = await DiscoverPainter.shared.paint(url) }
+            }
+        }
+    }
+}
+
+#if os(tvOS)
+/// A collection on the TV, measured from Rex's running app (BoardListFeatureCell): an 855×676 card on the banner's
+/// colour; the banner is not a button, a More pill on it opens the list, and the titles on the rail below lift one
+/// at a time with their captions.
+private struct DiscoverTVCollection: View {
+    let feed: TMDBCatalog.Feed
+    let items: [TMDBCatalog.Item]
+    @State private var paint: DiscoverPaint?
+    private var tint: Color { paint?.color ?? Color(white: 0.14) }
+    private var cover: URL? { items.first?.backdrop ?? items.first?.poster }
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 0) {
+                banner
+                ScrollView(.horizontal) {
+                    WithPerceptionTracking {
+                        LazyHStack(alignment: .top, spacing: 35) {
+                            WithPerceptionTracking {
+                                ForEach(items, id: \.key) { item in
+                                    WithPerceptionTracking {
+                                        RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: { WithPerceptionTracking { tile(item) } }
+                                            .cardButton()
+                                            .accessibilityIdentifier("discover.collection.\(feed.rawValue).\(item.key)")
+                                    }
+                                }
+                            }
+                        }.padding(28)
+                    }
+                }
+                .appScrollClipDisabled()
+                .frame(width: 855, height: 276)
+                .background(Color(red: 0.11, green: 0.11, blue: 0.12).opacity(0.38))
+            }
+            .frame(width: 855, height: 676, alignment: .top)
+            .background(tint)
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.1), lineWidth: 1) } }
+            .focusSection()
+            .task(id: cover) {
+                if let cover { paint = await DiscoverPainter.shared.paint(cover) }
+            }
+        }
+    }
+
+    private var banner: some View {
+        ZStack(alignment: .bottom) {
+            PosterImage(url: cover).frame(width: 855, height: 400)
+            LinearGradient(colors: [.clear, tint], startPoint: .center, endPoint: .bottom)
+            HStack(spacing: 15) {
+                Image(systemName: "laurel.leading").font(.system(size: 52)).frame(width: 64, height: 64)
+                VStack(spacing: 2) {
+                    Text(feed.collectionTitle).font(.system(size: 64, weight: .semibold))
+                    Text(items.first?.name ?? "").font(.system(size: 29, weight: .medium)).opacity(0.75)
+                }.lineLimit(1).minimumScaleFactor(0.7)
+                Image(systemName: "laurel.trailing").font(.system(size: 52)).frame(width: 64, height: 64)
+                Spacer(minLength: 20)
+                RouteLink { WithPerceptionTracking { DiscoverListView(feed: feed, initial: nil) } } label: {
+                    WithPerceptionTracking {
+                        HStack(spacing: 10) {
+                            Text(L10n.text("More"))
+                            Image(systemName: "chevron.right.circle.fill")
+                        }
+                    }
+                }
+                .buttonStyle(DiscoverTVMoreStyle())
+                .accessibilityIdentifier("discover.collection.\(feed.rawValue)")
+            }
+            .padding(.horizontal, 28).padding(.bottom, 28)
+        }.frame(width: 855, height: 400)
+    }
+
+    private func tile(_ item: TMDBCatalog.Item) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PosterImage(url: item.backdrop ?? item.poster).frame(width: 263, height: 148)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.name).font(.system(size: 29))
+                HStack(spacing: 6) {
+                    if let year = item.year { Text(String(year)) }
+                    if item.year != nil, item.genre != nil { Circle().fill(.white.opacity(0.5)).frame(width: 3, height: 3) }
+                    if let genre = item.genre { Text(genre) }
+                }.font(.system(size: 23, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+            }.lineLimit(1).cardCaption()
+        }.frame(width: 263, alignment: .leading)
+    }
+}
+
+private extension TMDBCatalog.Item {
+    /// The first of the genres, for a short caption.
+    var genre: String? {
+        genreNames.split(separator: "/").first.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+/// The More pill on a collection's banner: words and a chevron that gain a light glass capsule under focus, as in Rex.
+private struct DiscoverTVMoreStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { WithPerceptionTracking { More(configuration: configuration) } }
+    private struct More: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.isFocused) private var focused
+        var body: some View {
+            WithPerceptionTracking {
+                configuration.label
+                    .font(.system(size: 29, weight: .medium))
+                    .padding(.horizontal, 24).frame(height: 64)
+                    .glassSurface(focused ? .regular.tint(.white.opacity(0.3)).interactive() : .identity, in: Capsule())
+                    .scaleEffect(configuration.isPressed ? 0.96 : focused ? 1.06 : 1)
+                    .animation(.easeOut(duration: 0.18), value: focused)
+            }
+        }
+    }
+}
+
+/// A list of titles on the TV, as Rex's View All: the name centred at the top, optional filter chips, then six
+/// 224×336 covers a row, centred, each over centred captions that move down as the cover lifts.
+struct DiscoverTVGrid<Chips: View, Footer: View>: View {
+    let title: String
+    let items: [TMDBCatalog.Item]
+    let identifier: String
+    /// Shows the score under the title, as the lists' pages do (#467).
+    var showsRating = false
+    let reachedEnd: () async -> Void
+    @ViewBuilder let chips: () -> Chips
+    @ViewBuilder let footer: () -> Footer
+    private static var width: CGFloat { 6 * 224 + 5 * 51 }
+    var body: some View {
+        WithPerceptionTracking {
+            ScrollView {
+                WithPerceptionTracking {
+                    VStack(spacing: 0) {
+                        Text(title).font(.system(size: 52, weight: .semibold)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                            .frame(maxWidth: .infinity).padding(.top, 60)
+                        HStack(spacing: 20) { chips() }
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 56).focusSection()
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(224), spacing: 51, alignment: .top), count: 6), spacing: 66) {
+                            WithPerceptionTracking {
+                                ForEach(items, id: \.key) { item in
+                                    WithPerceptionTracking {
+                                        RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: { WithPerceptionTracking { tile(item) } }
+                                            .cardButton()
+                                            .accessibilityIdentifier("\(identifier).\(item.key)")
+                                            .task { if item.key == items.last?.key { await reachedEnd() } }
+                                    }
+                                }
+                            }
+                        }.padding(.top, 54)
+                        footer().padding(40)
+                    }
+                    .frame(width: Self.width).frame(maxWidth: .infinity)
+                    .padding(.bottom, 80)
+                }
+            }
+            .appScrollClipDisabled()
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    private func tile(_ item: TMDBCatalog.Item) -> some View {
+        let caption = [item.date ?? item.year.map(String.init),
+                       showsRating ? item.rating.map { "★ " + $0.formatted(.number.precision(.fractionLength(1))) } : nil]
+            .compactMap { $0 }.joined(separator: " · ")
+        return VStack(spacing: 5) {
+            PosterImage(url: item.poster).frame(width: 224, height: 336)
+            VStack(spacing: 0) {
+                Text(item.name).font(.system(size: 29))
+                Text(caption.isEmpty ? " " : caption).font(.system(size: 23, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+            }.lineLimit(1).cardCaption()
+        }.frame(width: 224)
+    }
+}
+
+/// A row of cards with room for the focus lift, as the collections row has.
+private struct DiscoverTVRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        WithPerceptionTracking {
+            ScrollView(.horizontal) {
+                WithPerceptionTracking {
+                    LazyHStack(spacing: DiscoverLayout.spacing) { WithPerceptionTracking { content() } }
+                        .padding(.horizontal, DiscoverLayout.gutter).padding(.vertical, 24)
+                }
+            }.appScrollClipDisabled().focusSection()
+        }
+    }
+}
+
+/// A network's or studio's logo in white, or its name until the logo loads.
+private struct DiscoverTVLogo: View {
+    let brand: TMDBCatalog.Brand
+    var body: some View {
+        WithPerceptionTracking {
+            AsyncImage(url: brand.logo) { phase in
+                WithPerceptionTracking {
+                    if let image = phase.image { image.renderingMode(.template).resizable().scaledToFit() }
+                    else { Text(brand.name).font(.system(size: 32, weight: .bold)).lineLimit(1).minimumScaleFactor(0.6) }
+                }
+            }
+        }
+    }
+}
+
+/// A network: its logo on the left, a tilted wall of its shows on the right.
+private struct DiscoverTVNetworkCard: View {
+    let brand: TMDBCatalog.Brand
+    let items: [TMDBCatalog.Item]
+    var body: some View {
+        WithPerceptionTracking {
+            ZStack(alignment: .leading) {
+                Color(white: 0.09)
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(0..<3) { column in
+                        WithPerceptionTracking {
+                            VStack(spacing: 12) {
+                                ForEach(Array(items.enumerated()).filter { $0.offset % 3 == column }, id: \.element.key) { _, item in
+                                    WithPerceptionTracking {
+                                        PosterImage(url: item.poster).frame(width: 96, height: 144)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    }
+                                }
+                            }.offset(y: column == 1 ? -70 : -10)
+                        }
+                    }
+                }
+                .rotationEffect(.degrees(12))
+                .frame(maxWidth: .infinity, alignment: .trailing).offset(x: 24)
+                LinearGradient(stops: [.init(color: Color(white: 0.09), location: 0.38), .init(color: Color(white: 0.09).opacity(0), location: 0.62)],
+                               startPoint: .leading, endPoint: .trailing)
+                DiscoverTVLogo(brand: brand).frame(width: 200, height: 84).padding(.leading, 34)
+            }
+            .frame(width: 520, height: 236).clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous)).foregroundStyle(.white)
+        }
+    }
+}
+
+/// A studio: a still from one of its films behind its logo.
+private struct DiscoverTVStudioCard: View {
+    let brand: TMDBCatalog.Brand
+    let backdrop: URL?
+    var body: some View {
+        WithPerceptionTracking {
+            ZStack {
+                Color(white: 0.12)
+                if let backdrop { TMDBArtwork(url: backdrop, maxPixels: 800) }
+                Color.black.opacity(0.42)
+                DiscoverTVLogo(brand: brand).frame(width: 220, height: 76).shadow(color: .black.opacity(0.5), radius: 8)
+            }
+            .frame(width: 316, height: 136).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous)).foregroundStyle(.white)
+        }
+    }
+}
+
+struct DiscoverTVGenre: Identifiable {
+    let id: Int
+    let title: String
+    let filter: TMDBCatalog.Filter
+    let posters: [URL]
+}
+
+/// A genre: a small fan of its covers beside its name.
+private struct DiscoverTVGenreCard: View {
+    let title: String
+    let posters: [URL]
+    var body: some View {
+        WithPerceptionTracking {
+            HStack(spacing: 0) {
+                ZStack(alignment: .leading) {
+                    ForEach(Array(posters.prefix(3).enumerated()).reversed(), id: \.offset) { index, url in
+                        WithPerceptionTracking {
+                            PosterImage(url: url).frame(width: 62, height: 93)
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                .shadow(color: .black.opacity(0.45), radius: 5, x: 3)
+                                .rotationEffect(.degrees(Double(index) * 7), anchor: .bottom)
+                                .offset(x: CGFloat(index) * 15)
+                        }
+                    }
+                }.frame(width: 110, alignment: .leading)
+                Text(title).font(.system(size: 30, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(.leading, 24).padding(.trailing, 12)
+            .frame(width: 316, height: 136)
+            .background(Color(white: 0.13), in: RoundedRectangle(cornerRadius: 20, style: .continuous)).foregroundStyle(.white)
+        }
+    }
+}
+
+/// Top rated: three staggered rows of covers over the title.
+private struct DiscoverTVRankingCard: View {
+    let title: String
+    let items: [TMDBCatalog.Item]
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 24) {
+                    ForEach(0..<3) { row in
+                        WithPerceptionTracking {
+                            HStack(spacing: 22) {
+                                ForEach(Array(items.enumerated()).filter { $0.offset % 3 == row }, id: \.element.key) { _, item in
+                                    WithPerceptionTracking {
+                                        PosterImage(url: item.poster).frame(width: 120, height: 178)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
+                                }
+                            }.offset(x: [-30, -96, -8][row])
+                        }
+                    }
+                }
+                .padding(.top, 22)
+                .frame(width: 720, height: 610, alignment: .topLeading).clipped()
+                Text(title).font(.system(size: 40, weight: .bold)).frame(maxHeight: .infinity)
+            }
+            .frame(width: 720, height: 700)
+            .background(Color(white: 0.1)).clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous)).foregroundStyle(.white)
+        }
+    }
+}
+#endif
+
+private struct DiscoverBrandCard: View {
+    let brand: TMDBCatalog.Brand
+    let items: [TMDBCatalog.Item]
+    let width: CGFloat
+    var body: some View {
+        WithPerceptionTracking {
+            ZStack(alignment: .trailing) {
+                Color(white: 0.06)
+                if let url = items.first?.backdrop {
+                    TMDBArtwork(url: url, maxPixels: 100).blur(radius: 28).opacity(0.3)
+                }
+                HStack(spacing: 8) {
+                    ForEach(items, id: \.key) { item in
+                        WithPerceptionTracking {
+                            PosterImage(url: item.poster).frame(width: width * 0.21, height: width * 0.44)
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(0.15), lineWidth: 0.5) } }
+                        }
+                    }
+                }.rotationEffect(.degrees(16)).offset(x: width * 0.38, y: 6)
+                LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
+                HStack {
+                    AsyncImage(url: brand.logo) { phase in
+                        WithPerceptionTracking {
+                            if let image = phase.image { image.renderingMode(.template).resizable().scaledToFit() }
+                            else { Text(brand.name).font(.system(size: 24, weight: .semibold)) }
+                        }
+                    }.frame(width: width * 0.44, height: 64)
+                    Spacer(minLength: 0)
+                }.padding(.leading, 20)
+            }
+            .frame(width: width, height: width == 302 ? 144.667 : 92)
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5) } }
+        }
+    }
+}
+
+private struct DiscoverRankingCard: View {
+    let feed: TMDBCatalog.Feed
+    let items: [TMDBCatalog.Item]
+    let width: CGFloat
+    var body: some View {
+        WithPerceptionTracking {
+            ZStack(alignment: .bottom) {
+                Color(white: 0.1)
+                HStack(alignment: .top, spacing: width * 0.025) {
+                    ForEach(0..<5) { column in
+                        WithPerceptionTracking {
+                            VStack(spacing: width * 0.025) {
+                                ForEach(Array(items.enumerated()).filter { $0.offset % 5 == column }, id: \.element.key) { _, item in
+                                    WithPerceptionTracking {
+                                        PosterImage(url: item.poster).frame(width: width * 0.215, height: width * 0.3225)
+                                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                                    }
+                                }
+                            }.offset(y: column.isMultiple(of: 2) ? -width * 0.1 : -width * 0.22)
+                        }
+                    }
+                }.frame(width: width, height: width, alignment: .top)
+                LinearGradient(stops: [.init(color: .clear, location: 0.4), .init(color: .black.opacity(0.85), location: 0.88)], startPoint: .top, endPoint: .bottom)
+                Text(feed.title).font(.system(size: 31, weight: .semibold)).padding(.bottom, 28)
+            }
+            .frame(width: width, height: width).foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.1), lineWidth: 0.5) } }
+        }
+    }
+}
+
+private struct DiscoverListView: View {
+    let feed: TMDBCatalog.Feed
+    let initial: TMDBCatalog.Page?
+    @State private var items: [TMDBCatalog.Item] = []
+    @State private var page = 0
+    @State private var totalPages = 1
+    @State private var loading = false
+    @State private var failed = false
+    init(feed: TMDBCatalog.Feed, initial: TMDBCatalog.Page?) {
+        self.feed = feed; self.initial = initial
+        _items = State(initialValue: initial?.items ?? [])
+        _page = State(initialValue: initial?.page ?? 0)
+        _totalPages = State(initialValue: initial?.totalPages ?? 1)
+    }
+    var body: some View {
+        WithPerceptionTracking {
+            #if os(tvOS)
+            DiscoverTVGrid(title: feed.title, items: items, identifier: "discover.list.title", showsRating: true, reachedEnd: loadMore) {
+                WithPerceptionTracking {
+                    EmptyView()
+                }
+            } footer: {
+                WithPerceptionTracking {
+                    if failed { Button(L10n.text("Try Again")) { Task { await loadMore() } } }
+                    else if loading { ProgressView() }
+                }
+            }
+            .background { WithPerceptionTracking { DiscoverCanvas(poster: items.first?.poster) } }
+            .foregroundStyle(.white).preferredColorScheme(.dark)
+            .task {
+                if items.isEmpty { await loadMore() }
+            }
+            #else
+            ScrollView {
+                WithPerceptionTracking {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: DiscoverLayout.posterWidth), spacing: DiscoverLayout.spacing)], alignment: .leading, spacing: 22) {
+                        WithPerceptionTracking {
+                            ForEach(items, id: \.key) { item in
+                                WithPerceptionTracking {
+                                    RouteLink { WithPerceptionTracking { DiscoverDetailView(item: item) } } label: { WithPerceptionTracking { DiscoverTile(item: item, showsRating: true) } }.tmdbCardButton()
+                                        .accessibilityIdentifier("discover.list.title.\(item.key)")
+                                        .task {
+                                            if item.key == items.last?.key { await loadMore() }
+                                        }
+                                }
+                            }
+                        }
+                    }.padding(DiscoverLayout.gutter)
+                    if failed {
+                        Button(L10n.text("Try Again")) { Task { await loadMore() } }.padding()
+                    } else if loading {
+                        ProgressView().padding()
+                    } else if page < totalPages {
+                        Button(L10n.text("More")) { Task { await loadMore() } }.padding()
+                            .accessibilityIdentifier("discover.loadMore")
+                    }
+                }
+            }
+            .background { WithPerceptionTracking { DiscoverCanvas(poster: items.first?.poster) } }
+            .foregroundStyle(.white).preferredColorScheme(.dark)
+            .navigationTitle(feed.title)
+            .task {
+                if items.isEmpty { await loadMore() }
+            }
+            #endif
+        }
+    }
+    private func loadMore() async {
+        guard !loading, page < totalPages else { return }
+        loading = true; failed = false
+        defer { loading = false }
+        do {
+            let result = try await TMDBCatalog.page(feed, page: page + 1)
+            guard !Task.isCancelled else { return }
+            var seen = Set(items.map(\.key))
+            items += result.items.filter { seen.insert($0.key).inserted }
+            page = result.page; totalPages = result.totalPages
+        } catch { if !Task.isCancelled { failed = true } }
+    }
+}
+
+private extension TMDBCatalog.Feed {
+    var title: String {
+        switch self {
+        case .featured: DiscoverSection.hero.title
+        case .trending: L10n.text("Trending This Week")
+        case .nowPlaying: L10n.text("In Theaters")
+        case .onTheAir: L10n.text("On the Air")
+        case .animation: L10n.text("Popular Animation")
+        case .movies: L10n.text("Popular Movies")
+        case .television: L10n.text("Popular TV Shows")
+        case .topMovies: L10n.text("Top Rated Movies")
+        case .topTelevision: L10n.text("Top Rated TV Shows")
+        case .upcoming: L10n.text("Coming Soon")
+        case .chinese: L10n.text("Chinese TV Shows")
+        case .korean: L10n.text("Korean TV Shows")
+        case .variety: L10n.text("Variety Shows")
+        case .family: L10n.text("Family")
+        case .kids: L10n.text("Kids")
+        case .netflix: "Netflix"
+        case .disney: "Disney+"
+        case .appleTV: "Apple TV+"
+        case .hbo: "HBO"
+        case .warner: "Warner Bros."
+        case .universal: "Universal"
+        case .paramount: "Paramount"
+        case .sony: "Sony Pictures"
+        }
+    }
+    var collectionTitle: String {
+        self == .variety ? L10n.text("Popular Variety Shows") : L10n.text("Popular Chinese Dramas")
+    }
+}
+
+
+private enum DiscoverSection: String, CaseIterable, Identifiable {
+    case hero, airingAnime, airingSeries, douban, nowPlaying, onTheAir, trending, collections, animation, people, networks, genres, rankings, companies
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .hero: L10n.text("Featured Titles")
+        case .airingAnime: TMDBCalendar.Kind.anime.shelfTitle
+        case .airingSeries: TMDBCalendar.Kind.tv.shelfTitle
+        case .douban: L10n.text("Douban Hot Lists")
+        case .nowPlaying: L10n.text("In Theaters")
+        case .onTheAir: L10n.text("On the Air")
+        case .trending: L10n.text("Trending This Week")
+        case .collections: L10n.text("Featured Collections")
+        case .animation: L10n.text("Popular Animation")
+        case .people: L10n.text("People")
+        case .networks: L10n.text("Networks")
+        case .genres: L10n.text("Browse by Genre")
+        case .rankings: L10n.text("Top Rated Collections")
+        case .companies: L10n.text("Film Studios")
+        }
+    }
+}
+
+extension TMDBCatalog.Item {
+    var genreNames: String { genreIDs.prefix(2).compactMap { DiscoverGenres.names[$0] }.map { L10n.text($0) }.joined(separator: " / ") }
+}
+
+enum DiscoverGenres {
+    static func ids(for kind: TMDBCatalog.SearchKind) -> [Int] {
+        kind == .tv ? [10759,16,35,80,99,18,10751,10762,9648,10763,10764,10765,10766,10767,10768,37]
+            : [28,12,16,35,80,99,18,10751,14,36,27,10402,9648,10749,878,10770,53,10752,37]
+    }
+
+    static let names = [28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary",
+                        18: "Drama", 10751: "Family", 14: "Fantasy", 36: "Historical", 27: "Horror", 10402: "Music",
+                        9648: "Mystery", 10749: "Romance", 878: "Science Fiction", 53: "Thriller", 10752: "War", 37: "Western",
+                        10759: "Action & Adventure", 10762: "Kids", 10763: "News", 10764: "Reality", 10765: "Sci-Fi & Fantasy", 10767: "Talk", 10770: "TV Movie", 10766: "Soap", 10768: "War & Politics"]
+}
+
+extension TMDBMatch.SearchResult {
+    var catalogItem: TMDBCatalog.Item {
+        // Both server responses share the same title identity and artwork fields.
+        TMDBCatalog.Item(id: id, mediaType: mediaType, name: name, originalName: originalName ?? "", year: year,
+                         overview: overview ?? "", poster: poster, backdrop: backdrop, rating: nil, genreIDs: [])
+    }
+}
+
+extension TMDBMatch.Candidate {
+    var catalogItem: TMDBCatalog.Item {
+        TMDBCatalog.Item(id: id, mediaType: mediaType, name: name, originalName: originalName ?? "", year: year,
+                         overview: overview ?? "", poster: poster, backdrop: nil, rating: nil, genreIDs: [])
+    }
+}
+
+private extension TMDBCatalog.Feed {
+    var brandFilter: TMDBCatalog.Filter {
+        let mapping: [Self: (Int, TMDBMatch.MediaType)] = [.netflix: (213, .tv), .disney: (2739, .tv), .appleTV: (2552, .tv), .hbo: (49, .tv), .warner: (174, .movie), .universal: (33, .movie), .paramount: (4, .movie), .sony: (34, .movie)]
+        let value = mapping[self]!
+        return .studio(value.0, type: value.1)
+    }
+}
+
+#if os(tvOS)
+private struct DiscoverTVShelf: View {
+    let feed: TMDBCatalog.Feed
+    let items: [TMDBCatalog.Item]
+    let initial: TMDBCatalog.Page?
+    let landscape: Bool
+    @Environment(\.openRoute) private var openRoute
+    var body: some View {
+        WithPerceptionTracking {
+            DiscoverTVNativeShelf(items: items, identifier: feed.rawValue, landscape: landscape) { item in
+                if let item {
+                    openRoute?(Route { AnyView(DiscoverDetailView(item: item)) })
+                } else {
+                    openRoute?(Route { AnyView(DiscoverListView(feed: feed, initial: initial)) })
+                }
+            }.frame(height: (landscape ? DiscoverLayout.landscapeWidth * 9 / 16 : 330) + DiscoverLayout.captionHeight + 48)
+        }
+    }
+}
+#endif
+
+// MARK: Douban
+
+extension DoubanCatalog.Feed {
+    var title: String {
+        switch self {
+        case .movies: L10n.text("Douban Hot Movies")
+        case .television: L10n.text("Douban Hot Series")
+        case .variety: L10n.text("Douban Hot Variety Shows")
+        }
+    }
+}
+
+private extension DoubanCatalog.Item {
+    var caption: String {
+        [year.map(String.init), rating.map { L10n.text("Douban") + " " + $0.formatted(.number.precision(.fractionLength(1))) }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+/// A Douban title as Discover draws its covers, with the year and Douban's score under it.
+private struct DoubanTile: View {
+    let item: DoubanCatalog.Item
+    var body: some View {
+        WithPerceptionTracking {
+            #if os(tvOS)
+            VStack(spacing: 5) {
+                PosterImage(url: item.cover).frame(width: DiscoverLayout.posterWidth, height: DiscoverLayout.posterWidth * 1.5)
+                VStack(spacing: 0) {
+                    Text(item.title).font(.system(size: DiscoverLayout.caption))
+                    Text(item.caption.isEmpty ? " " : item.caption).font(.system(size: DiscoverLayout.secondary, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                }.lineLimit(1).cardCaption()
+            }.frame(width: DiscoverLayout.posterWidth)
+            #else
+            VStack(alignment: .leading, spacing: 0) {
+                Color.clear.aspectRatio(2.0 / 3, contentMode: .fit)
+                    .overlay { WithPerceptionTracking { PosterImage(url: item.cover) } }
+                    .posterClip(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5) } }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title).font(.system(size: DiscoverLayout.caption)).lineLimit(1)
+                    Text(item.caption).lineLimit(1)
+                        .font(.system(size: DiscoverLayout.secondary, design: .rounded)).foregroundStyle(.primary.opacity(0.56))
+                }.frame(maxWidth: .infinity, alignment: .leading).frame(height: DiscoverLayout.captionHeight)
+            }
+            .accessibilityElement(children: .combine)
+            #endif
+        }
+    }
+}
+
+/// A whole Douban list, as Discover's See All pages: Douban's lists run to a few hundred titles, 30 at a time.
+private struct DoubanListView: View {
+    let feed: DoubanCatalog.Feed
+    @State private var items: [DoubanCatalog.Item]
+    @State private var loading = false
+    @State private var failed = false
+    @State private var ended = false
+    init(feed: DoubanCatalog.Feed, initial: [DoubanCatalog.Item]) {
+        self.feed = feed
+        _items = State(initialValue: initial)
+    }
+    var body: some View {
+        WithPerceptionTracking {
+            ScrollView {
+                WithPerceptionTracking {
+                    #if os(tvOS)
+                    Text(feed.title).font(.system(size: 52, weight: .semibold)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                        .frame(maxWidth: .infinity).padding(.top, 60)
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(DiscoverLayout.posterWidth), spacing: 55, alignment: .top), count: 6), spacing: 66) {
+                        WithPerceptionTracking {
+                            cells
+                        }
+                    }.padding(.top, 54)
+                    #else
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: DiscoverLayout.posterWidth), spacing: DiscoverLayout.spacing)], alignment: .leading, spacing: 22) {
+                        WithPerceptionTracking {
+                            cells
+                        }
+                    }.padding(DiscoverLayout.gutter)
+                    #endif
+                    if failed {
+                        Button(L10n.text("Try Again")) { Task { await loadMore() } }.padding()
+                    } else if loading {
+                        ProgressView().padding()
+                    }
+                }
+            }
+            #if os(tvOS)
+            .appScrollClipDisabled()
+            .ignoresSafeArea(edges: .top)
+            .toolbar(.hidden, for: .navigationBar)
+            #else
+            .navigationTitle(feed.title)
+            #endif
+            .background { WithPerceptionTracking { DiscoverCanvas(poster: items.first?.cover) } }
+            .foregroundStyle(.white).preferredColorScheme(.dark)
+            .task { if items.isEmpty { await loadMore() } }
+        }
+    }
+    private var cells: some View {
+        ForEach(items) { item in
+            WithPerceptionTracking {
+                RouteLink { WithPerceptionTracking { DoubanTitleView(item: item) } } label: {
+                    WithPerceptionTracking {
+                        #if os(tvOS)
+                        DoubanTile(item: item)
+                        #else
+                        DoubanTile(item: item).frame(maxWidth: .infinity)
+                        #endif
+                    }
+                }
+                #if os(tvOS)
+                .cardButton()
+                #else
+                .tmdbCardButton()
+                #endif
+                .accessibilityIdentifier("discover.douban.list.\(item.id)")
+                .task { if item.id == items.last?.id { await loadMore() } }
+            }
+        }
+    }
+    private func loadMore() async {
+        guard !loading, !ended else { return }
+        loading = true; failed = false
+        defer { loading = false }
+        do {
+            let page = try await DoubanCatalog.items(feed, start: items.count)
+            guard !Task.isCancelled else { return }
+            var seen = Set(items.map(\.id))
+            let fresh = page.filter { seen.insert($0.id).inserted }
+            items += fresh
+            ended = fresh.isEmpty
+        } catch { if !Task.isCancelled { failed = true } }
+    }
+}
+
+/// A Douban title opens as the TMDB title of the same kind, name and year, with its seasons, cast and Search
+/// Sources. Without one it keeps Douban's card, and Search Sources looks for it by its Douban name.
+private struct DoubanTitleView: View {
+    @Environment(Store.self) private var store
+    let item: DoubanCatalog.Item
+    @State private var match: TMDBCatalog.Item?
+    @State private var looked = false
+    var body: some View {
+        WithPerceptionTracking {
+            Group {
+                if let match { DiscoverDetailView(item: match) }
+                else if looked { card }
+                else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
+            }
+            .task(id: item.id) {
+                guard !looked else { return }
+                let results = (try? await TMDBMatch.search(DoubanCatalog.searchTitle(item))) ?? []
+                guard !Task.isCancelled else { return }
+                match = DoubanCatalog.match(item, in: results)?.catalogItem
+                looked = true
+            }
+        }
+    }
+
+    private var card: some View {
+        ScrollView {
+            WithPerceptionTracking {
+                VStack(spacing: 16) {
+                    PosterImage(url: item.cover).frame(width: 220, height: 330).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    Text(item.title).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
+                    if !item.caption.isEmpty { Text(item.caption).font(.headline).opacity(0.7) }
+                    if !item.subtitle.isEmpty { Text(item.subtitle).font(.subheadline).opacity(0.6).multilineTextAlignment(.center) }
+                    DiscoverFindSourcesButton(title: item.title).padding(.top, 8).accessibilityIdentifier("discover.douban.findSources")
+                }.padding(40).frame(maxWidth: .infinity)
+            }
+        }
+        .background { WithPerceptionTracking { DiscoverCanvas(poster: item.cover) } }
+        .foregroundStyle(.white).preferredColorScheme(.dark)
+    }
+}

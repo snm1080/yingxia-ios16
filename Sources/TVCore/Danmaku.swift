@@ -1,0 +1,281 @@
+import Foundation
+
+/// One bullet comment (弹幕): text shown over the video at a moment of its timeline.
+public struct Danmaku: Sendable, Hashable {
+    public enum Position: Sendable, Hashable { case scroll, reverse, top, bottom, positioned }
+    public let time: Double
+    public let position: Position
+    /// 0xRRGGBB.
+    public let color: UInt32
+    /// Relative to the standard size (Bilibili's 25 is 1).
+    public let scale: Double
+    public let text: String
+    public let effect: DanmakuEffect?
+    public init(time: Double, position: Position, color: UInt32 = 0xFFFFFF, scale: Double = 1, text: String, effect: DanmakuEffect? = nil) {
+        self.effect = effect
+        self.time = time; self.position = position; self.color = color; self.scale = scale; self.text = text
+    }
+}
+
+/// Which comments belong to which playback. Sources register the media address they resolve, and the
+/// player asks for that address's comments when it starts.
+public enum DanmakuSource {
+    private struct Track { let cid: String; let duration: Double? }
+    nonisolated(unsafe) private static var tracks: [String: Track] = [:]
+    nonisolated(unsafe) private static var order: [String] = []
+    private static let lock = NSLock()
+
+    static func register(_ url: URL, bilibiliCID cid: String, duration: Double?) {
+        lock.withLock {
+            tracks[url.absoluteString] = Track(cid: cid, duration: duration); order.append(url.absoluteString)
+            while order.count > 8 { tracks[order.removeFirst()] = nil }
+        }
+    }
+
+    /// The Bilibili comment track a play result's `danmaku` feed names
+    /// (`https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=<cid>`), or nil for any other feed.
+    public static func bilibiliCID(_ feed: String) -> String? {
+        guard let components = URLComponents(string: feed), components.host?.hasSuffix("bilibili.com") == true,
+              let oid = components.queryItems?.first(where: { $0.name == "oid" })?.value, let cid = UInt64(oid), cid > 0 else { return nil }
+        return String(cid)
+    }
+
+    /// Registers a play result's comment feed for its media address. Returns whether the feed was usable.
+    @discardableResult public static func register(_ url: URL, feed: String?, duration: Double?) -> Bool {
+        guard let cid = feed.flatMap(bilibiliCID) else { return false }
+        register(url, bilibiliCID: cid, duration: duration)
+        return true
+    }
+
+    /// A Bilibili media address cast by the phone (…/upgcxcode/…/<cid>-<n>-<quality>.mp4) names its part's cid,
+    /// which is all the comments need. Returns whether the address had one.
+    @discardableResult public static func registerBilibiliMedia(_ url: URL) -> Bool {
+        guard url.path.contains("xcode"), let match = url.lastPathComponent.firstMatch(of: /^(\d+)-\d+-\d+\.(mp4|m4s|flv)$/),
+              let cid = Int(match.1), cid > 0 else { return false }
+        register(url, bilibiliCID: String(cid), duration: nil)
+        return true
+    }
+
+    /// Whether the address has comments to load.
+    public static func has(_ url: URL) -> Bool { lock.withLock { tracks[url.absoluteString] != nil } }
+
+    /// The comments for a media address in time order, or nil when it has none.
+    public static func comments(for url: URL, session: URLSession = .shared) async -> [Danmaku]? {
+        guard let track = lock.withLock({ tracks[url.absoluteString] }) else { return nil }
+        return await BilibiliDanmaku.load(cid: track.cid, duration: track.duration, session: session)
+    }
+}
+
+/// Bilibili serves comments as protobuf in six-minute segments (`DmSegMobileReply`).
+enum BilibiliDanmaku {
+    static let segment = 360.0
+
+    static func load(cid: String, duration: Double?, session: URLSession) async -> [Danmaku] {
+        // Unknown length: try the first hour; segments past the end come back empty.
+        let count = max(1, min(60, Int(((duration ?? 3600) / segment).rounded(.up))))
+        let segments = await withTaskGroup(of: [Danmaku].self) { group in
+            for index in 1...count {
+                group.addTask { await fetch(cid: cid, index: index, session: session) }
+            }
+            return await group.reduce(into: [[Danmaku]]()) { $0.append($1) }
+        }
+        let all = segments.flatMap { $0 }.sorted { $0.time < $1.time }
+        Diagnostics.shared.record(.info, "danmaku", "cid=\(cid) segments=\(count) comments=\(all.count)")
+        return all
+    }
+
+    private static func fetch(cid: String, index: Int, session: URLSession) async -> [Danmaku] {
+        var components = URLComponents(string: "https://api.bilibili.com/x/v2/dm/web/seg.so")!
+        components.queryItems = [URLQueryItem(name: "type", value: "1"), URLQueryItem(name: "oid", value: cid), URLQueryItem(name: "segment_index", value: String(index))]
+        var request = URLRequest(url: components.url!, timeoutInterval: 15)
+        Bilibili.mediaHeaders.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+        guard let (data, response) = try? await session.data(for: request), (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        return parse(data)
+    }
+
+    /// `DmSegMobileReply { repeated DanmakuElem elems = 1; }`, where DanmakuElem has progress (2, ms),
+    /// mode (3), fontsize (4), color (5) and content (7). Modes 1–3 scroll, 4 is bottom, 5 is top,
+    /// 6 scrolls the other way; 7+ (positioned, code, BAS) are left out.
+    static func parse(_ data: Data) -> [Danmaku] {
+        var reader = ProtobufReader(data)
+        var comments: [Danmaku] = []
+        while let (field, value) = reader.next() {
+            guard field == 1, case .bytes(let element) = value else { continue }
+            var fields = ProtobufReader(element)
+            var time = 0, mode = 1, size = 25, color = 0xFFFFFF, text = ""
+            while let (number, item) = fields.next() {
+                switch (number, item) {
+                case (2, .varint(let v)): time = Int(truncatingIfNeeded: v)
+                case (3, .varint(let v)): mode = Int(truncatingIfNeeded: v)
+                case (4, .varint(let v)): size = Int(truncatingIfNeeded: v)
+                case (5, .varint(let v)): color = Int(truncatingIfNeeded: v)
+                case (7, .bytes(let bytes)): text = String(decoding: bytes, as: UTF8.self)
+                default: break
+                }
+            }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, (1...6).contains(mode) else { continue }
+            let position: Danmaku.Position = mode == 6 ? .reverse : mode == 4 ? .bottom : mode == 5 ? .top : .scroll
+            comments.append(Danmaku(time: Double(time) / 1000, position: position, color: UInt32(truncatingIfNeeded: color) & 0xFFFFFF,
+                                    scale: min(1.5, max(0.7, Double(size) / 25)), text: String(trimmed.prefix(100))))
+        }
+        return comments
+    }
+}
+
+/// A minimal protobuf wire-format reader: varints and length-delimited fields; fixed-width ones are skipped.
+struct ProtobufReader {
+    enum Value { case varint(UInt64), bytes(Data) }
+    private let bytes: [UInt8]
+    private var cursor = 0
+    init(_ data: Data) { bytes = [UInt8](data) }
+
+    private mutating func varint() -> UInt64? {
+        var result: UInt64 = 0, shift: UInt64 = 0
+        while cursor < bytes.count, shift < 64 {
+            let byte = bytes[cursor]; cursor += 1
+            result |= UInt64(byte & 0x7F) << shift
+            if byte & 0x80 == 0 { return result }
+            shift += 7
+        }
+        return nil
+    }
+
+    mutating func next() -> (Int, Value)? {
+        while cursor < bytes.count {
+            guard let key = varint() else { return nil }
+            let field = Int(key >> 3)
+            switch key & 7 {
+            case 0: guard let value = varint() else { return nil }; return (field, .varint(value))
+            case 1: cursor += 8
+            case 2:
+                guard let length = varint(), length <= UInt64(bytes.count - cursor) else { return nil }
+                let start = cursor; cursor += Int(length)
+                return (field, .bytes(Data(bytes[start..<cursor])))
+            case 5: cursor += 4
+            default: return nil
+            }
+        }
+        return nil
+    }
+}
+
+/// How much of the picture comments may use, from the top (弹幕区域): a quarter or a half keeps them off faces
+/// and subtitles. Stored in percent under `key`; three quarters is where comments always scrolled.
+public enum DanmakuArea: Int, CaseIterable, Sendable {
+    case quarter = 25, half = 50, threeQuarters = 75, full = 100
+    public static let key = "danmakuArea"
+    public static let standard = DanmakuArea.threeQuarters
+    public var share: Double { Double(rawValue) / 100 }
+    public var title: String {
+        switch self {
+        case .quarter: L10n.text("Top Quarter")
+        case .half: L10n.text("Top Half")
+        case .threeQuarters: L10n.text("Top Three Quarters")
+        case .full: L10n.text("Whole Screen")
+        }
+    }
+    /// The choice after this one, for a row that steps through them with each press.
+    public var next: DanmakuArea { Self.allCases[((Self.allCases.firstIndex(of: self) ?? 0) + 1) % Self.allCases.count] }
+}
+
+/// Text size and opacity for every comment track (matched or imported comments, Bilibili videos and live rooms).
+/// The size is stored in points under `fontSizeKey`; saved sizes take precedence over the default.
+public enum DanmakuStyle {
+    public static let fontSizeKey = "danmakuFontSize", opacityKey = "danmakuOpacity"
+    public static let standardFontSize = 30.0, standardOpacity = 0.9
+    /// The sizes the player's menu offers, smallest first. A size the older slider stored between them stays in the list.
+    public static func fontSizes(including current: Double) -> [Double] {
+        choices([16, 18, 20, 22, 26, 30, 36], current).sorted()
+    }
+    /// The opacities the player's menu offers, most opaque first.
+    public static func opacities(including current: Double) -> [Double] {
+        choices([1, 0.85, 0.7, 0.5, 0.3], current).sorted(by: >)
+    }
+    /// The mobile and desktop appearance panels share the 12–64 text size range.
+    public static func textScale(_ fontSize: Double) -> Double {
+        fontSize.isFinite ? min(64, max(12, fontSize)) / 22 : 1
+    }
+    private static func choices(_ standard: [Double], _ current: Double) -> [Double] {
+        !current.isFinite || standard.contains(where: { abs($0 - current) < 0.001 }) ? standard : standard + [current]
+    }
+}
+
+/// Places comments in lanes as their time comes, so none overlap: a scrolling comment takes a lane once
+/// the lane's previous comment has fully entered and cannot be caught before it leaves; a fixed one
+/// takes a lane whose previous fixed comment has gone. Comments that find no lane are dropped, which is
+/// how dense moments thin out.
+public struct DanmakuLayout {
+    public struct Placement: Sendable {
+        public let comment: Danmaku
+        public let start: Double
+        public let width: Double
+        public let lane: Int
+        /// Points per second; zero for fixed comments.
+        public let speed: Double
+    }
+    public let width: Double
+    public let laneHeight: Double
+    public let scrollLanes: Int
+    public let fixedLanes: Int
+    public private(set) var scrollDuration: Double
+    public let fixedDuration: Double
+    private var lanes: [Placement?]
+
+    public init(width: Double, height: Double, laneHeight: Double, scrollArea: Double = 0.75, scrollDuration: Double = 8, fixedDuration: Double = 4, maxRows: Int = 0) {
+        self.width = width; self.laneHeight = laneHeight; self.scrollDuration = scrollDuration; self.fixedDuration = fixedDuration
+        fixedLanes = max(1, Int(height * scrollArea / laneHeight))
+        scrollLanes = min(maxRows > 0 ? maxRows : fixedLanes, fixedLanes)
+        lanes = Array(repeating: nil, count: fixedLanes)
+    }
+
+    /// How long a placement stays on screen.
+    public func duration(_ placement: Placement) -> Double { placement.speed > 0 ? (width + placement.width) / placement.speed : fixedDuration }
+
+    /// Change remaining motion at one media time, keeping each active comment at the same point.
+    public mutating func retime(scrollDuration: Double, at time: Double) {
+        guard scrollDuration.isFinite, scrollDuration > 0, time.isFinite else { return }
+        self.scrollDuration = scrollDuration
+        lanes = lanes.map { $0.map { retimed($0, at: time) } }
+    }
+    public func retimed(_ placement: Placement, at time: Double) -> Placement {
+        guard placement.speed > 0, time.isFinite else { return placement }
+        let speed = (width + placement.width) / scrollDuration
+        // Future textures have not travelled yet. Their source timestamp is
+        // independent of the user's scrolling-speed preference.
+        if placement.start > time {
+            return Placement(comment: placement.comment, start: placement.start,
+                width: placement.width, lane: placement.lane, speed: speed)
+        }
+        let travelled = max(0, time - placement.start) * placement.speed
+        return Placement(comment: placement.comment, start: time - travelled / speed,
+                         width: placement.width, lane: placement.lane, speed: speed)
+    }
+
+    public mutating func place(_ comment: Danmaku, width textWidth: Double, at time: Double) -> Placement? {
+        guard comment.position != .positioned else { return nil }
+        let fixed = comment.position == .top || comment.position == .bottom
+        let speed = fixed ? 0 : (width + textWidth) / scrollDuration
+        // MacCat schedules a shared 1280-point stage with a 36-point gap.
+        // Scale that gap with the viewport, independently of text/line spacing.
+        let gap = 36 * width / 1280
+        for ordinal in 0..<(fixed ? fixedLanes : scrollLanes) {
+            let lane = comment.position == .bottom ? fixedLanes - ordinal - 1 : ordinal
+            if let previous = lanes[lane] {
+                let finish = previous.start + duration(previous)
+                if fixed {
+                    guard finish <= time else { continue }
+                } else if finish > time {
+                    guard previous.speed > 0,
+                          previous.comment.position == comment.position,
+                          previous.start + (previous.width + gap) / previous.speed <= time,
+                          speed <= previous.speed || finish <= time + (width - gap) / speed else { continue }
+                }
+            }
+            let placement = Placement(comment: comment, start: time, width: textWidth, lane: lane, speed: speed)
+            lanes[lane] = placement
+            return placement
+        }
+        return nil
+    }
+}

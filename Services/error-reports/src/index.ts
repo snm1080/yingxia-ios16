@@ -1,0 +1,419 @@
+// Takes the app's error reports and stores them in D1. The app groups repeats and sends at most
+// every six hours, so each install costs a request or so a day. No IP address is stored.
+// Also turns feedback written in the app's Settings into a GitHub issue (/v1/feedback), and tells the app
+// how its issues are doing and what the developer replied (/v1/feedback/replies). Settings also lists the
+// month's contributors (/v1/contributors), read here once an hour so the app never meets GitHub's limit
+// for requests without a token (60 an hour per IP address, shared by everyone behind it).
+// Pictures and videos added to feedback, and the app's diagnostic log, are uploaded first
+// (/v1/feedback/uploads) to the R2 bucket served at FILES_URL.
+
+interface Env {
+  DB: D1Database;
+  LIMITER: RateLimit;
+  FEEDBACK_LIMITER: RateLimit;
+  UPLOAD_LIMITER: RateLimit;
+  // The bucket that keeps feedback's pictures, videos and logs, and the public address it is served at.
+  FILES?: R2Bucket;
+  FILES_URL: string;
+  // owner/name of the public repository that gets the issues, and whose commits name the contributors.
+  FEEDBACK_REPO: string;
+  // Secret: a fine-grained token with Issues read and write on FEEDBACK_REPO only.
+  GITHUB_TOKEN?: string;
+}
+
+const MAX_BODY = 64 * 1024;
+const MAX_ITEMS = 50;
+const KEEP_DAYS = 30;
+const PLATFORMS = new Set(["macos", "ios", "tvos"]);
+
+const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
+const whole = (value: unknown, max: number) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(Math.trunc(value), 0), max) : 0;
+
+// One bug, many messages: ids, offsets, sizes and durations differ between occurrences. Status and
+// error codes stay, so an HTTP 403 and a 500, or a timeout (-1001) and no network (-1009), stay apart.
+// The same rules as `groupKey` in Sources/TVCore/ErrorReports.swift: keep them in step.
+function normalize(message: string) {
+  return message
+    .split("\n")[0]
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>")
+    .replace(/\b[0-9a-f]{12,}\b/gi, "<id>")
+    .replace(/\brequest=[0-9A-F]{8}\b/g, "request=#")
+    .replace(/\b(offset|at|bytes|duration|length|chunk|aid|cid|room|id|page|elapsed|total|size|seconds)=-?[0-9.]+/g, "$1=#")
+    .replace(/\b\d+(?:\.\d+)? ?(?:seconds|sec|ms|s)\b/g, "#s")
+    .replace(/(?<![\w.-])\d{5,}\b/g, "#")
+    .trim();
+}
+
+async function signature(category: string, message: string) {
+  const data = new TextEncoder().encode(category + "\n" + normalize(message));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return [...digest.slice(0, 6)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+const address = (request: Request) => request.headers.get("cf-connecting-ip") ?? "";
+
+// The JSON body, or the response that turns it away.
+async function parse(request: Request): Promise<any> {
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY) return new Response(null, { status: 413 });
+  const raw = await request.text();
+  if (raw.length > MAX_BODY) return new Response(null, { status: 413 });
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+}
+
+async function receive(request: Request, env: Env): Promise<Response> {
+  if (!(await env.LIMITER.limit({ key: address(request) })).success) return new Response(null, { status: 429 });
+  const body = await parse(request);
+  if (body instanceof Response) return body;
+  const install = text(body?.install, 36);
+  const platform = text(body?.platform, 8);
+  const items: any[] = Array.isArray(body?.items) ? body.items.slice(0, MAX_ITEMS) : [];
+  if (!/^[0-9A-Fa-f-]{36}$/.test(install) || !PLATFORMS.has(platform) || items.length === 0) {
+    return new Response(null, { status: 400 });
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const country = text((request as any).cf?.country, 2) || "XX";
+  const insert = env.DB.prepare(
+    `INSERT INTO reports (received, install, platform, os, model, lang, app, build, country, signature, category, message, count, first, last)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const rows = [];
+  for (const item of items) {
+    const category = text(item?.category, 80);
+    const message = text(item?.message, 1000);
+    if (!category || !message) continue;
+    rows.push(
+      insert.bind(
+        now, install, platform, text(body.os, 24), text(body.model, 32), text(body.lang, 16), text(body.app, 16), text(body.build, 16), country,
+        await signature(category, message), category, message,
+        Math.max(whole(item.count, 1_000_000), 1), whole(item.first, now), whole(item.last, now),
+      ),
+    );
+  }
+  if (rows.length) await env.DB.batch(rows);
+  return new Response(null, { status: 204 });
+}
+
+const FEEDBACK_MAX = 5000;
+// In any 24 hours: per install, and for everyone together, so a flood can't bury the repository.
+const FEEDBACK_PER_INSTALL = 5;
+const FEEDBACK_PER_DAY = 50;
+// FEEDBACK_LIMITER's, in wrangler.jsonc.
+const FEEDBACK_PER_MINUTE = 2;
+
+// Which cap refused it, how many it allows and in how many seconds one more fits, so the app can say so
+// (`Feedback.refusal` in Sources/TVCore/Feedback.swift).
+const tooMany = (limit: "minute" | "install" | "everyone", max: number, retryAfter: number) =>
+  Response.json({ limit, max, retryAfter }, { status: 429, headers: { "retry-after": String(retryAfter) } });
+const LABELS: Record<string, string[]> = { bug: ["feedback", "bug"], idea: ["feedback", "enhancement"], other: ["feedback"] };
+const SYSTEMS: Record<string, string> = { macos: "macOS", ios: "iOS", tvos: "tvOS" };
+
+// What went up with a message (/v1/feedback/uploads), as the issue shows it.
+interface Attached {
+  kind: string;
+  size: number;
+  url: string;
+}
+
+const megabytes = (size: number) => `${(size / MB).toFixed(1)} MB`;
+
+// The issue is public. Its first line is the title, @names stay text instead of notifying strangers
+// (a zero-width space after the @), and the details come from the app, never from the install ID.
+// Pictures show in it and videos are linked; a log is only mentioned: its address stays private.
+function issue(body: any, attached: Attached[] = []) {
+  const message = text(body?.message, FEEDBACK_MAX).replace(/\r\n?/g, "\n").trim().replace(/@(?=[A-Za-z0-9_-])/g, "@​");
+  const line = (message.split("\n").find((row) => row.trim()) ?? "").trim();
+  const title = line.length > 80 ? line.slice(0, 79).trimEnd() + "…" : line;
+  const cell = (value: unknown, max: number) => text(value, max).replace(/[|\r\n]/g, " ").trim() || "-";
+  const details = [
+    "| | |",
+    "|---|---|",
+    `| App | Yingxia ${cell(body?.app, 16)} (${cell(body?.build, 16)}) |`,
+    `| System | ${SYSTEMS[body?.platform] ?? "-"} ${cell(body?.os, 24)} · ${cell(body?.model, 32)} |`,
+    `| Language | ${cell(body?.lang, 16)} |`,
+  ];
+  if (attached.some((file) => file.kind === "log")) details.push("| Log | Diagnostic log sent to the developer (not public) |");
+  let pictures = 0, videos = 0;
+  const media = attached.flatMap((file) =>
+    file.kind === "image" ? [`![Picture ${++pictures}](${file.url})`]
+    : file.kind === "video" ? [`🎬 [Video ${++videos}](${file.url}) (${megabytes(file.size)})`]
+    : []);
+  const shown = media.length ? `\n\n${media.join("\n\n")}` : "";
+  return {
+    title,
+    body: `${message}${shown}\n\n---\n\n${details.join("\n")}\n\n<sub>Sent from Settings → Send Feedback in the app.</sub>`,
+    labels: LABELS[body?.kind] ?? [],
+  };
+}
+
+// The repository's REST API, as the token. `path` follows /repos/<owner>/<name>.
+const github = (env: Env, path: string, init: RequestInit = {}) =>
+  fetch(`https://api.github.com/repos/${env.FEEDBACK_REPO}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      "content-type": "application/json",
+      "user-agent": "yingxia-feedback",
+      "x-github-api-version": "2022-11-28",
+    },
+  });
+
+async function feedback(request: Request, env: Env): Promise<Response> {
+  if (!env.GITHUB_TOKEN) return new Response(null, { status: 503 });
+  if (!(await env.FEEDBACK_LIMITER.limit({ key: address(request) })).success) return tooMany("minute", FEEDBACK_PER_MINUTE, 60);
+  const body = await parse(request);
+  if (body instanceof Response) return body;
+  const install = text(body?.install, 36);
+  const platform = text(body?.platform, 8);
+  const ids: unknown[] = Array.isArray(body?.attachments) ? [...new Set(body.attachments)] : [];
+  if (!/^[0-9A-Fa-f-]{36}$/.test(install) || !PLATFORMS.has(platform) || !(body?.kind in LABELS) || !issue(body).title
+    || ids.length > ATTACHMENTS_MAX || !ids.every((id) => typeof id === "string" && UPLOAD_ID.test(id))) {
+    return new Response(null, { status: 400 });
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const sent = await env.DB.prepare("SELECT COUNT(*) AS everyone, COALESCE(SUM(install = ?), 0) AS mine FROM feedback WHERE received >= ?")
+    .bind(install, now - 86400).first<{ everyone: number; mine: number }>();
+  if (sent && (sent.mine >= FEEDBACK_PER_INSTALL || sent.everyone >= FEEDBACK_PER_DAY)) {
+    const mine = sent.mine >= FEEDBACK_PER_INSTALL;
+    const max = mine ? FEEDBACK_PER_INSTALL : FEEDBACK_PER_DAY;
+    // The max-th newest message still counted: once it is a day old, one more fits.
+    const oldest = await env.DB.prepare(
+      `SELECT received FROM feedback WHERE ${mine ? "install = ? AND " : ""}received >= ? ORDER BY received DESC LIMIT 1 OFFSET ?`,
+    ).bind(...(mine ? [install] : []), now - 86400, max - 1).first<{ received: number }>();
+    return tooMany(mine ? "install" : "everyone", max, oldest ? Math.max(60, oldest.received + 86400 - now) : 3600);
+  }
+
+  // This install's uploads that no message has taken yet, in the app's order. One that is missing
+  // (another install's, already sent, or deleted after a day) turns the message away.
+  let attached: (Attached & { id: string })[] = [];
+  if (ids.length) {
+    if (!env.FILES) return new Response(null, { status: 503 });
+    const found = await env.DB.prepare(
+      `SELECT id, kind, size, key FROM uploads WHERE install = ? AND issue IS NULL AND id IN (${ids.map(() => "?").join(", ")})`,
+    ).bind(install, ...ids).all<{ id: string; kind: string; size: number; key: string }>();
+    if (found.results.length !== ids.length) return new Response(null, { status: 400 });
+    attached = ids.map((id) => found.results.find((row) => row.id === id)!)
+      .map((row) => ({ id: row.id, kind: row.kind, size: row.size, url: `${env.FILES_URL}/${row.key}` }));
+  }
+
+  const response = await github(env, "/issues", { method: "POST", body: JSON.stringify(issue(body, attached)) });
+  if (!response.ok) return new Response(null, { status: 502 });
+  const posted: any = await response.json();
+  const number = whole(posted.number, Number.MAX_SAFE_INTEGER);
+  // The install ID stays here, so the developer can look up the same install's error reports, and the
+  // uploads remember their issue (a log can only be found that way).
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO feedback (received, install, platform, app, issue) VALUES (?, ?, ?, ?, ?)")
+      .bind(now, install, platform, text(body.app, 16), number),
+    ...(attached.length
+      ? [env.DB.prepare(`UPDATE uploads SET issue = ? WHERE id IN (${attached.map(() => "?").join(", ")})`).bind(number, ...attached.map((file) => file.id))]
+      : []),
+  ]);
+  return Response.json({ number: posted.number, url: posted.html_url }, { status: 201 });
+}
+
+const MB = 1024 * 1024;
+// What can be added to feedback (`Feedback.sizeLimit` in Sources/TVCore/FeedbackAttachments.swift: keep the
+// sizes in step), the content types each takes with the file extension it gets, and its folder in the bucket.
+// Pictures and videos are as public as the issue that shows them. The log is for the developer: its name is
+// random and never published, and it is deleted after KEEP_DAYS.
+const UPLOADS: Record<string, { max: number; types: Record<string, string>; folder: string }> = {
+  image: { max: 10 * MB, types: { "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif" }, folder: "yingxia/feedback" },
+  video: { max: 50 * MB, types: { "video/mp4": "mp4", "video/quicktime": "mov" }, folder: "yingxia/feedback" },
+  log: { max: 5 * MB, types: { "application/gzip": "jsonl.gz" }, folder: "yingxia/feedback-logs" },
+};
+// With one message: the app's four pictures or videos, and its log.
+const ATTACHMENTS_MAX = 5;
+const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// In any 24 hours: per install, and everyone's bytes together.
+const UPLOADS_PER_INSTALL = 30;
+const UPLOAD_BYTES_PER_INSTALL = 300 * MB;
+const UPLOAD_BYTES_PER_DAY = 5 * 1024 * MB;
+// UPLOAD_LIMITER's, in wrangler.jsonc.
+const UPLOADS_PER_MINUTE = 10;
+// Seconds: an upload that no message took by then is deleted.
+const UNSENT_KEEP = 86400;
+
+// One file, as its body: POST /v1/feedback/uploads?install=<id>&kind=image|video|log with its Content-Type
+// and Content-Length. Answers {id}, which /v1/feedback then takes in `attachments`.
+async function upload(request: Request, env: Env): Promise<Response> {
+  if (!env.FILES) return new Response(null, { status: 503 });
+  if (!(await env.UPLOAD_LIMITER.limit({ key: address(request) })).success) return tooMany("minute", UPLOADS_PER_MINUTE, 60);
+  const url = new URL(request.url);
+  const install = text(url.searchParams.get("install"), 36);
+  const kind = url.searchParams.get("kind") ?? "";
+  const rule = Object.hasOwn(UPLOADS, kind) ? UPLOADS[kind] : undefined;
+  const type = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const extension = rule && Object.hasOwn(rule.types, type) ? rule.types[type] : undefined;
+  if (!/^[0-9A-Fa-f-]{36}$/.test(install) || !rule || !extension) return new Response(null, { status: 400 });
+  const length = Number(request.headers.get("content-length") ?? NaN);
+  if (!request.body || !Number.isSafeInteger(length) || length <= 0) return new Response(null, { status: 411 });
+  if (length > rule.max) return Response.json({ max: rule.max }, { status: 413 });
+
+  const now = Math.floor(Date.now() / 1000);
+  const sent = await env.DB.prepare(
+    `SELECT COALESCE(SUM(size), 0) AS everyone, COALESCE(SUM(install = ?), 0) AS files,
+       COALESCE(SUM(CASE WHEN install = ? THEN size ELSE 0 END), 0) AS bytes, MIN(CASE WHEN install = ? THEN received END) AS oldest
+     FROM uploads WHERE received >= ?`,
+  ).bind(install, install, install, now - 86400).first<{ everyone: number; files: number; bytes: number; oldest: number | null }>();
+  if (sent && (sent.files >= UPLOADS_PER_INSTALL || sent.bytes + length > UPLOAD_BYTES_PER_INSTALL)) {
+    return tooMany("uploads", UPLOADS_PER_INSTALL, sent.oldest ? Math.max(60, sent.oldest + 86400 - now) : 3600);
+  }
+  if (sent && sent.everyone + length > UPLOAD_BYTES_PER_DAY) return tooMany("everyone", FEEDBACK_PER_DAY, 3600);
+
+  const id = crypto.randomUUID();
+  const key = `${rule.folder}/${id}.${extension}`;
+  const log = kind === "log";
+  try {
+    await env.FILES.put(key, request.body, {
+      httpMetadata: {
+        contentType: type,
+        cacheControl: log ? "private, no-store" : "public, max-age=31536000, immutable",
+        contentDisposition: log ? `attachment; filename="yingxia-log-${id}.jsonl.gz"` : undefined,
+      },
+      customMetadata: { install },
+    });
+  } catch {
+    // The body ended before its Content-Length.
+    return new Response(null, { status: 400 });
+  }
+  await env.DB.prepare("INSERT INTO uploads (id, received, install, kind, type, size, key) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, now, install, kind, type, length, key).run();
+  return Response.json({ id }, { status: 201 });
+}
+
+// Settings › Your Feedback asks how its issues are doing: each one's state and the developer's replies.
+// The issues are public, so their numbers are all it sends; only issues labeled feedback answer.
+const REPLIES_ISSUES = 10;
+const REPLY_MAX = 4000;
+// Seconds. Each data center keeps its own copies, and a check right after sending caches "no replies":
+// short, so a reply shows within a minute.
+const REPLIES_CACHE = 60;
+const DEVELOPER = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+// What the person who sent it sees of an issue's comments: the developer's, without HTML comments
+// (the coding agent's marker) and without requests to the agent ("@claude fix it").
+function replies(comments: any[]) {
+  return comments
+    .filter((comment) => DEVELOPER.has(comment?.author_association) && typeof comment?.body === "string")
+    .map((comment) => ({ date: text(comment.created_at, 32), text: comment.body.replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, REPLY_MAX) }))
+    .filter((reply) => reply.text && !/^@claude\b/i.test(reply.text));
+}
+
+// open, closed (done) or declined (closed as not planned), as `Feedback.Status` in Sources/TVCore/Feedback.swift reads it.
+function state(issue: any) {
+  return issue?.state !== "closed" ? "open" : issue.state_reason === "not_planned" ? "declined" : "closed";
+}
+
+// One issue, from the cache for a minute. null when it isn't a feedback issue; undefined when GitHub failed.
+async function status(number: number, env: Env, origin: string) {
+  const key = new Request(`${origin}/v1/feedback/replies/${number}`);
+  const hit = await caches.default.match(key);
+  if (hit) return hit.json();
+  const [issue, comments] = await Promise.all([github(env, `/issues/${number}`), github(env, `/issues/${number}/comments?per_page=100`)]);
+  if (!issue.ok && issue.status !== 404 && issue.status !== 410) return undefined;
+  const found: any = issue.ok ? await issue.json() : null;
+  let result = null;
+  if (found && !found.pull_request && found.labels?.some((label: any) => label?.name === "feedback")) {
+    if (!comments.ok) return undefined;
+    result = { number, state: state(found), replies: replies(await comments.json()) };
+  }
+  await caches.default.put(key, Response.json(result, { headers: { "cache-control": `max-age=${REPLIES_CACHE}` } }));
+  return result;
+}
+
+async function feedbackReplies(request: Request, env: Env): Promise<Response> {
+  if (!env.GITHUB_TOKEN) return new Response(null, { status: 503 });
+  if (!(await env.LIMITER.limit({ key: address(request) })).success) return new Response(null, { status: 429 });
+  const url = new URL(request.url);
+  const numbers = [...new Set((url.searchParams.get("issues") ?? "").split(",").map(Number))]
+    .filter((number) => Number.isSafeInteger(number) && number > 0)
+    .slice(0, REPLIES_ISSUES);
+  if (!numbers.length) return new Response(null, { status: 400 });
+  const found = await Promise.all(numbers.map((number) => status(number, env, url.origin)));
+  if (found.some((issue) => issue === undefined)) return new Response(null, { status: 502 });
+  return Response.json({ issues: found.filter(Boolean) });
+}
+
+// Settings › Contributors (Sources/TVCore/Contributors.swift): everyone whose commits reached the default
+// branch in the last 30 days, most first.
+const CONTRIBUTORS_DAYS = 30;
+// 100 commits a page.
+const CONTRIBUTORS_PAGES = 10;
+// Seconds. Each data center asks GitHub at most this often.
+const CONTRIBUTORS_CACHE = 3600;
+
+// Counted as GitHub's contributor graph counts them: merge commits, bots and commits whose email isn't tied
+// to a GitHub account are left out. Ties go alphabetically.
+function contributors(commits: any[]) {
+  const people = new Map<string, { login: string; avatar?: string; profile?: string; commits: number }>();
+  for (const commit of commits) {
+    const author = commit?.author;
+    if ((commit?.parents?.length ?? 0) > 1 || typeof author?.login !== "string" || author.type === "Bot" || author.login.endsWith("[bot]")) continue;
+    const person = people.get(author.login) ?? { login: text(author.login, 64), avatar: text(author.avatar_url, 200) || undefined, profile: text(author.html_url, 200) || undefined, commits: 0 };
+    person.commits += 1;
+    people.set(author.login, person);
+  }
+  return [...people.values()].sort((a, b) => b.commits - a.commits || a.login.toLowerCase().localeCompare(b.login.toLowerCase()));
+}
+
+async function contributorList(request: Request, env: Env): Promise<Response> {
+  if (!env.GITHUB_TOKEN) return new Response(null, { status: 503 });
+  if (!(await env.LIMITER.limit({ key: address(request) })).success) return new Response(null, { status: 429 });
+  const key = new Request(`${new URL(request.url).origin}/v1/contributors`);
+  const hit = await caches.default.match(key);
+  if (hit) return hit;
+  const since = new Date(Date.now() - CONTRIBUTORS_DAYS * 86400 * 1000).toISOString();
+  const commits: any[] = [];
+  for (let page = 1; page <= CONTRIBUTORS_PAGES; page++) {
+    const response = await github(env, `/commits?since=${encodeURIComponent(since)}&per_page=100&page=${page}`);
+    if (!response.ok) return new Response(null, { status: 502 });
+    const batch: any = await response.json();
+    if (!Array.isArray(batch)) return new Response(null, { status: 502 });
+    commits.push(...batch);
+    if (batch.length < 100) break;
+  }
+  const result = Response.json({ since, days: CONTRIBUTORS_DAYS, contributors: contributors(commits) },
+    { headers: { "cache-control": `max-age=${CONTRIBUTORS_CACHE}` } });
+  await caches.default.put(key, result.clone());
+  return result;
+}
+
+const ROUTES: Record<string, [string, (request: Request, env: Env) => Promise<Response>]> = {
+  "/v1/reports": ["POST", receive],
+  "/v1/feedback": ["POST", feedback],
+  "/v1/feedback/replies": ["GET", feedbackReplies],
+  "/v1/feedback/uploads": ["POST", upload],
+  "/v1/contributors": ["GET", contributorList],
+};
+
+export default {
+  async fetch(request, env) {
+    const route = ROUTES[new URL(request.url).pathname];
+    if (!route) return new Response(null, { status: 404 });
+    const [method, handle] = route;
+    if (request.method !== method) return new Response(null, { status: 405, headers: { allow: method } });
+    return handle(request, env);
+  },
+  async scheduled(_controller, env) {
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - KEEP_DAYS * 86400;
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM reports WHERE received < ?").bind(old),
+      env.DB.prepare("DELETE FROM feedback WHERE received < ?").bind(old),
+    ]);
+    // Uploads no message took, and logs once they are as old as the reports. Pictures and videos that
+    // went with an issue stay in the bucket: the issue shows them.
+    if (!env.FILES) return;
+    const stale = await env.DB.prepare("SELECT key FROM uploads WHERE (issue IS NULL AND received < ?) OR (kind = 'log' AND received < ?)")
+      .bind(now - UNSENT_KEEP, old).all<{ key: string }>();
+    const keys = stale.results.map((row) => row.key);
+    for (let start = 0; start < keys.length; start += 1000) await env.FILES.delete(keys.slice(start, start + 1000));
+    await env.DB.prepare("DELETE FROM uploads WHERE (issue IS NULL AND received < ?) OR received < ?").bind(now - UNSENT_KEEP, old).run();
+  },
+} satisfies ExportedHandler<Env>;
