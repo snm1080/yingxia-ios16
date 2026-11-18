@@ -335,7 +335,7 @@ struct LocalAppNavigation: View {
         return HStack(spacing: metrics.buttonSpacing) {
             ForEach(buttons) { button in WithPerceptionTracking { dockButtonView(button, width: metrics.buttonWidth) } }
         }
-        .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
+        .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: LocalDockLayout.dockHeight / 2)
         .frame(maxWidth: .infinity, alignment: .center).frame(height: LocalDockLayout.dockHeight)
     }
 
@@ -356,7 +356,7 @@ struct LocalAppNavigation: View {
             else { selectSection(entry) }
         } label: {
             Image(systemName: entry == .home ? "house.fill" : entry == .settings ? "gearshape.fill" : entry.icon)
-            .font(.system(size: 22, weight: .semibold))
+            .font(.system(size: 28, weight: .semibold))
             .frame(width: width, height: LocalDockLayout.controlHeight)
             .foregroundStyle(selected ? color : .primary)
             .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
@@ -383,7 +383,7 @@ struct LocalAppNavigation: View {
         return Button {
             selectSection(.search)
         } label: {
-            Image(systemName: "magnifyingglass").font(.system(size: 22, weight: .semibold))
+            Image(systemName: "magnifyingglass").font(.system(size: 28, weight: .semibold))
                 .frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
                 .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
@@ -399,7 +399,7 @@ struct LocalAppNavigation: View {
             selectSection(.push)
         } label: {
             Image(systemName: selected ? "paperplane.fill" : "paperplane")
-                .font(.system(size: 22, weight: .semibold)).frame(width: width, height: LocalDockLayout.controlHeight)
+                .font(.system(size: 28, weight: .semibold)).frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
                 .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
                 .contentShape(Rectangle())

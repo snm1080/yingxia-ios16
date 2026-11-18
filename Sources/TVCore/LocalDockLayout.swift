@@ -8,7 +8,7 @@ public enum LocalDockLayout {
     public static let bottomPadding: CGFloat = 6
     public static let musicHeight: CGFloat = 56
     public static let musicSpacing: CGFloat = 8
-    public static let controlHeight: CGFloat = 52
+    public static let controlHeight: CGFloat = 60
     public static let groupPadding: CGFloat = 5
     public static var dockHeight: CGFloat { controlHeight + 2 * groupPadding }
 
