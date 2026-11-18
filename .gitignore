@@ -28,5 +28,7 @@ __pycache__/
 DandanplayCredentials.plist
 dandanplay.json
 Vendor/*/sources/
+# The reconstructed KSPlayer source is tracked on purpose (see Vendor/KSPlayer/UPSTREAM.md).
+!Vendor/KSPlayer/Sources/
 Vendor/*/*.xcframework
 Vendor/AV3A/reference/
