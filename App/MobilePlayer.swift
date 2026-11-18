@@ -319,6 +319,7 @@ struct MobilePlayerView: View {
                     applyOrientation(orientationSample)
                 }
                 clock.attach(session.engine)
+                UIDevice.current.isBatteryMonitoringEnabled = true
                 speed = session.engine.speed
                 session.engine.setSubtitleDelay(UserDefaults.standard.double(forKey: "local.playback.subtitleDelay"))
                 nowPlaying.start(session)
@@ -832,6 +833,25 @@ struct MobilePlayerView: View {
 
     // MARK: Top row
 
+    /// Battery level for the top-right status cluster; nil while the level is
+    /// unknown. `isBatteryMonitoringEnabled` is switched on in `onAppear`.
+    private static var batteryStatus: (symbol: String, percent: String)? {
+        let device = UIDevice.current
+        let level = device.batteryLevel
+        guard level >= 0 else { return nil }
+        let symbol: String
+        switch level {
+        case 0.875...: symbol = "battery.100"
+        case 0.625..<0.875: symbol = "battery.75"
+        case 0.375..<0.625: symbol = "battery.50"
+        case 0.125..<0.375: symbol = "battery.25"
+        default: symbol = "battery.0"
+        }
+        let charging = device.batteryState == .charging || device.batteryState == .full
+        return (symbol: charging && symbol != "battery.0" ? symbol + ".bolt" : symbol,
+                percent: "\(Int((level * 100).rounded()))%")
+    }
+
     /// Always-visible corner actions share 44 pt targets. The rotation button stays at the upper right.
     private var topRow: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -853,6 +873,10 @@ struct MobilePlayerView: View {
                             HStack(spacing: 8) {
                                 Text(ByteCountFormatter.string(fromByteCount: Int64(max(0, session.transfer.bytesPerSecond ?? 0)), countStyle: .file) + "/s")
                                 Text(context.date, style: .time)
+                                if let battery = Self.batteryStatus {
+                                    Image(systemName: battery.symbol)
+                                    Text(battery.percent)
+                                }
                             }.font(.caption2.monospacedDigit()).lineLimit(1)
                         }
                     }
