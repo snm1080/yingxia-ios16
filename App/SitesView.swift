@@ -1509,7 +1509,53 @@ struct SiteView: View {
             }
         }
         .opacity(browser.busy && !browser.videos.isEmpty ? 0.55 : 1).animation(.appSmooth, value: browser.busy)
+        #if os(iOS)
+        // Sam: swipe sideways on the poster grid to step between categories.
+        // Attached to the grid only, so the chip row keeps its own scrolling.
+        .simultaneousGesture(categorySwipeGesture)
+        #endif
     }
+
+    #if os(iOS)
+    /// Judged at drag end: at least 70pt sideways and at least twice the
+    /// vertical travel, so ordinary vertical scrolling never reads as a swipe.
+    private var categorySwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 30)
+            .onEnded { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) >= 70, abs(dx) >= abs(dy) * 2 else { return }
+                stepCategory(dx < 0 ? 1 : -1)
+            }
+    }
+
+    /// Moves one stop along [Recommendations?, categories…] without wrapping,
+    /// making exactly the selection a chip tap makes (same load, same state).
+    private func stepCategory(_ delta: Int) {
+        enum Stop { case home; case category(Category) }
+        var stops: [Stop] = site.isCatPawOpen ? [] : [.home]
+        stops += browser.categories.map(Stop.category)
+        let current: Int?
+        if browser.category.isEmpty {
+            current = site.isCatPawOpen ? nil : 0
+        } else {
+            current = stops.firstIndex { stop in
+                if case .category(let category) = stop { return category.id == browser.category }
+                return false
+            }
+        }
+        guard let current, stops.indices.contains(current + delta) else { return }
+        switch stops[current + delta] {
+        case .home:
+            query = ""
+            startRequest { await home() }
+        case .category(let item):
+            query = ""
+            let filters = browser.openingFilters(for: item)
+            startRequest { await browser.load(.list(category: item.id, query: "", page: 1, filters: filters), client: client) }
+        }
+    }
+    #endif
 
     private var catalogColumns: [GridItem] {
         #if os(iOS)
