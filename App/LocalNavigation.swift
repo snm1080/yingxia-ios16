@@ -137,10 +137,12 @@ struct LocalAppNavigation: View {
                                 .padding(.horizontal, LocalDockLayout.horizontalPadding)
                                 .padding(.top, LocalDockLayout.topPadding).padding(.bottom, LocalDockLayout.bottomPadding)
                                 .localDockHitRegions(frames: LocalDockLayout.touchFrames(containerWidth: viewport.size.width,
-                                    showsMusic: store.music.showsStrip(videoPlaying: store.playing != nil)))
+                                    showsMusic: store.music.showsStrip(videoPlaying: store.playing != nil), buttonCount: entries.count + 2))
                                 .disabled(sourcePanelBlocksInput)
                                 .allowsHitTesting(!sourcePanelBlocksInput)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                                // Fade only: sliding the dock in moved the painted bar
+                                // away from its hit region while it travelled.
+                                .transition(.opacity)
                             }
                         }
                     }
@@ -320,19 +322,16 @@ struct LocalAppNavigation: View {
     }
 
     private func dock(availableWidth: CGFloat) -> some View {
-        let metrics = LocalDockLayout.metrics(availableWidth: availableWidth)
-        return HStack(spacing: metrics.groupSpacing) {
-            HStack(spacing: metrics.buttonSpacing) {
-                ForEach(entries) { entry in WithPerceptionTracking { dockButton(entry, width: metrics.buttonWidth) } }
-            }
-                .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
-            HStack(spacing: metrics.buttonSpacing) {
-                searchButton(width: metrics.buttonWidth)
-                pushButton(width: metrics.buttonWidth)
-            }
-            .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
+        // Sam: one capsule for every button (was two), so the whole bar is a
+        // single hit region and nothing falls through the gap between groups.
+        let metrics = LocalDockLayout.metrics(availableWidth: availableWidth, buttonCount: entries.count + 2)
+        return HStack(spacing: metrics.buttonSpacing) {
+            ForEach(entries) { entry in WithPerceptionTracking { dockButton(entry, width: metrics.buttonWidth) } }
+            searchButton(width: metrics.buttonWidth)
+            pushButton(width: metrics.buttonWidth)
         }
-        .frame(maxWidth: .infinity).frame(height: LocalDockLayout.dockHeight)
+        .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
+        .frame(maxWidth: .infinity, alignment: .center).frame(height: LocalDockLayout.dockHeight)
     }
 
     private func dockButton(_ entry: AppSection, width: CGFloat) -> some View {

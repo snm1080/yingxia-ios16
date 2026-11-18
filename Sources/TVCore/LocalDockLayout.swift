@@ -18,12 +18,14 @@ public enum LocalDockLayout {
         public let groupSpacing: CGFloat
     }
 
-    public static func metrics(availableWidth: CGFloat) -> Metrics {
+    public static func metrics(availableWidth: CGFloat, buttonCount: Int) -> Metrics {
         let compact = availableWidth < 336
         let buttonSpacing: CGFloat = compact ? 2 : 4
         let groupSpacing: CGFloat = compact ? 8 : 12
-        let width = (availableWidth - 16 - buttonSpacing * 4 - groupSpacing) / 6
-        return Metrics(buttonWidth: max(48, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
+        // One capsule holds every button now; its width follows the visible count.
+        let count = max(1, buttonCount)
+        let width = (availableWidth - 2 * groupPadding - buttonSpacing * CGFloat(count - 1)) / CGFloat(count)
+        return Metrics(buttonWidth: max(44, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
     }
 
     public static func inset(showsMusic: Bool) -> CGFloat {
@@ -33,20 +35,20 @@ public enum LocalDockLayout {
     /// The dock has fixed control sizes; its touch regions can be resolved in the
     /// same layout pass. Feeding measured anchors back through @State leaves the
     /// first music-strip frame empty, and can animate old hit frames after scrolling.
-    public static func touchFrames(containerWidth: CGFloat, showsMusic: Bool) -> [CGRect] {
+    public static func touchFrames(containerWidth: CGFloat, showsMusic: Bool, buttonCount: Int) -> [CGRect] {
         let availableWidth = max(0, containerWidth - 2 * horizontalPadding)
-        let metrics = metrics(availableWidth: availableWidth)
-        let leftWidth = 4 * metrics.buttonWidth + 3 * metrics.buttonSpacing + 2 * groupPadding
-        let rightWidth = 2 * metrics.buttonWidth + metrics.buttonSpacing + 2 * groupPadding
-        let occupied = leftWidth + metrics.groupSpacing + rightWidth
-        let left = horizontalPadding + max(0, (availableWidth - occupied) / 2)
+        let metrics = metrics(availableWidth: availableWidth, buttonCount: buttonCount)
+        let count = max(1, buttonCount)
+        // The whole capsule is one hit region: gaps and padding inside it absorb
+        // touches instead of passing them through to the content underneath.
+        let capsuleWidth = CGFloat(count) * metrics.buttonWidth + CGFloat(count - 1) * metrics.buttonSpacing + 2 * groupPadding
+        let left = horizontalPadding + max(0, (availableWidth - capsuleWidth) / 2)
         let top = topPadding + (showsMusic ? musicHeight + musicSpacing : 0)
         var frames: [CGRect] = []
         if showsMusic {
             frames.append(CGRect(x: horizontalPadding, y: topPadding, width: availableWidth, height: musicHeight))
         }
-        frames.append(CGRect(x: left, y: top, width: leftWidth, height: dockHeight))
-        frames.append(CGRect(x: left + leftWidth + metrics.groupSpacing, y: top, width: rightWidth, height: dockHeight))
+        frames.append(CGRect(x: left, y: top, width: capsuleWidth, height: dockHeight))
         return frames
     }
 

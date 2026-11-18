@@ -14,11 +14,22 @@ private struct LocalDockFrames: PreferenceKey {
 
 private struct LocalDockTouchShape: Shape {
     let frames: [CGRect]
+    /// The fixed dock's frames describe whole capsules, not single controls: round
+    /// them like the glass (radius = half the height; both capsules are pills) so a
+    /// tap anywhere inside a capsule — gaps and padding included — lands on the dock.
+    var rounded = false
     func path(in rect: CGRect) -> Path {
         var path = Path()
         // Individual buttons define their own visual shape. The shared overlay only
         // removes spacers and padding, so it must retain each marked control's full hit area.
-        for frame in frames { path.addRect(frame) }
+        for frame in frames {
+            if rounded {
+                let radius = min(frame.width, frame.height) / 2
+                path.addRoundedRect(in: frame, cornerSize: CGSize(width: radius, height: radius))
+            } else {
+                path.addRect(frame)
+            }
+        }
         return path
     }
 }
@@ -64,8 +75,9 @@ private struct LocalDockAccessory<Controls: View>: ViewModifier {
 extension View {
     /// Fixed-layout docks use current frames directly, with no delayed preference
     /// publication or state animation between a visible control and its hit shape.
+    /// Their frames are whole capsules, so the hit shape is rounded like the glass.
     func localDockHitRegions(frames: [CGRect]) -> some View {
-        contentShape(.interaction, LocalDockTouchShape(frames: frames))
+        contentShape(.interaction, LocalDockTouchShape(frames: frames, rounded: true))
     }
 
     /// Mark only painted controls; inter-capsule spacers and outer shadows pass touches through.
