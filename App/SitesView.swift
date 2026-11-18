@@ -1531,7 +1531,12 @@ struct SiteView: View {
         ChipRow {
             GlassGroup(spacing: 8) {
                 HStack(spacing: 8) {
-                    Chip(title: L10n.text("Recommendations"), selected: browser.query.isEmpty && browser.category.isEmpty) { query = ""; startRequest { await home() } }
+                    // CatPawOpen bundles (Sam's dou/hmtv/lee/kstore) have no home
+                    // content: their "Recommendations" page is always empty, so
+                    // don't offer it as a destination at all.
+                    if !site.isCatPawOpen {
+                        Chip(title: L10n.text("Recommendations"), selected: browser.query.isEmpty && browser.category.isEmpty) { query = ""; startRequest { await home() } }
+                    }
                     ForEach(browser.categories) { item in
                         WithPerceptionTracking {
                             Chip(title: item.name, selected: browser.query.isEmpty && browser.category == item.id) {
@@ -1565,7 +1570,20 @@ struct SiteView: View {
                 .accessibilityIdentifier("site.loadMore")
         }
     }
-    private func home() async { await browser.load(folder.map { .list(category: $0.folderCategoryID, query: "", page: 1, filters: $0.folderFilters) } ?? .home, client: client) }
+    private func home() async {
+        // CatPawOpen bundles have no home content. Once categories are known,
+        // go straight to the first category instead of loading the empty
+        // home page (clearing a search, the Bilibili re-login path and the
+        // site-actions refresh all come through here). On first landing the
+        // categories aren't known yet, so fall through to the .home load --
+        // CatalogBrowser.load already auto-switches to the first category
+        // when a home answer comes back with no videos.
+        if folder == nil, site.isCatPawOpen, let first = browser.categories.first {
+            await browser.load(.list(category: first.id, query: "", page: 1, filters: browser.openingFilters(for: first)), client: client)
+        } else {
+            await browser.load(folder.map { .list(category: $0.folderCategoryID, query: "", page: 1, filters: $0.folderFilters) } ?? .home, client: client)
+        }
+    }
     private func search() async {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { await home() }
