@@ -20,6 +20,7 @@ struct LocalSettingsView: View {
                 LocalSettingsCard(symbol: "film.stack", title: "TMDB") { TMDBServiceSettingsView() }
                 LocalSettingsCard(symbol: "captions.bubble", title: "在线字幕") { LocalOnlineSubtitleSettingsView() }
                 LocalSettingsCard(symbol: "waveform", title: "AI字幕") { LocalAISubtitleSettingsView() }
+                LocalSettingsCard(symbol: "play.rectangle", title: "播放器") { LocalPlayerSettingsView() }
                 LocalSettingsCard(symbol: "internaldrive", title: "视频缓存") { LocalCacheSettingsView() }
                 LocalSettingsCard(symbol: "text.bubble", title: "弹幕") { LocalDanmakuSettingsView() }
                 LocalSettingsCard(symbol: "seal.fill", title: "媒体徽章") { LocalMediaBadgeSettingsView() }
