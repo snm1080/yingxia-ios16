@@ -29,14 +29,12 @@ class VideoToolboxDecode: DecodeProtocol {
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
         if needReconfig {
             // 解决从后台切换到前台，解码失败的问题
-            guard let newSession = DecompressionSession(assetTrack: session.assetTrack, options: options) else {
-                // Session recreation failed: surface the error so the track can
-                // fall back to FFmpeg decoding instead of trapping on unwrap.
-                needReconfig = false
-                completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame)))
+            guard let replacement = DecompressionSession(assetTrack: session.assetTrack, options: options,
+                formatDescription: session.formatDescription) else {
+                completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: kVTInvalidSessionErr)))
                 return
             }
-            session = newSession
+            session = replacement
             doFlushCodec()
             needReconfig = false
         }
@@ -44,7 +42,23 @@ class VideoToolboxDecode: DecodeProtocol {
             return
         }
         do {
-            let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: session.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
+            if packet.isKeyFrame, session.assetTrack.isAnnexB, corePacket.size > 0,
+               let updated = VideoNALFormat.updatedFormatDescription(sample: Data(bytes: data, count: Int(corePacket.size)),
+                    current: session.formatDescription) {
+                // Drain old callbacks before invalidating their native session.
+                // They keep their own format/timing metadata; the current packet
+                // must be decoded exactly once with the new SPS/PPS.
+                VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
+                guard let replacement = DecompressionSession(assetTrack: session.assetTrack, options: options,
+                    formatDescription: updated) else {
+                    throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: kVTVideoDecoderUnsupportedDataFormatErr)
+                }
+                session = replacement
+            }
+            let decodingSession = session
+            let sampleBuffer = try decodingSession.formatDescription.getSampleBuffer(annexB: decodingSession.assetTrack.isAnnexB,
+                lengthFieldBytes: decodingSession.assetTrack.nalLengthFieldBytes,
+                isConvertNALSize: decodingSession.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
             let flags: VTDecodeFrameFlags = [
                 ._EnableAsynchronousDecompression,
             ]
@@ -53,24 +67,19 @@ class VideoToolboxDecode: DecodeProtocol {
             let packetFlags = corePacket.flags
             let duration = corePacket.duration
             let size = corePacket.size
-            let status = VTDecompressionSessionDecodeFrame(session.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, _, _ in
-                guard let self, !infoFlags.contains(.frameDropped) else {
+            let status = VTDecompressionSessionDecodeFrame(decodingSession.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, _, _ in
+                guard let self else {
                     return
                 }
                 guard status == noErr else {
-                    if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
-                        if packet.isKeyFrame {
-                            completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
-                        } else {
-                            // 解决从后台切换到前台，解码失败的问题
-                            self.needReconfig = true
-                        }
-                    }
+                    completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                     return
                 }
-                let frame = VideoVTBFrame(fps: session.assetTrack.nominalFrameRate, isDovi: session.assetTrack.dovi != nil)
+                guard !infoFlags.contains(.frameDropped), let imageBuffer else { return }
+                decodingSession.applyOutputMetadata(to: imageBuffer)
+                let frame = VideoVTBFrame(fps: decodingSession.assetTrack.nominalFrameRate, isDovi: decodingSession.assetTrack.dovi != nil)
                 frame.corePixelBuffer = imageBuffer
-                frame.timebase = session.assetTrack.timebase
+                frame.timebase = decodingSession.assetTrack.timebase
                 if packet.isKeyFrame, packetFlags & AV_PKT_FLAG_DISCARD != 0, self.lastPosition > 0 {
                     self.startTime = self.lastPosition - timestamp
                 }
@@ -86,13 +95,15 @@ class VideoToolboxDecode: DecodeProtocol {
                 if !flags.contains(._EnableAsynchronousDecompression) {
                     VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
                 }
-            } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr || status == kVTVideoDecoderBadDataErr {
+            } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr {
                 if packet.isKeyFrame {
                     throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
                 } else {
                     // 解决从后台切换到前台，解码失败的问题
                     needReconfig = true
                 }
+            } else {
+                throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
             }
         } catch {
             completionHandler(.failure(error))
@@ -100,6 +111,10 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func doFlushCodec() {
+        // The decode worker calls flush after the track has invalidated its
+        // output generation. Drain native callbacks before resetting their
+        // timestamp basis; they must not modify the next seek's state later.
+        VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         lastPosition = 0
         startTime = 0
     }
@@ -118,9 +133,10 @@ class DecompressionSession {
     fileprivate let formatDescription: CMFormatDescription
     fileprivate let decompressionSession: VTDecompressionSession
     fileprivate var assetTrack: FFmpegAssetTrack
-    init?(assetTrack: FFmpegAssetTrack, options: KSOptions) {
+    private let preserveInputColor: Bool
+    init?(assetTrack: FFmpegAssetTrack, options: KSOptions, formatDescription replacement: CMFormatDescription? = nil) {
         self.assetTrack = assetTrack
-        guard let pixelFormatType = assetTrack.pixelFormatType, let formatDescription = assetTrack.formatDescription else {
+        guard let pixelFormatType = assetTrack.pixelFormatType, let formatDescription = replacement ?? assetTrack.formatDescription else {
             return nil
         }
         self.formatDescription = formatDescription
@@ -130,12 +146,12 @@ class DecompressionSession {
             VTRegisterSupplementalVideoDecoderIfAvailable(formatDescription.mediaSubType.rawValue)
         }
         #endif
-//        VTDecompressionSessionCanAcceptFormatDescription(<#T##session: VTDecompressionSession##VTDecompressionSession#>, formatDescription: <#T##CMFormatDescription#>)
+        let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
         let attributes: NSMutableDictionary = [
             kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
             kCVPixelBufferMetalCompatibilityKey: true,
-            kCVPixelBufferWidthKey: assetTrack.codecpar.width,
-            kCVPixelBufferHeightKey: assetTrack.codecpar.height,
+            kCVPixelBufferWidthKey: dimensions.width,
+            kCVPixelBufferHeightKey: dimensions.height,
             kCVPixelBufferIOSurfacePropertiesKey: NSDictionary(),
         ]
         var session: VTDecompressionSession?
@@ -156,44 +172,62 @@ class DecompressionSession {
             VTSessionSetProperty(decompressionSession,
                                  key: kVTDecompressionPropertyKey_PixelTransferProperties,
                                  value: pixelTransferProperties as CFDictionary)
+            preserveInputColor = false
+        } else {
+            preserveInputColor = assetTrack.dovi?.dv_profile != 5
         }
         self.decompressionSession = decompressionSession
+    }
+
+    fileprivate func applyOutputMetadata(to pixelBuffer: CVPixelBuffer) {
+        // P5 is converted by the Dolby native decoder. Never tag unconverted
+        // IPT samples as ordinary BT2020 YUV by copying container labels.
+        guard preserveInputColor else { return }
+        func currentColor(_ key: CFString) -> CFString? {
+            (CMFormatDescriptionGetExtension(formatDescription, extensionKey: key) as? String).map { $0 as CFString }
+        }
+        VideoColorMetadata.applyMissing(pixelBuffer: pixelBuffer,
+            primaries: currentColor(kCMFormatDescriptionExtension_ColorPrimaries) ?? assetTrack.codecpar.color_primaries.colorPrimaries,
+            transfer: currentColor(kCMFormatDescriptionExtension_TransferFunction) ?? assetTrack.codecpar.color_trc.transferFunction,
+            matrix: currentColor(kCMFormatDescriptionExtension_YCbCrMatrix) ?? assetTrack.codecpar.color_space.ycbcrMatrix)
+        let description = formatDescription
+        for (formatKey, bufferKey) in [
+            (kCMFormatDescriptionExtension_MasteringDisplayColorVolume, kCVImageBufferMasteringDisplayColorVolumeKey),
+            (kCMFormatDescriptionExtension_ContentLightLevelInfo, kCVImageBufferContentLightLevelInfoKey),
+        ] {
+            if CVBufferGetAttachment(pixelBuffer, bufferKey, nil) == nil,
+               let value = CMFormatDescriptionGetExtension(description, extensionKey: formatKey) {
+                CVBufferSetAttachment(pixelBuffer, bufferKey, value, .shouldPropagate)
+            }
+        }
     }
 }
 #endif
 
 extension CMFormatDescription {
-    fileprivate func getSampleBuffer(isConvertNALSize: Bool, data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
-        if isConvertNALSize {
-            var ioContext: UnsafeMutablePointer<AVIOContext>?
-            let status = avio_open_dyn_buf(&ioContext)
-            if status == 0 {
-                var nalSize: UInt32 = 0
-                let end = data + size
-                var nalStart = data
-                while nalStart < end {
-                    nalSize = UInt32(nalStart[0]) << 16 | UInt32(nalStart[1]) << 8 | UInt32(nalStart[2])
-                    avio_wb32(ioContext, nalSize)
-                    nalStart += 3
-                    avio_write(ioContext, nalStart, Int32(nalSize))
-                    nalStart += Int(nalSize)
-                }
-                var demuxBuffer: UnsafeMutablePointer<UInt8>?
-                let demuxSze = avio_close_dyn_buf(ioContext, &demuxBuffer)
-                return try createSampleBuffer(data: demuxBuffer, size: Int(demuxSze))
-            } else {
-                throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
+    fileprivate func getSampleBuffer(annexB: Bool, lengthFieldBytes: Int, isConvertNALSize: Bool,
+                                    data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
+        guard size > 0 else { throw VideoNALFormat.InvalidSample.malformedNAL }
+        if annexB || isConvertNALSize {
+            let native = try VideoNALFormat.sampleData(Data(bytes: data, count: size), annexB: annexB,
+                                                       lengthFieldBytes: lengthFieldBytes)
+            return try native.withUnsafeBytes { bytes in
+                try createSampleBuffer(data: bytes.baseAddress, size: bytes.count)
             }
-        } else {
-            return try createSampleBuffer(data: data, size: size)
         }
+        return try createSampleBuffer(data: data, size: size)
     }
 
-    private func createSampleBuffer(data: UnsafeMutablePointer<UInt8>?, size: Int) throws -> CMSampleBuffer {
+    private func createSampleBuffer(data: UnsafeRawPointer?, size: Int) throws -> CMSampleBuffer {
         var blockBuffer: CMBlockBuffer?
         var sampleBuffer: CMSampleBuffer?
         // swiftlint:disable line_length
-        var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: data, blockLength: size, blockAllocator: kCFAllocatorNull, customBlockSource: nil, offsetToData: 0, dataLength: size, flags: 0, blockBufferOut: &blockBuffer)
+        // Asynchronous VT decode outlives this call and the demux packet. The
+        // block buffer must own its compressed bytes, including converted NALs.
+        var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: size, blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0, dataLength: size, flags: 0, blockBufferOut: &blockBuffer)
+        if status == noErr, let blockBuffer, let data {
+            status = CMBlockBufferReplaceDataBytes(with: data, blockBuffer: blockBuffer, offsetIntoDestination: 0, dataLength: size)
+        }
         if status == noErr {
             status = CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: self, sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
             if let sampleBuffer {

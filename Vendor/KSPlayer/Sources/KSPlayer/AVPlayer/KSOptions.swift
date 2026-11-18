@@ -15,6 +15,9 @@ import OSLog
 import UIKit
 #endif
 open class KSOptions {
+    /// Optional byte-for-byte transport for the original URL passed to the demuxer.
+    /// Nil opens the source itself. A cache transport never changes its media timeline.
+    public var cacheIOURL: URL?
     /// 最低缓存视频时间
     @Published
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
@@ -46,34 +49,6 @@ open class KSOptions {
     public var cache = false
     //  record stream
     public var outputURL: URL?
-    // MARK: - Yingxia local extensions (reconstructed; see Vendor/KSPlayer/UPSTREAM.md)
-
-    /// Reports the decoder path that actually produced video frames:
-    /// "VideoToolbox" for the decompression-session path, "FFmpeg VideoToolbox"
-    /// when FFmpeg frames arrive VideoToolbox-backed, "FFmpeg software" otherwise.
-    public var onVideoDecoderChanged: (@Sendable (String) -> Void)?
-    /// Terminal video-decoder failure with a user-presentable message; no usable
-    /// decoder could be initialised. Per-frame failures use `onVideoDecoderError`.
-    public var onVideoDecoderFailed: (@Sendable (String) -> Void)?
-    /// Non-fatal decoder error, for diagnostics only (e.g. a VideoToolbox failure
-    /// that fell back to FFmpeg decoding).
-    public var onVideoDecoderError: (@Sendable (Error) -> Void)?
-    /// Preferred audio stream id from the caller's saved selection; consulted
-    /// when `wantedAudio(tracks:)` returns nil.
-    public var preferredAudioTrackID: Int32?
-    /// Optional byte-cache transport for the main input, mapped below the
-    /// demuxer: when set, the demuxer reads the same bytes from this URL
-    /// instead of the content URL (and without the content headers).
-    public var cacheIOURL: URL?
-    /// Separate audio input (e.g. DASH split audio) demuxed alongside the main
-    /// URL; its audio stream joins the track list and feeds the audio decoder.
-    public var companionAudioURL: URL?
-    public var companionAudioHeaders: [String: String] = [:]
-    /// Byte-cache transport for the companion audio input (see `cacheIOURL`).
-    public var companionAudioCacheIOURL: URL?
-    /// Image-subtitle track ids the caller wants decoded from a seek point
-    /// (preroll); such tracks may be selected without `isSeekImageSubtitle`.
-    public var subtitlePrerollTrackIDs: Set<Int32> = []
     public var avOptions = [String: Any]()
     public var formatContextOptions = [String: Any]()
     public var decoderOptions = [String: Any]()
@@ -102,11 +77,22 @@ open class KSOptions {
     }
 
     // audio
+    public var companionAudioURL: URL?
+    public var companionAudioHeaders: [String: String] = [:]
+    public var companionAudioCacheIOURL: URL?
+    public var audioDisable = false
     public var audioFilters = [String]()
     public var syncDecodeAudio = false
     // sutile
     public var autoSelectEmbedSubtitle = true
     public var isSeekImageSubtitle = false
+    /// Selected text streams whose cue may begin before the target video cluster.
+    private let subtitlePrerollLock = NSLock()
+    private var _subtitlePrerollTrackIDs = Set<Int32>()
+    public var subtitlePrerollTrackIDs: Set<Int32> {
+        get { subtitlePrerollLock.lock(); defer { subtitlePrerollLock.unlock() }; return _subtitlePrerollTrackIDs }
+        set { subtitlePrerollLock.lock(); defer { subtitlePrerollLock.unlock() }; _subtitlePrerollTrackIDs = newValue }
+    }
     // video
     public var display = DisplayEnum.plane
     public var videoDelay = 0.0 // s
@@ -116,6 +102,14 @@ open class KSOptions {
     public var videoAdaptable = true
     public var videoFilters = [String]()
     public var syncDecodeVideo = false
+    /// Actual decoder selected after session creation or fallback, called on the decode queue.
+    public var onVideoDecoderChanged: ((String) -> Void)?
+    /// Fatal video failures must reach the app instead of leaving audio running alone.
+    public var onVideoDecoderFailed: ((String) -> Void)?
+    /// Structured native error before fallback/terminal notification, without input URLs.
+    public var onVideoDecoderError: ((NSError) -> Void)?
+    /// A recovery keeps the selected stream in both ordinary and companion inputs.
+    public var preferredAudioTrackID: Int32?
     public var hardwareDecode = KSOptions.hardwareDecode
     public var asynchronousDecompression = KSOptions.asynchronousDecompression
     public var videoDisable = false
@@ -124,6 +118,7 @@ open class KSOptions {
     @Published
     public var videoInterlacingType: VideoInterlacingType?
     private var videoClockDelayCount = 0
+    private var videoOnlyClock = VideoOnlyPlaybackClock()
 
     public internal(set) var formatName = ""
     public internal(set) var prepareTime = 0.0
@@ -166,6 +161,30 @@ open class KSOptions {
         decoderOptions["refcounted_frames"] = "1"
     }
 
+    func companionAudioOptions() -> KSOptions {
+        let audio = KSOptions()
+        audio.videoDisable = true
+        audio.autoSelectEmbedSubtitle = false
+        audio.isAccurateSeek = isAccurateSeek
+        audio.isSecondOpen = isSecondOpen
+        audio.isSeekedAutoPlay = false
+        audio.registerRemoteControll = false
+        audio.startPlayTime = startPlayTime
+        audio.preferredForwardBufferDuration = preferredForwardBufferDuration
+        audio.maxBufferDuration = maxBufferDuration
+        audio.syncDecodeAudio = syncDecodeAudio
+        audio.preferredAudioTrackID = preferredAudioTrackID
+        audio.audioFilters = audioFilters
+        audio.decoderOptions = decoderOptions
+        // Preserve deadlines and HLS byte probing, never the video's authorization.
+        for key in ["rw_timeout", "reconnect", "reconnect_streamed", "reconnect_delay_max", "extension_picky"] {
+            if let value = formatContextOptions[key] { audio.formatContextOptions[key] = value }
+        }
+        audio.appendHeader(companionAudioHeaders)
+        audio.cacheIOURL = companionAudioCacheIOURL
+        return audio
+    }
+
     /**
      you can add http-header or other options which mentions in https://developer.apple.com/reference/avfoundation/avurlasset/initialization_options
 
@@ -182,7 +201,9 @@ open class KSOptions {
         avOptions["AVURLAssetHTTPHeaderFieldsKey"] = oldValue
         var str = formatContextOptions["headers"] as? String ?? ""
         for (key, value) in header {
-            str.append("\(key):\(value)\r\n")
+            // FFmpeg's has_header matches "Name: ". Without that space it
+            // prepends defaults, so origins may receive the wrong UA or Range.
+            str.append("\(key): \(value)\r\n")
         }
         formatContextOptions["headers"] = str
     }
@@ -260,8 +281,9 @@ open class KSOptions {
     /// wanted audio stream index, or nil for automatic selection
     /// - Parameter :  audio track
     /// - Returns: The index of the track
-    open func wantedAudio(tracks _: [MediaPlayerTrack]) -> Int? {
-        nil
+    open func wantedAudio(tracks: [MediaPlayerTrack]) -> Int? {
+        guard let preferredAudioTrackID else { return nil }
+        return tracks.firstIndex { $0.trackID == preferredAudioTrackID }
     }
 
     open func videoFrameMaxCount(fps _: Float, naturalSize _: CGSize, isLive: Bool) -> UInt8 {
@@ -301,7 +323,9 @@ open class KSOptions {
         }
     }
 
-    private var idetTypeMap = [VideoInterlacingType: UInt]()
+    // Dominance subtracts competing frame counts; early interlaced results
+    // legitimately produce negative differences before enough evidence exists.
+    private var idetTypeMap = [VideoInterlacingType: Int]()
     open func filter(log: String) {
         if log.starts(with: "Repeated Field:"), autoDeInterlace {
             for str in log.split(separator: ",") {
@@ -390,15 +414,39 @@ open class KSOptions {
         #endif
     }
 
-    open func videoClockSync(main: KSClock, nextVideoTime: TimeInterval, fps: Double, frameCount: Int) -> (Double, ClockProcessType) {
-        let desire = main.getTime() - videoDelay
+    public func updateVideoClockPlayback(isPlaying: Bool, rate: Double, now: Double = CACurrentMediaTime()) {
+        videoOnlyClock.updatePlayback(isPlaying: isPlaying, rate: rate, now: now)
+    }
+
+    public func resetVideoClock() {
+        videoOnlyClock.reset()
+        videoClockDelayCount = 0
+    }
+
+    /// A catch-up can replace the initially classified picture. Escalation
+    /// tracks unresolved lateness, so a recovered output ends that episode.
+    /// Keep the existing tolerance and the video-only clock's transport anchor.
+    func videoClockDidCatchUp(diff: Double, fps: Double) {
+        let sourceFPS = fps.isFinite && fps > 0 ? fps : 60
+        if diff >= -4 / sourceFPS { videoClockDelayCount = 0 }
+    }
+
+    open func videoClockSync(main: KSClock, nextVideoTime: TimeInterval, fps: Double, frameCount: Int, videoOnly: Bool = false) -> (Double, ClockProcessType) {
+        let sourceFPS = fps.isFinite && fps > 0 ? fps : 60
+        // An audio track may recover and later end. Its next video-only
+        // handoff needs the current picture epoch, not a previous silent run.
+        if !videoOnly { videoOnlyClock.reset() }
+        let clockTime = videoOnly
+            ? videoOnlyClock.time(pictureTime: main.time.seconds, nextVideoTime: nextVideoTime, now: CACurrentMediaTime())
+            : main.getTime()
+        let desire = clockTime - videoDelay
         let diff = nextVideoTime - desire
 //        print("[video] video diff \(diff) nextVideoTime \(nextVideoTime) main \(main.time.seconds)")
-        if diff >= 1 / fps / 2 {
+        if diff >= 1 / sourceFPS / 2 {
             videoClockDelayCount = 0
             return (diff, .remain)
         } else {
-            if diff < -4 / fps {
+            if diff < -4 / sourceFPS {
                 videoClockDelayCount += 1
                 let log = "[video] video delay=\(diff), clock=\(desire), delay count=\(videoClockDelayCount), frameCount=\(frameCount)"
                 if frameCount == 1 {
@@ -724,13 +772,38 @@ public extension Array {
 public struct KSClock {
     public private(set) var lastMediaTime = CACurrentMediaTime()
     public internal(set) var position = Int64(0)
+    private var isPlaying = true
+    private var playbackRate = 1.0
+    private var elapsedBeforeTransition = 0.0
     public internal(set) var time = CMTime.zero {
         didSet {
             lastMediaTime = CACurrentMediaTime()
+            elapsedBeforeTransition = 0
         }
     }
 
     func getTime() -> TimeInterval {
-        time.seconds + CACurrentMediaTime() - lastMediaTime
+        time.seconds + elapsedBeforeTransition + (isPlaying ? max(0, CACurrentMediaTime() - lastMediaTime) * playbackRate : 0)
+    }
+
+    /// Preserve the callback's host anchor while translating container epochs.
+    func shifted(by seconds: Double) -> KSClock {
+        var value = self
+        let host = lastMediaTime, elapsed = elapsedBeforeTransition
+        value.time = time + CMTime(seconds: seconds, preferredTimescale: 1_000_000)
+        value.lastMediaTime = host
+        value.elapsedBeforeTransition = elapsed
+        return value
+    }
+
+    /// Keep the rendered audio sample as the PTS anchor. Pause/rate changes
+    /// re-anchor only its elapsed time; the next callback supplies a new PTS.
+    mutating func updatePlayback(isPlaying newIsPlaying: Bool, rate: Double, now: Double = CACurrentMediaTime()) {
+        let newRate = rate.isFinite && rate > 0 ? rate : 1
+        guard newIsPlaying != isPlaying || newRate != playbackRate else { return }
+        if isPlaying { elapsedBeforeTransition += max(0, now - lastMediaTime) * playbackRate }
+        lastMediaTime = now
+        isPlaying = newIsPlaying
+        playbackRate = newRate
     }
 }

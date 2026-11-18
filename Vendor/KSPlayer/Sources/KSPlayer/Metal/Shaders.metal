@@ -42,13 +42,13 @@ fragment half4 displayYUVTexture(VertexOut in [[ stage_in ]],
                                   sampler textureSampler [[ sampler(0) ]],
                                   constant float3x3& yuvToBGRMatrix [[ buffer(0) ]],
                                   constant float3& colorOffset [[ buffer(1) ]],
-                                  constant uchar3& leftShift [[ buffer(2) ]])
+                                  constant float3& sampleScale [[ buffer(2) ]])
 {
     half3 yuv;
     yuv.x = yTexture.sample(textureSampler, in.textureCoordinate).r;
     yuv.y = uTexture.sample(textureSampler, in.textureCoordinate).r;
     yuv.z = vTexture.sample(textureSampler, in.textureCoordinate).r;
-    return half4(half3x3(yuvToBGRMatrix)*(yuv*half3(leftShift)+half3(colorOffset)), 1);
+    return half4(half3(yuvToBGRMatrix*(float3(yuv)*sampleScale+colorOffset)), half(1));
 }
 
 
@@ -58,12 +58,12 @@ fragment half4 displayNV12Texture(VertexOut in [[ stage_in ]],
                                   sampler textureSampler [[ sampler(0) ]],
                                   constant float3x3& yuvToBGRMatrix [[ buffer(0) ]],
                                   constant float3& colorOffset [[ buffer(1) ]],
-                                  constant uchar3& leftShift [[ buffer(2) ]])
+                                  constant float3& sampleScale [[ buffer(2) ]])
 {
     half3 yuv;
     yuv.x = lumaTexture.sample(textureSampler, in.textureCoordinate).r;
     yuv.yz = chromaTexture.sample(textureSampler, in.textureCoordinate).rg;
-    return half4(half3x3(yuvToBGRMatrix)*(yuv*half3(leftShift)+half3(colorOffset)), 1);
+    return half4(half3(yuvToBGRMatrix*(float3(yuv)*sampleScale+colorOffset)), half(1));
 }
 
 half3 shaderLinearize(half3 rgb) {

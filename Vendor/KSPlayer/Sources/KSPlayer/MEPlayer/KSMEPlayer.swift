@@ -15,10 +15,14 @@ import AppKit
 
 public class KSMEPlayer: NSObject {
     private var loopCount = 1
-    private var playerItem: MEPlayerItem
+    private var playerItem: MEPlaybackSource
     public let audioOutput: AudioOutput
     private var options: KSOptions
     private var bufferingCountDownTimer: Timer?
+    private var seekPictureRevision = 0
+    private var pendingSeekPicture: Int?
+    private var outputsPaused = true
+    private var failedSource = false
     public private(set) var videoOutput: (VideoOutput & UIView)? {
         didSet {
             oldValue?.invalidate()
@@ -71,25 +75,18 @@ public class KSMEPlayer: NSObject {
 
     public private(set) var playableTime = TimeInterval(0)
     public weak var delegate: MediaPlayerDelegate?
-    // MARK: - Yingxia local extensions (reconstructed; see Vendor/KSPlayer/UPSTREAM.md)
-
-    /// When set, system PiP play/pause actions are routed through this command
-    /// (with the requested playing state) instead of calling play()/pause()
-    /// directly, so the application can serialize them with its own controls.
-    public var playbackCommand: (@Sendable (Bool) -> Void)?
-    /// When set, system PiP skip actions are routed through this command with
-    /// the absolute target time instead of seeking directly.
-    public var seekCommand: (@Sendable (Double) -> Void)?
-    /// The application-owned PiP controller (composited subtitles), when the
-    /// app drives PiP itself instead of using the player's `pipController`.
-    /// Stopped on shutdown; the app owns its lifecycle otherwise.
-    public var applicationPictureInPictureController: AVPictureInPictureController?
+    /// Route system transport controls through the application playback state machine.
+    public var playbackCommand: ((Bool) -> Void)?
+    public var seekCommand: ((Double) -> Void)?
+    /// The app may supply a composited subtitle layer while retaining this playback delegate.
+    public weak var applicationPictureInPictureController: AVPictureInPictureController?
     public private(set) var isReadyToPlay = false
     public var allowsExternalPlayback: Bool = false
     public var usesExternalPlaybackWhileExternalScreenIsActive: Bool = false
 
     public var playbackRate: Float = 1 {
         didSet {
+            videoOutput?.playbackRate = playbackRate
             if playbackRate != audioOutput.playbackRate {
                 audioOutput.playbackRate = playbackRate
                 if audioOutput is AudioUnitPlayer {
@@ -102,6 +99,10 @@ public class KSMEPlayer: NSObject {
                     options.audioFilters = audioFilters
                 }
             }
+            options.updateVideoClockPlayback(isPlaying: playbackState == .playing && loadState == .playable,
+                                             rate: Double(audioOutput.playbackRate))
+            playerItem.updateAudioClockPlayback(isPlaying: playbackState == .playing && loadState == .playable,
+                                               rate: Double(audioOutput.playbackRate))
         }
     }
 
@@ -130,7 +131,7 @@ public class KSMEPlayer: NSObject {
     public required init(url: URL, options: KSOptions) {
         KSOptions.setAudioSession()
         audioOutput = KSOptions.audioPlayerType.init()
-        playerItem = MEPlayerItem(url: url, options: options)
+        playerItem = MEPlaybackSource(url: url, options: options)
         if options.videoDisable {
             videoOutput = nil
         } else {
@@ -167,12 +168,20 @@ private extension KSMEPlayer {
         runOnMainThread { [weak self] in
             guard let self else { return }
             let isPaused = !(self.playbackState == .playing && self.loadState == .playable)
-            if isPaused {
-                self.audioOutput.pause()
-                self.videoOutput?.pause()
-            } else {
-                self.audioOutput.play()
-                self.videoOutput?.play()
+            self.options.updateVideoClockPlayback(isPlaying: !isPaused, rate: Double(self.audioOutput.playbackRate))
+            self.playerItem.updateAudioClockPlayback(isPlaying: !isPaused, rate: Double(self.audioOutput.playbackRate))
+            // loadState and transport can publish in the same run-loop turn.
+            // AudioRendererPlayer installs an observer on each play, so only
+            // an actual output transition may start/stop either output.
+            if self.outputsPaused != isPaused {
+                self.outputsPaused = isPaused
+                if isPaused {
+                    self.audioOutput.pause()
+                    self.videoOutput?.pause()
+                } else {
+                    self.audioOutput.play()
+                    self.videoOutput?.play()
+                }
             }
             self.delegate?.changeLoadState(player: self)
         }
@@ -230,6 +239,14 @@ extension KSMEPlayer: MEPlayerDelegate {
     func sourceDidFailed(error: NSError?) {
         runOnMainThread { [weak self] in
             guard let self else { return }
+            self.failedSource = true
+            self.playbackState = .paused
+            self.audioOutput.pause()
+            self.audioOutput.flush()
+            self.videoOutput?.pause()
+            self.videoOutput?.discardPendingFrame()
+            self.outputsPaused = true
+            self.pendingSeekPicture = nil
             self.delegate?.finish(player: self, error: error)
         }
     }
@@ -240,8 +257,16 @@ extension KSMEPlayer: MEPlayerDelegate {
             if self.options.isLoopPlay {
                 self.loopCount += 1
                 self.delegate?.playBack(player: self, loopCount: self.loopCount)
-                self.audioOutput.play()
-                self.videoOutput?.play()
+                self.options.resetVideoClock()
+                self.videoOutput?.discardPendingFrame()
+                // Re-prime audio at the new loop PTS, removing its previous
+                // periodic observer before starting a replacement.
+                if !self.outputsPaused {
+                    self.audioOutput.pause()
+                    self.videoOutput?.pause()
+                    self.outputsPaused = true
+                }
+                self.playOrPause()
             } else {
                 self.playbackState = .finished
             }
@@ -249,6 +274,17 @@ extension KSMEPlayer: MEPlayerDelegate {
     }
 
     func sourceDidChange(loadingState: LoadingState) {
+        // A paused output has no display-link ticks. Retry until the seek's
+        // decoded video queue supplies one replacement picture, without audio.
+        // The aggregate frame count is the minimum across audio/video queues;
+        // an ended audio track must not prevent a remaining video frame drawing.
+        if let pending = pendingSeekPicture {
+            runOnMainThread { [weak self] in
+                guard let self, self.pendingSeekPicture == pending,
+                      self.playbackState == .paused || self.playbackState == .seeking else { return }
+                if self.videoOutput?.readNextFrame() == true { self.pendingSeekPicture = nil }
+            }
+        }
         if loadingState.isEndOfFile {
             playableTime = duration
         } else {
@@ -331,7 +367,7 @@ extension KSMEPlayer: MediaPlayerProtocol {
         KSLog("replaceUrl \(self)")
         shutdown()
         playerItem.delegate = nil
-        playerItem = MEPlayerItem(url: url, options: options)
+        playerItem = MEPlaybackSource(url: url, options: options)
         if options.videoDisable {
             videoOutput = nil
         } else if videoOutput == nil {
@@ -358,6 +394,12 @@ extension KSMEPlayer: MediaPlayerProtocol {
     /// 见 `MEPlayerItem.displayedVideoTime`——最近一帧绘制到 display layer 的 PTS，
     /// 适合驱动需要与画面严格同步的视图（audioClock 因 buffer prefill 跑在画面之前不适用）。
     public var displayedVideoTime: TimeInterval { playerItem.displayedVideoTime }
+    public func relativeVideoTime(for timestamp: CMTime) -> TimeInterval { playerItem.relativeVideoTime(for: timestamp) }
+    public var hasReachedEndOfInput: Bool { playerItem.hasReachedEndOfInput }
+    #if DEBUG
+    public var renderDiagnostic: String { playerItem.renderDiagnostic }
+    public var subtitleDiagnostic: String { playerItem.subtitleDiagnostic }
+    #endif
 
     public var duration: TimeInterval { playerItem.duration }
 
@@ -371,9 +413,15 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
         let time = max(time, 0)
+        seekPictureRevision &+= 1
+        let pictureRevision = seekPictureRevision
+        pendingSeekPicture = nil
         playbackState = .seeking
         runOnMainThread { [weak self] in
-            self?.bufferingProgress = 0
+            guard let self, self.seekPictureRevision == pictureRevision else { return }
+            self.bufferingProgress = 0
+            self.videoOutput?.discardPendingFrame()
+            self.options.resetVideoClock()
         }
         let seekTime: TimeInterval
         if time >= duration, options.isLoopPlay {
@@ -386,7 +434,8 @@ extension KSMEPlayer: MediaPlayerProtocol {
             if result {
                 self.audioOutput.flush()
                 runOnMainThread { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.seekPictureRevision == pictureRevision else { return }
+                    self.pendingSeekPicture = pictureRevision
                     if let controlTimebase = self.videoOutput?.displayLayer.controlTimebase {
                         CMTimebaseSetTime(controlTimebase, time: CMTimeMake(value: Int64(self.currentPlaybackTime), timescale: 1))
                     }
@@ -398,19 +447,22 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     public func prepareToPlay() {
         KSLog("prepareToPlay \(self)")
+        failedSource = false
         options.prepareTime = CACurrentMediaTime()
         playerItem.prepareToPlay()
         bufferingProgress = 0
     }
 
     public func play() {
+        guard !failedSource else { return }
         KSLog("play \(self)")
         // Same reason as `KSAVPlayer.play()`: iOS deactivates the session on an
         // interruption or a suspension, and only construction re-activated it.
         KSOptions.activateAudioSession()
+        pendingSeekPicture = nil
         playbackState = .playing
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            pipController?.invalidatePlaybackState()
+            (applicationPictureInPictureController ?? pipController)?.invalidatePlaybackState()
         }
     }
 
@@ -418,17 +470,21 @@ extension KSMEPlayer: MediaPlayerProtocol {
         KSLog("pause \(self)")
         playbackState = .paused
         if #available(iOS 15.0, tvOS 15.0, macOS 12.0, *) {
-            pipController?.invalidatePlaybackState()
+            (applicationPictureInPictureController ?? pipController)?.invalidatePlaybackState()
         }
     }
 
     public func shutdown() {
         KSLog("shutdown \(self)")
+        seekPictureRevision &+= 1; pendingSeekPicture = nil
         playbackState = .stopped
         loadState = .idle
+        runOnMainThread { [weak self] in
+            self?.videoOutput?.discardPendingFrame()
+            self?.options.resetVideoClock()
+        }
         isReadyToPlay = false
         loopCount = 0
-        applicationPictureInPictureController?.stopPictureInPicture()
         playerItem.shutdown()
         options.prepareTime = 0
         options.dnsStartTime = 0
@@ -462,7 +518,28 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     public func enterBackground() {}
 
-    public func enterForeground() {}
+    public func enterForeground() {
+        // A PiP/foreground transition can suspend the display link while the
+        // demuxer and decoded queues remain valid. Refresh only the output.
+        runOnMainThread { [weak self] in
+            guard let self else { return }
+            if #available(iOS 14.0, tvOS 14.0, macOS 11.0, *),
+               self.videoOutput?.displayLayer.requiresFlushToResumeDecoding == true {
+                self.videoOutput?.displayLayer.flush()
+            }
+            if self.playbackState == .playing && self.loadState == .playable {
+                KSOptions.activateAudioSession()
+                // PiP already owns a running audio output. Repeating play()
+                // installs another periodic observer and loses the old token.
+                // Only a genuinely paused output needs its audio restarted.
+                if self.outputsPaused {
+                    self.outputsPaused = false
+                    self.audioOutput.play()
+                }
+                self.videoOutput?.play()
+            }
+        }
+    }
 
     public var isMuted: Bool {
         get {
@@ -491,43 +568,20 @@ extension KSMEPlayer: MediaPlayerProtocol {
         }
     }
 
-    /// Switches a track without seeking; returns true when the caller should
-    /// seek to flush the previous track's decoder queues.
+    /// Select a track while the application serializes the required seek itself.
+    @discardableResult
     public func selectTrackWithoutSeeking(track: some MediaPlayerTrack) -> Bool {
-        playerItem.selectWithoutSeeking(track: track)
-    }
-
-    /// True once the demuxer reached end of input.
-    public var hasReachedEndOfInput: Bool {
-        playerItem.hasReachedEndOfInput
-    }
-
-    /// Converts an absolute frame timestamp to playback-relative seconds.
-    public func relativeVideoTime(for timestamp: CMTime) -> TimeInterval {
-        playerItem.relativeVideoTime(for: timestamp)
-    }
-
-    /// One-line render pipeline state, for the caller's diagnostic log.
-    public var renderDiagnostic: String {
-        "state=\(playbackState) load=\(loadState) ready=\(isReadyToPlay) position=\(currentPlaybackTime) displayed=\(displayedVideoTime) duration=\(duration) ended=\(hasReachedEndOfInput) tracks=\(playerItem.assetTracks.count)"
-    }
-
-    /// One-line subtitle pipeline state, for the caller's diagnostic log.
-    public var subtitleDiagnostic: String {
-        let subtitles = tracks(mediaType: .subtitle)
-        let enabled = subtitles.filter { $0.isEnabled }.map { String($0.trackID) }.joined(separator: ",")
-        return "subtitleTracks=\(subtitles.count) enabled=[\(enabled)] infos=\(infos.count)"
+        let requiresSeek = playerItem.select(track: track, performSeek: false)
+        if requiresSeek { audioOutput.flush() }
+        return requiresSeek
     }
 }
 
 @available(tvOS 14.0, *)
 extension KSMEPlayer: AVPictureInPictureSampleBufferPlaybackDelegate {
     public func pictureInPictureController(_: AVPictureInPictureController, setPlaying playing: Bool) {
-        if let playbackCommand {
-            playbackCommand(playing)
-        } else {
-            playing ? play() : pause()
-        }
+        if let playbackCommand { playbackCommand(playing) }
+        else { playing ? play() : pause() }
     }
 
     public func pictureInPictureControllerTimeRangeForPlayback(_: AVPictureInPictureController) -> CMTimeRange {
@@ -544,11 +598,9 @@ extension KSMEPlayer: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     public func pictureInPictureController(_: AVPictureInPictureController, didTransitionToRenderSize _: CMVideoDimensions) {}
     public func pictureInPictureController(_: AVPictureInPictureController, skipByInterval skipInterval: CMTime) async {
-        if let seekCommand {
-            seekCommand(currentPlaybackTime + skipInterval.seconds)
-        } else {
-            seek(time: currentPlaybackTime + skipInterval.seconds) { _ in }
-        }
+        let target = currentPlaybackTime + skipInterval.seconds
+        if let seekCommand { seekCommand(target) }
+        else { seek(time: target) { _ in } }
     }
 
     public func pictureInPictureControllerShouldProhibitBackgroundAudioPlayback(_: AVPictureInPictureController) -> Bool {

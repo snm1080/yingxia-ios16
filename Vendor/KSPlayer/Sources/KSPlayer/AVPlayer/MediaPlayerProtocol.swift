@@ -159,6 +159,17 @@ public struct DOVIDecoderConfigurationRecord {
     public let el_present_flag: UInt8
     public let bl_present_flag: UInt8
     public let dv_bl_signal_compatibility_id: UInt8
+    public let dv_md_compression: UInt8
+
+    /// ISO dvcC/dvvC payload (the in-memory FFmpeg structure is not the atom).
+    var configurationData: Data {
+        var bytes = [UInt8](repeating: 0, count: 24)
+        bytes[0] = dv_version_major; bytes[1] = dv_version_minor
+        bytes[2] = ((dv_profile & 0x7f) << 1) | ((dv_level >> 5) & 1)
+        bytes[3] = ((dv_level & 0x1f) << 3) | ((rpu_present_flag & 1) << 2) | ((el_present_flag & 1) << 1) | (bl_present_flag & 1)
+        bytes[4] = ((dv_bl_signal_compatibility_id & 0x0f) << 4) | ((dv_md_compression & 0x03) << 2)
+        return Data(bytes)
+    }
 }
 
 public enum FFmpegFieldOrder: UInt8 {

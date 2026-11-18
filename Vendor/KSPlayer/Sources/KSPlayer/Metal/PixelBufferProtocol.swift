@@ -77,7 +77,8 @@ extension CVPixelBuffer: PixelBufferProtocol {
     }
 
     public var isFullRangeVideo: Bool {
-        CVBufferGetAttachment(self, kCMFormatDescriptionExtension_FullRangeVideo, nil)?.takeUnretainedValue() as? Bool ?? false
+        VideoColorMetadata.isFullRange(pixelFormat: CVPixelBufferGetPixelFormatType(self),
+            attachment: CVBufferGetAttachment(self, kCMFormatDescriptionExtension_FullRangeVideo, nil)?.takeUnretainedValue() as? Bool)
     }
 
     public var attachmentsDic: CFDictionary? {
@@ -200,13 +201,17 @@ class PixelBuffer: PixelBufferProtocol {
         let desc = av_pix_fmt_desc_get(format)?.pointee
         let chromaW = desc?.log2_chroma_w == 1 ? 2 : 1
         let chromaH = desc?.log2_chroma_h == 1 ? 2 : 1
+        // FFmpeg rounds subsampled planes up; the final chroma column/row is
+        // still visible when the decoded frame has an odd width or height.
+        let chromaWidth = (width + chromaW - 1) / chromaW
+        let chromaHeight = (height + chromaH - 1) / chromaH
         switch planeCount {
         case 3:
-            widths = [width, width / chromaW, width / chromaW]
-            heights = [height, height / chromaH, height / chromaH]
+            widths = [width, chromaWidth, chromaWidth]
+            heights = [height, chromaHeight, chromaHeight]
         case 2:
-            widths = [width, width / chromaW]
-            heights = [height, height / chromaH]
+            widths = [width, chromaWidth]
+            heights = [height, chromaHeight]
         default:
             widths = [width]
             heights = [height]

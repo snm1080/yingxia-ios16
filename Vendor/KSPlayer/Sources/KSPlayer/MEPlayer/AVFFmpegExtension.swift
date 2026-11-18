@@ -1,6 +1,5 @@
 import CoreMedia
 import FFmpegKit
-
 func toDictionary(_ native: OpaquePointer?) -> [String: String] {
     var dict = [String: String]()
     if let native {
@@ -337,6 +336,12 @@ extension AVCodecID {
             return .mpeg4Video
         case AV_CODEC_ID_VP9:
             return CMFormatDescription.MediaSubType(rawValue: kCMVideoCodecType_VP9)
+        // Software-decoded AVS still needs a nonzero source format description
+        // for dimensions and metadata; this does not request native AVS decode.
+        case AV_CODEC_ID_AVS2:
+            return CMFormatDescription.MediaSubType(rawValue: 0x61767332) // avs2
+        case AV_CODEC_ID_AVS3:
+            return CMFormatDescription.MediaSubType(rawValue: 0x61767333) // avs3
         case AV_CODEC_ID_AAC:
             return .mpeg4AAC
         case AV_CODEC_ID_AC3:

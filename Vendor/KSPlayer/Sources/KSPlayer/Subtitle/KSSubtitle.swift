@@ -11,59 +11,6 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 
-/// Time-varying ASS override state (\fad, \move, \t) for one cue. Times passed
-/// to `opacity(at:duration:)` / `position(at:duration:)` are relative to the
-/// cue's start; positions are in the cue's canvas (PlayRes) coordinates.
-/// The default value is fully static: opacity 1, no authored motion.
-public struct ASSAnimation: Equatable {
-    /// \fad fade-in length in seconds (relative to cue start).
-    public var fadeIn: TimeInterval = 0
-    /// \fad fade-out length in seconds (relative to cue end).
-    public var fadeOut: TimeInterval = 0
-    /// \move start point in canvas coordinates; nil when the cue does not move.
-    public var moveFrom: CGPoint?
-    /// \move end point in canvas coordinates.
-    public var moveTo: CGPoint?
-    /// \move window start, seconds relative to cue start (0 = cue start).
-    public var moveStart: TimeInterval = 0
-    /// \move window end, seconds relative to cue start (0 = cue end).
-    public var moveEnd: TimeInterval = 0
-    /// A \t transform tag is present; its style interpolation is not evaluated,
-    /// but the cue still needs continuous-time sampling while it is on screen.
-    public var hasTransform: Bool = false
-    public init() {}
-    public var requiresContinuousTime: Bool {
-        fadeIn > 0 || fadeOut > 0 || moveFrom != nil || hasTransform
-    }
-
-    public func opacity(at time: TimeInterval, duration: TimeInterval) -> Double {
-        var value = 1.0
-        if fadeIn > 0 {
-            value = min(value, max(0, time) / fadeIn)
-        }
-        if fadeOut > 0, duration > 0 {
-            value = min(value, max(0, duration - time) / fadeOut)
-        }
-        return min(1, max(0, value))
-    }
-
-    public func position(at time: TimeInterval, duration: TimeInterval) -> CGPoint? {
-        guard let moveFrom, let moveTo else {
-            return nil
-        }
-        let end = moveEnd > 0 ? moveEnd : duration
-        if time <= moveStart {
-            return moveFrom
-        }
-        if time >= end {
-            return moveTo
-        }
-        let progress = (time - moveStart) / max(end - moveStart, .ulpOfOne)
-        return CGPoint(x: moveFrom.x + (moveTo.x - moveFrom.x) * progress,
-                       y: moveFrom.y + (moveTo.y - moveFrom.y) * progress)
-    }
-}
-
 public class SubtitlePart: CustomStringConvertible, Identifiable {
     public var start: TimeInterval
     public var end: TimeInterval
@@ -71,14 +18,11 @@ public class SubtitlePart: CustomStringConvertible, Identifiable {
     public let text: NSAttributedString?
     public var image: UIImage?
     public var textPosition: TextPosition?
-    /// Authoring canvas the cue's origin/animation coordinates refer to
-    /// (ASS PlayResX/PlayResY, or the bitmap stream's own size). Zero when unknown.
+    /// ASS script coordinates used to scale its authored font and margins to the current picture.
     public var canvasSize: CGSize = .zero
-    /// ASS override animation (\fad / \move / \t); static by default.
-    public var animation: ASSAnimation = .init()
-    /// True when `origin` is an authored position (\pos, \move or a bitmap rect)
-    /// rather than a layout-computed one.
-    public var usesAuthoredPosition: Bool = false
+    /// True for explicit positioning overrides or a recognized authored sign/effect cue.
+    public var usesAuthoredPosition = false
+    public var animation = ASSAnimation()
     public var description: String {
         "Subtile Group ==========\nstart: \(start)\nend:\(end)\ntext:\(String(describing: text))"
     }

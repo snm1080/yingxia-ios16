@@ -7,25 +7,15 @@
 
 import AVFoundation
 import FFmpegKit
-
 public final class MEPlayerItem: Sendable {
     private let url: URL
     private let options: KSOptions
     private let operationQueue = OperationQueue()
     private let condition = NSCondition()
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
+    private let cacheInputIO: PlaybackInputIO
     private var outputFormatCtx: UnsafeMutablePointer<AVFormatContext>?
     private var outputPacket: UnsafeMutablePointer<AVPacket>?
-    // Companion (separate) audio input, e.g. DASH split audio files.
-    private var companionFormatCtx: UnsafeMutablePointer<AVFormatContext>?
-    private var companionTrack: FFmpegAssetTrack?
-    private var companionStreamIndex: Int32 = -1
-    private var companionReadOperation: BlockOperation?
-    private let companionQueue = OperationQueue()
-    private let companionCondition = NSCondition()
-    private var companionSeekTime: TimeInterval?
-    private var companionEnded = false
-    private var companionClosed = false
     private var streamMapping = [Int: Int]()
     private var openOperation: BlockOperation?
     private var readOperation: BlockOperation?
@@ -34,6 +24,13 @@ public final class MEPlayerItem: Sendable {
     // 没有音频数据可以渲染
     private var isAudioStalled = true
     private var audioClock = KSClock()
+    private let audioClockLock = NSLock()
+    private var audioClockGeneration: UInt64 = 0
+    private var audioClockUpdatesEnabled = true
+    /// Companion audio supplies a relative media clock; decoded video PTS stays
+    /// in this input's original container epoch.
+    var externalAudioClock: (() -> KSClock?)?
+    var suppressEmbeddedAudio = false
     private var videoClock = KSClock()
     private var isFirst = true
     private var isSeek = false
@@ -59,10 +56,34 @@ public final class MEPlayerItem: Sendable {
     public var displayedVideoTime: TimeInterval {
         state == .seeking ? seekTime : (videoClock.time - startTime).seconds
     }
+    func relativeVideoTime(for timestamp: CMTime) -> TimeInterval { (timestamp - startTime).seconds }
 
     private var seekTime = TimeInterval(0)
+    private var subtitlePrerollDeadline: CFTimeInterval?
+    private var injectedSubtitlePackets: [Packet] = []
+    private var colorProbeDeadline: TimeInterval?
+    private var colorProbePackets: [DolbyVisionProbePacket] = []
+    private var colorProbePacketIndex = 0
+    private var dolbyPacketPairer: DolbyVisionPacketPairer?
+    private var inlineDolbyConverters: [Int32: DolbyVisionInlineConverter] = [:]
     private var startTime = CMTime.zero
     public private(set) var duration: TimeInterval = 0
+    public var hasReachedEndOfInput: Bool { state == .finished }
+    #if DEBUG
+    private var seekTracePacketsRemaining = 0
+    private var seekTrace = ""
+    public var renderDiagnostic: String {
+        "reader=\(state) videoPackets=\(videoTrack?.packetCount ?? 0) videoFrames=\(videoTrack?.frameCount ?? 0) audioPackets=\(audioTrack?.packetCount ?? 0) audioFrames=\(audioTrack?.frameCount ?? 0) audioPTS=\(audioClockLock.withLock { audioClock.time.seconds }) videoPTS=\(videoClock.time.seconds) startPTS=\(startTime.seconds) videoFilter=\(videoTrack?.seekTime ?? -1) audioFilter=\(audioTrack?.seekTime ?? -1) seekTrace=\(seekTrace) decodeTrace=\(videoTrack?.decodeDiagnostic ?? "none")"
+    }
+    public var subtitleDiagnostic: String {
+        assetTracks.filter { $0.mediaType == .subtitle }.prefix(4).map { track in
+            let frames = track.subtitle?.outputRenderQueue.search(removing: { _ in false }, where: { _ in true }) ?? []
+            return "id=\(track.trackID),enabled=\(track.isEnabled),codec=\(track.codecName),frames=\(frames.count),cues=" + frames.prefix(4).map {
+                "\($0.part.start)-\($0.part.end):chars=\($0.part.text?.length ?? 0)"
+            }.joined(separator: "/")
+        }.joined(separator: ";")
+    }
+    #endif
     public private(set) var fileSize: Double = 0
     public private(set) var naturalSize = CGSize.zero
     private var error: NSError? {
@@ -77,7 +98,8 @@ public final class MEPlayerItem: Sendable {
         didSet {
             switch state {
             case .opened:
-                delegate?.sourceDidOpened()
+                // Publish readiness after readThread can accept an immediate resume seek.
+                break
             case .reading:
                 timer.fireDate = Date.distantPast
             case .closed:
@@ -99,7 +121,7 @@ public final class MEPlayerItem: Sendable {
         // metadata可能会实时变化。所以把它放在DynamicInfo里面
         toDictionary(self?.formatCtx?.pointee.metadata)
     } bytesRead: { [weak self] in
-        self?.formatCtx?.pointee.pb?.pointee.bytes_read ?? 0
+        self?.cacheInputIO.bytesRead ?? 0
     } audioBitrate: { [weak self] in
         Int(8 * (self?.audioTrack?.bitrate ?? 0))
     } videoBitrate: { [weak self] in
@@ -112,23 +134,30 @@ public final class MEPlayerItem: Sendable {
             guard let format else {
                 return
             }
-            var log = String(cString: format)
-            let arguments: CVaListPointer? = args
-            if let arguments {
-                log = NSString(format: log, arguments: arguments) as String
-            }
+            var filterOptions: KSOptions?
             if let ptr {
                 let avclass = ptr.assumingMemoryBound(to: UnsafePointer<AVClass>.self).pointee
                 if avclass == avfilter_get_class() {
                     let context = ptr.assumingMemoryBound(to: AVFilterContext.self).pointee
                     if let opaque = context.graph?.pointee.opaque {
-                        let options = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
-                        options.filter(log: log)
+                        filterOptions = Unmanaged<KSOptions>.fromOpaque(opaque).takeUnretainedValue()
                     }
                 }
             }
+            // FFmpeg calls custom callbacks before applying its log threshold.
+            // Demux/decoder TRACE lines are emitted for every packet/NAL: skip
+            // their String/varargs formatting when nobody consumes the message.
+            // idet's DEBUG output still drives automatic interlace detection.
+            let parserMissing = strncmp(format, "parser not found for codec", 26) == 0
+            guard level <= KSOptions.logLevel.rawValue || filterOptions?.autoDeInterlace == true || parserMissing else { return }
+            var log = String(cString: format)
+            let arguments: CVaListPointer? = args
+            if let arguments {
+                log = NSString(format: log, arguments: arguments) as String
+            }
+            filterOptions?.filter(log: log)
             // 找不到解码器
-            if log.hasPrefix("parser not found for codec") {
+            if parserMissing {
                 KSLog(level: .error, log)
             }
             KSLog(level: LogLevel(rawValue: level) ?? .warning, log)
@@ -139,17 +168,16 @@ public final class MEPlayerItem: Sendable {
     public init(url: URL, options: KSOptions) {
         self.url = url
         self.options = options
+        cacheInputIO = PlaybackInputIO(originalURL: url, transportURL: options.cacheIOURL ?? url)
         timer.fireDate = Date.distantFuture
         operationQueue.name = "KSPlayer_" + String(describing: self).components(separatedBy: ".").last!
         operationQueue.maxConcurrentOperationCount = 1
         operationQueue.qualityOfService = .userInteractive
-        companionQueue.name = operationQueue.name! + "_companion"
-        companionQueue.maxConcurrentOperationCount = 1
-        companionQueue.qualityOfService = .userInteractive
         _ = MEPlayerItem.onceInitial
     }
 
-    func select(track: some MediaPlayerTrack) -> Bool {
+    func select(track: some MediaPlayerTrack, performSeek: Bool = true) -> Bool {
+        if (track as? FFmpegAssetTrack)?.isDolbyVisionEnhancementLayer == true { return false }
         if track.isEnabled {
             return false
         }
@@ -163,59 +191,17 @@ public final class MEPlayerItem: Sendable {
             findBestAudio(videoTrack: assetTrack)
         } else if assetTrack.mediaType == .subtitle {
             if assetTrack.isImageSubtitle {
-                if !options.isSeekImageSubtitle, !options.subtitlePrerollTrackIDs.contains(assetTrack.trackID) {
+                if !options.isSeekImageSubtitle {
                     return false
                 }
             } else {
                 return false
             }
         }
-        seek(time: currentPlaybackTime) { _ in
+        if performSeek {
+            seek(time: currentPlaybackTime) { _ in }
         }
         return true
-    }
-
-    /// Switches the enabled track of the same media type without seeking.
-    /// Returns true when the caller should seek (decoder queues still hold the
-    /// previous track's packets), false when nothing changed or the switch is
-    /// not allowed. Mirrors `select(track:)` minus the seek itself.
-    func selectWithoutSeeking(track: some MediaPlayerTrack) -> Bool {
-        if track.isEnabled {
-            return false
-        }
-        guard let assetTrack = track as? FFmpegAssetTrack else {
-            return false
-        }
-        if assetTrack.mediaType == .subtitle {
-            if assetTrack.isImageSubtitle {
-                if !options.isSeekImageSubtitle, !options.subtitlePrerollTrackIDs.contains(assetTrack.trackID) {
-                    return false
-                }
-            } else {
-                return false
-            }
-        }
-        assetTracks.filter { $0.mediaType == track.mediaType }.forEach {
-            $0.isEnabled = track === $0
-        }
-        if assetTrack.mediaType == .video {
-            findBestAudio(videoTrack: assetTrack)
-        }
-        return true
-    }
-
-    /// True once the demuxer reached end of input and every track was
-    /// flagged end-of-file (state machine reached `.finished`).
-    var hasReachedEndOfInput: Bool {
-        state == .finished
-    }
-
-    /// Converts an absolute frame timestamp (which includes the container's
-    /// start-time offset) to playback-relative seconds, the same scale as
-    /// `displayedVideoTime`.
-    func relativeVideoTime(for timestamp: CMTime) -> TimeInterval {
-        let value = (timestamp - startTime).seconds
-        return value.isFinite ? max(0, value) : 0
     }
 }
 
@@ -236,6 +222,8 @@ extension MEPlayerItem {
                 return 0
             }
             let formatContext = Unmanaged<MEPlayerItem>.fromOpaque(ctx).takeUnretainedValue()
+            if let deadline = formatContext.subtitlePrerollDeadline, CACurrentMediaTime() >= deadline { return 1 }
+            if let deadline = formatContext.colorProbeDeadline, ProcessInfo.processInfo.systemUptime >= deadline { return 1 }
             switch formatContext.state {
             case .finished, .closed, .failed:
                 return 1
@@ -244,30 +232,22 @@ extension MEPlayerItem {
             }
         }
         formatCtx.pointee.interrupt_callback = interruptCB
+        cacheInputIO.install(on: formatCtx)
         // avformat_close_input这个函数会调用io_close2。但是自定义协议是不会调用io_close2这个函数
 //        formatCtx.pointee.io_close2 = { _, _ -> Int32 in
 //            0
 //        }
         setHttpProxy()
-        // The byte-cache transport serves the same bytes below the demuxer;
-        // when it is set the demuxer opens it instead of the content URL and
-        // the content headers do not apply to the local cache endpoint.
-        let useCacheIO = options.cacheIOURL != nil
-        let inputURL = options.cacheIOURL ?? url
-        var formatOptions = options.formatContextOptions
-        if useCacheIO {
-            formatOptions["headers"] = nil
-        }
-        var avOptions = formatOptions.avOptions
-        if let pb = options.process(url: inputURL) {
+        var avOptions = options.formatContextOptions.avOptions
+        if let pb = options.process(url: url) {
             // 如果要自定义协议的话，那就用avio_alloc_context，对formatCtx.pointee.pb赋值
             formatCtx.pointee.pb = pb.getContext()
         }
         let urlString: String
-        if inputURL.isFileURL {
-            urlString = inputURL.path
+        if url.isFileURL {
+            urlString = url.path
         } else {
-            urlString = inputURL.absoluteString
+            urlString = url.absoluteString
         }
         var result = avformat_open_input(&self.formatCtx, urlString, nil, &avOptions)
         av_dict_free(&avOptions)
@@ -293,6 +273,7 @@ extension MEPlayerItem {
             formatCtx.pointee.max_analyze_duration = maxAnalyzeDuration
         }
         result = avformat_find_stream_info(formatCtx, nil)
+        cacheInputIO.publishBytes()
         guard result == 0 else {
             error = .init(errorCode: .formatFindStreamInfo, avErrorCode: result)
             avformat_close_input(&self.formatCtx)
@@ -304,16 +285,18 @@ extension MEPlayerItem {
         maxFrameDuration = flags & AVFMT_TS_DISCONT == AVFMT_TS_DISCONT ? 10.0 : 3600.0
         options.findTime = CACurrentMediaTime()
         options.formatName = String(cString: formatCtx.pointee.iformat.pointee.name)
-        seekByBytes = (flags & AVFMT_NO_BYTE_SEEK == 0) && (flags & AVFMT_TS_DISCONT != 0) && options.formatName != "ogg"
+        // Average-bitrate byte estimates can miss VBR transport-stream targets
+        // by minutes. Accurate mode must let the demuxer locate timestamp/keyframes.
+        seekByBytes = !options.isAccurateSeek && (flags & AVFMT_NO_BYTE_SEEK == 0) && (flags & AVFMT_TS_DISCONT != 0) && options.formatName != "ogg"
         if formatCtx.pointee.start_time != Int64.min {
             startTime = CMTime(value: formatCtx.pointee.start_time, timescale: AV_TIME_BASE)
             videoClock.time = startTime
-            audioClock.time = startTime
+            audioClockLock.withLock { audioClock.time = startTime }
         }
         duration = TimeInterval(max(formatCtx.pointee.duration, 0)) / TimeInterval(AV_TIME_BASE)
         fileSize = Double(formatCtx.pointee.bit_rate) * duration / 8
         createCodec(formatCtx: formatCtx)
-        openCompanionAudio()
+        if state == .failed || state == .closed { return }
         if formatCtx.pointee.nb_chapters > 0 {
             chapters.removeAll()
             for i in 0 ..< formatCtx.pointee.nb_chapters {
@@ -332,7 +315,7 @@ extension MEPlayerItem {
             startRecord(url: outputURL)
         }
         if videoTrack == nil, audioTrack == nil {
-            state = .failed
+            error = NSError(description: "FFmpeg found no playable audio or video tracks.")
         } else {
             state = .opened
             read()
@@ -406,10 +389,64 @@ extension MEPlayerItem {
         videoTrack = nil
         audioTrack = nil
         videoAudioTracks.removeAll()
+        colorProbePackets.removeAll()
+        colorProbePacketIndex = 0
+        dolbyPacketPairer = nil
+        inlineDolbyConverters.removeAll()
+        var colorLayerPair: DolbyVisionLayerProbe.Pair?
+        // Generic/live inputs never enter this probe. Only an authored HDMV
+        // program with both UHD PIDs permits a bounded RPU inspection.
+        if duration > 0, options.formatName == "mpegts", DolbyVisionLayerProbe.candidate(in: formatCtx) != nil {
+            colorProbeDeadline = ProcessInfo.processInfo.systemUptime + 1.0
+            let probe = DolbyVisionLayerProbe.inspect(format: formatCtx, deadline: colorProbeDeadline!)
+            colorProbeDeadline = nil
+            colorLayerPair = probe.pair
+            colorProbePackets = probe.packets
+        }
+        if let pair = colorLayerPair, let base = formatCtx.pointee.streams[Int(pair.baseTrackID)],
+           let enhancement = formatCtx.pointee.streams[Int(pair.enhancementTrackID)],
+           let parameters = base.pointee.codecpar {
+            do {
+                let converter = try DolbyVisionRPUConverter()
+                dolbyPacketPairer = DolbyVisionPacketPairer(baseTrackID: pair.baseTrackID,
+                    enhancementTrackID: pair.enhancementTrackID, baseTimebase: base.pointee.time_base,
+                    enhancementTimebase: enhancement.pointee.time_base,
+                    convert: { try converter.convert($0) }, flush: { converter.flush() })
+                try DolbyVisionConfiguration.configureP81(parameters, frameRate: base.pointee.avg_frame_rate)
+            } catch {
+                self.error = NSError(description: "杜比视界 P7 转 P8.1 初始化失败，请切换线路。")
+                return
+            }
+        }
         assetTracks = (0 ..< Int(formatCtx.pointee.nb_streams)).compactMap { i in
             if let coreStream = formatCtx.pointee.streams[i] {
                 coreStream.pointee.discard = AVDISCARD_ALL
+                var inlineP7 = false
+                if let parameters = coreStream.pointee.codecpar, DolbyVisionConfiguration.isProfile7(parameters.pointee) {
+                    let original = parameters.pointee
+                    do {
+                        let converter = try DolbyVisionRPUConverter()
+                        let extra = original.extradata.map { Data(bytes: $0, count: max(0, Int(original.extradata_size))) } ?? Data()
+                        let annexB = VideoNALFormat.isAnnexB(extra)
+                        let length = !annexB && extra.count > 21 ? Int(extra[21] & 3) + 1 : 4
+                        inlineDolbyConverters[coreStream.pointee.index] = DolbyVisionInlineConverter(annexB: annexB,
+                            lengthFieldBytes: length, convert: { try converter.convert($0) }, flush: { converter.flush() })
+                        try DolbyVisionConfiguration.configureP81(parameters, frameRate: coreStream.pointee.avg_frame_rate)
+                        inlineP7 = true
+                    } catch {
+                        self.error = NSError(description: "杜比视界 P7 单层转换初始化失败，请切换线路。")
+                        return nil
+                    }
+                }
                 if let assetTrack = FFmpegAssetTrack(stream: coreStream) {
+                    assetTrack.isDolbyVisionEnhancementLayer = coreStream.pointee.index == colorLayerPair?.enhancementTrackID
+                    assetTrack.hasDolbyVisionEnhancementLayer = coreStream.pointee.index == colorLayerPair?.baseTrackID
+                    assetTrack.convertsDolbyVisionP7ToP81 = inlineP7 || (assetTrack.hasDolbyVisionEnhancementLayer && dolbyPacketPairer != nil)
+                    if assetTrack.isDolbyVisionEnhancementLayer {
+                        // The reader needs its RPU packets, never its residual
+                        // pixels. Keep the demux stream while excluding UI/decode.
+                        coreStream.pointee.discard = AVDISCARD_DEFAULT
+                    }
                     if assetTrack.mediaType == .subtitle {
                         let subtitle = SyncPlayerItemTrack<SubtitleFrame>(mediaType: .subtitle, frameCapacity: 255, options: options)
                         assetTrack.subtitle = subtitle
@@ -423,10 +460,14 @@ extension MEPlayerItem {
         }
         var videoIndex: Int32 = -1
         if !options.videoDisable {
-            let videos = assetTracks.filter { $0.mediaType == .video }
+            let videos = assetTracks.filter { $0.mediaType == .video && !$0.isDolbyVisionEnhancementLayer }
             let wantedStreamNb: Int32
-            if !videos.isEmpty, let index = options.wantedVideo(tracks: videos) {
+            if !videos.isEmpty, let index = options.wantedVideo(tracks: videos), videos.indices.contains(index) {
                 wantedStreamNb = videos[index].trackID
+            } else if let colorLayerPair {
+                // av_find_best_stream ranks packet counts, not base/enhancement
+                // semantics. The exact UHD title otherwise chooses its residual.
+                wantedStreamNb = colorLayerPair.baseTrackID
             } else {
                 wantedStreamNb = -1
             }
@@ -460,7 +501,7 @@ extension MEPlayerItem {
                 let bitRates = videos.map(\.bitRate).filter {
                     $0 > 0
                 }
-                if bitRates.count > 1, options.videoAdaptable {
+                if bitRates.count > 1, options.videoAdaptable, !first.hasDolbyVisionEnhancementLayer {
                     let bitRateState = VideoAdaptationState.BitRateState(bitRate: first.bitRate, time: CACurrentMediaTime())
                     videoAdaptation = VideoAdaptationState(bitRates: bitRates.sorted(by: <), duration: duration, fps: first.nominalFrameRate, bitRateStates: [bitRateState])
                 }
@@ -468,14 +509,14 @@ extension MEPlayerItem {
         }
 
         let audios = assetTracks.filter { $0.mediaType == .audio }
-        var wantedStreamNb: Int32 = -1
+        let wantedStreamNb: Int32
         if !audios.isEmpty, let index = options.wantedAudio(tracks: audios) {
             wantedStreamNb = audios[index].trackID
-        } else if let preferred = options.preferredAudioTrackID, audios.contains(where: { $0.trackID == preferred }) {
-            wantedStreamNb = preferred
+        } else {
+            wantedStreamNb = -1
         }
         let index = av_find_best_stream(formatCtx, AVMEDIA_TYPE_AUDIO, wantedStreamNb, videoIndex, nil, 0)
-        if let first = audios.first(where: {
+        if !options.audioDisable, !suppressEmbeddedAudio, let first = audios.first(where: {
             index > 0 ? $0.trackID == index : true
         }), first.codecpar.codec_id != AV_CODEC_ID_NONE {
             first.isEnabled = true
@@ -504,184 +545,52 @@ extension MEPlayerItem {
         if let readOperation {
             operationQueue.addOperation(readOperation)
         }
-        startCompanionRead()
-    }
-
-    // MARK: Companion audio input
-
-    /// Opens the separate audio input (e.g. a DASH split audio file) and joins
-    /// its best audio stream to the track list. When the main input has no
-    /// playable audio track, the companion stream becomes the audio source and
-    /// gets the shared audio decoding track; otherwise it stays disabled
-    /// until selected. Runs on the open thread, after `createCodec`.
-    private func openCompanionAudio() {
-        guard let companionAudioURL = options.companionAudioURL, companionFormatCtx == nil else {
-            return
-        }
-        let useCacheIO = options.companionAudioCacheIOURL != nil
-        let inputURL = options.companionAudioCacheIOURL ?? companionAudioURL
-        var ctx = avformat_alloc_context()
-        guard ctx != nil else {
-            return
-        }
-        var interruptCB = AVIOInterruptCB()
-        interruptCB.opaque = Unmanaged.passUnretained(self).toOpaque()
-        interruptCB.callback = { rawCtx -> Int32 in
-            guard let rawCtx else {
-                return 0
-            }
-            let item = Unmanaged<MEPlayerItem>.fromOpaque(rawCtx).takeUnretainedValue()
-            if item.companionClosed {
-                return 1
-            }
-            switch item.state {
-            case .closed, .failed:
-                return 1
-            default:
-                return 0
-            }
-        }
-        ctx?.pointee.interrupt_callback = interruptCB
-        var formatOptions = options.formatContextOptions
-        if useCacheIO {
-            formatOptions["headers"] = nil
-        } else if !options.companionAudioHeaders.isEmpty {
-            formatOptions["headers"] = options.companionAudioHeaders.map { "\($0.key):\($0.value)\r\n" }.joined()
-        }
-        var avOptions = formatOptions.avOptions
-        let urlString = inputURL.isFileURL ? inputURL.path : inputURL.absoluteString
-        var result = avformat_open_input(&ctx, urlString, nil, &avOptions)
-        av_dict_free(&avOptions)
-        guard result == 0 else {
-            KSLog(NSError(errorCode: .formatOpenInput, avErrorCode: result))
-            avformat_close_input(&ctx)
-            return
-        }
-        guard let openedCtx = ctx else {
-            return
-        }
-        result = avformat_find_stream_info(openedCtx, nil)
-        guard result == 0 else {
-            avformat_close_input(&ctx)
-            return
-        }
-        let bestIndex = av_find_best_stream(openedCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nil, 0)
-        guard bestIndex >= 0, let stream = openedCtx.pointee.streams[Int(bestIndex)],
-              let track = FFmpegAssetTrack(stream: stream)
-        else {
-            avformat_close_input(&ctx)
-            return
-        }
-        companionStreamIndex = bestIndex
-        // Keep ids unique across both inputs: companion ids live above the
-        // main input's stream indexes.
-        track.assignTrackID(Int32(formatCtx?.pointee.nb_streams ?? 0) + bestIndex)
-        companionFormatCtx = ctx
-        companionTrack = track
-        assetTracks.append(track)
-        if audioTrack == nil {
-            track.isEnabled = true
-            options.process(assetTrack: track)
-            let frameCapacity = options.audioFrameMaxCount(fps: track.nominalFrameRate, channelCount: Int(track.audioDescriptor?.audioFormat.channelCount ?? 2))
-            let audio = options.syncDecodeAudio ? SyncPlayerItemTrack<AudioFrame>(mediaType: .audio, frameCapacity: frameCapacity, options: options) : AsyncPlayerItemTrack<AudioFrame>(mediaType: .audio, frameCapacity: frameCapacity, options: options)
-            audio.delegate = self
-            allPlayerItemTracks.append(audio)
-            audioTrack = audio
-            videoAudioTracks.append(audio)
-            isAudioStalled = false
-        }
-    }
-
-    private func startCompanionRead() {
-        guard companionTrack != nil, companionReadOperation == nil else {
-            return
-        }
-        let operation = BlockOperation { [weak self] in
-            guard let self else { return }
-            Thread.current.name = (self.companionQueue.name ?? "") + "_read"
-            Thread.current.stackSize = KSOptions.stackSize
-            self.companionReadThread()
-        }
-        operation.queuePriority = .veryHigh
-        operation.qualityOfService = .userInteractive
-        companionReadOperation = operation
-        companionQueue.addOperation(operation)
-    }
-
-    private func companionReadThread() {
-        while !companionClosed {
-            if let seekTime = takeCompanionSeekTime() {
-                if let companionFormatCtx {
-                    let target = Int64((seekTime + (companionTrack?.startTime.seconds ?? 0)) * Double(AV_TIME_BASE))
-                    _ = avformat_seek_file(companionFormatCtx, -1, Int64.min, target, Int64.max, AVSEEK_FLAG_BACKWARD)
-                }
-                companionEnded = false
-            }
-            if state == .closed || state == .failed {
-                break
-            }
-            if state == .paused || companionEnded || state != .reading {
-                companionCondition.lock()
-                _ = companionCondition.wait(until: Date(timeIntervalSinceNow: 0.25))
-                companionCondition.unlock()
-                continue
-            }
-            let packet = Packet()
-            guard let corePacket = packet.corePacket, let companionFormatCtx else {
-                continue
-            }
-            let result = av_read_frame(companionFormatCtx, corePacket)
-            if result == 0 {
-                if corePacket.pointee.stream_index == companionStreamIndex,
-                   let companionTrack, companionTrack.isEnabled, corePacket.pointee.size > 0
-                {
-                    packet.assetTrack = companionTrack
-                    audioTrack?.putPacket(packet: packet)
-                }
-            } else if result == AVError.eof.code || avio_feof(companionFormatCtx.pointee.pb) > 0 {
-                companionEnded = true
-            } else {
-                KSLog(NSError(errorCode: .readFrame, avErrorCode: result))
-                companionEnded = true
-            }
-        }
-    }
-
-    private func takeCompanionSeekTime() -> TimeInterval? {
-        companionCondition.lock()
-        defer { companionCondition.unlock() }
-        let value = companionSeekTime
-        companionSeekTime = nil
-        return value
-    }
-
-    private func requestCompanionSeek(to time: TimeInterval) {
-        companionCondition.lock()
-        companionSeekTime = time
-        companionCondition.unlock()
-        companionCondition.broadcast()
     }
 
     private func readThread() {
+        let notifyReady = state == .opened
         if state == .opened {
             if options.startPlayTime > 0 {
+                colorProbePackets.removeAll(); colorProbePacketIndex = 0
+                dolbyPacketPairer?.reset()
+                inlineDolbyConverters.values.forEach { $0.reset() }
                 let timestamp = startTime + CMTime(seconds: options.startPlayTime)
                 let flags = seekByBytes ? AVSEEK_FLAG_BYTE : 0
                 let seekStartTime = CACurrentMediaTime()
                 let result = avformat_seek_file(formatCtx, -1, Int64.min, timestamp.value, Int64.max, flags)
-                audioClock.time = timestamp
+                if result >= 0, dolbyPacketPairer != nil || !inlineDolbyConverters.isEmpty {
+                    do { try warmDolbyMetadata(at: options.startPlayTime) }
+                    catch {
+                        if state == .closed { return }
+                        self.error = NSError(description: "杜比视界 P8.1 续播元数据恢复失败，请从头播放或切换线路。")
+                        return
+                    }
+                    guard avformat_seek_file(formatCtx, -1, Int64.min, timestamp.value, Int64.max, flags) >= 0 else {
+                        if state == .closed { return }
+                        self.error = NSError(description: "杜比视界续播输入位置恢复失败，请重新播放。")
+                        return
+                    }
+                }
+                audioClockLock.withLock { audioClock.time = timestamp }
                 videoClock.time = timestamp
                 KSLog("start PlayTime: \(timestamp.seconds) spend Time: \(CACurrentMediaTime() - seekStartTime)")
             }
             state = .reading
         }
         allPlayerItemTracks.forEach { $0.decode() }
+        if notifyReady, state == .reading { delegate?.sourceDidOpened() }
         while [MESourceState.paused, .seeking, .reading].contains(state) {
             if state == .paused {
                 condition.wait()
             }
             if state == .seeking {
+                colorProbePackets.removeAll(); colorProbePacketIndex = 0
+                dolbyPacketPairer?.reset()
+                inlineDolbyConverters.values.forEach { $0.reset() }
                 let seekToTime = seekTime
+                let clockGeneration = audioClockLock.withLock { audioClockGeneration }
+                injectedSubtitlePackets = []
+                let subtitlePreroll = readSubtitlePreroll(at: seekToTime)
                 let time = mainClock().time
                 var increase = Int64(seekTime + startTime.seconds - time.seconds)
                 var seekFlags = options.seekFlags
@@ -698,18 +607,27 @@ extension MEPlayerItem {
                         position = videoClock.position
                     }
                     if position < 0 {
-                        position = audioClock.position
+                        position = audioClockLock.withLock { audioClock.position }
                     }
                     if position < 0 {
                         position = avio_tell(formatCtx?.pointee.pb)
                     }
                     timeStamp = position + increase
                 } else {
-                    increase *= Int64(AV_TIME_BASE)
-                    timeStamp = Int64(time.seconds) * Int64(AV_TIME_BASE) + increase
+                    // Convert the complete absolute target once. Separately
+                    // truncating current and delta seconds lost up to two seconds.
+                    timeStamp = Int64(((seekToTime + startTime.seconds) * Double(AV_TIME_BASE)).rounded())
+                    increase = timeStamp - Int64((time.seconds * Double(AV_TIME_BASE)).rounded())
                 }
-                let seekMin = increase > 0 ? timeStamp - increase + 2 : Int64.min
-                let seekMax = increase < 0 ? timeStamp - increase - 2 : Int64.max
+                // seek_file clears BACKWARD and derives direction from bounds.
+                // Accurate seeking must decode forward from a preceding keyframe,
+                // never jump to the next HLS segment/keyframe after the target.
+                let seekMin = options.isAccurateSeek ? Int64.min : (increase > 0 ? timeStamp - increase + 2 : Int64.min)
+                let seekMax = options.isAccurateSeek ? timeStamp : (increase < 0 ? timeStamp - increase - 2 : Int64.max)
+                #if DEBUG
+                seekTrace = "target=\(seekToTime),min=\(seekMin),ts=\(timeStamp),max=\(seekMax),flags=\(seekFlags),default=\(av_find_default_stream_index(formatCtx)),format=\(options.formatName)"
+                seekTracePacketsRemaining = 20
+                #endif
                 // can not seek to key frame
                 let seekStartTime = CACurrentMediaTime()
                 var result = avformat_seek_file(formatCtx, -1, seekMin, timeStamp, seekMax, seekFlags)
@@ -723,23 +641,61 @@ extension MEPlayerItem {
                     seekFlags &= ~AVSEEK_FLAG_BACKWARD
                     result = avformat_seek_file(formatCtx, -1, seekMin, timeStamp, seekMax, seekFlags)
                 }
+                if result >= 0, dolbyPacketPairer != nil || !inlineDolbyConverters.isEmpty {
+                    do { try warmDolbyMetadata(at: seekToTime) }
+                    catch {
+                        if state == .closed { return }
+                        if seekToTime != seekTime || audioClockLock.withLock({ audioClockGeneration != clockGeneration }) {
+                            continue
+                        }
+                        self.error = NSError(description: "杜比视界 P8.1 跳转元数据恢复失败，请从头播放或切换线路。")
+                        return
+                    }
+                    if seekToTime != seekTime || audioClockLock.withLock({ audioClockGeneration != clockGeneration }) {
+                        continue
+                    }
+                    result = avformat_seek_file(formatCtx, -1, seekMin, timeStamp, seekMax, seekFlags)
+                    if result < 0 {
+                        if state == .closed { return }
+                        if seekToTime != seekTime || audioClockLock.withLock({ audioClockGeneration != clockGeneration }) {
+                            continue
+                        }
+                        self.error = NSError(description: "杜比视界跳转输入位置恢复失败，请重新播放。")
+                        return
+                    }
+                }
                 KSLog("seek to \(seekToTime) spend Time: \(CACurrentMediaTime() - seekStartTime)")
                 if state == .closed {
                     break
                 }
-                if seekToTime != seekTime {
+                if seekToTime != seekTime || audioClockLock.withLock({ audioClockGeneration != clockGeneration }) {
                     continue
                 }
+                #if DEBUG
+                seekTrace += ",result=\(result)"
+                #endif
                 isSeek = true
-                allPlayerItemTracks.forEach { $0.seek(time: seekToTime) }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.seekingCompletionHandler?(result >= 0)
-                    self.seekingCompletionHandler = nil
+                allPlayerItemTracks.forEach { $0.seek(time: seekToTime + startTime.seconds) }
+                if result >= 0 {
+                    injectedSubtitlePackets = subtitlePreroll
+                    for packet in subtitlePreroll { packet.assetTrack.subtitle?.putPacket(packet: packet) }
                 }
-                audioClock.time = CMTime(seconds: seekToTime, preferredTimescale: time.timescale) + startTime
+                // Detach the completed request before invoking the application. Its callback
+                // can immediately enqueue the next seek and must keep its own completion.
+                let completion = seekingCompletionHandler
+                seekingCompletionHandler = nil
+                let seekClockTime = CMTime(seconds: seekToTime, preferredTimescale: time.timescale) + startTime
+                audioClockLock.withLock { audioClock.time = seekClockTime }
                 videoClock.time = CMTime(seconds: seekToTime, preferredTimescale: time.timescale) + startTime
                 state = .reading
+                let succeeded = result >= 0
+                DispatchQueue.main.async {
+                    // KSMEPlayer flushes the old audio output during completion.
+                    // Keep audio callbacks disabled until that flush has happened,
+                    // and only the current seek generation may re-enable them.
+                    completion?(succeeded)
+                    self.finishAudioClockSeek(time: seekClockTime, generation: clockGeneration)
+                }
             } else if state == .reading {
                 autoreleasepool {
                     _ = reading()
@@ -748,12 +704,242 @@ extension MEPlayerItem {
         }
     }
 
+    /// Start the source RPU parser from a preceding keyframe before restoring
+    /// the requested demux position. Output RPUs are full/uncompressed, so the
+    /// native decoder never receives a reference to the previous seek epoch.
+    private func warmDolbyMetadata(at target: TimeInterval) throws {
+        if dolbyPacketPairer == nil {
+            try warmInlineDolbyMetadata(at: target)
+            return
+        }
+        guard let pairer = dolbyPacketPairer, target > 0, let formatCtx,
+              let enhancement = formatCtx.pointee.streams[Int(pairer.enhancementTrackID)],
+              let base = formatCtx.pointee.streams[Int(pairer.baseTrackID)] else { return }
+        let timebase = enhancement.pointee.time_base
+        guard timebase.num > 0, timebase.den > 0 else { throw DolbyVisionPacketPairer.Failure.invalidTimestamp }
+        colorProbeDeadline = ProcessInfo.processInfo.systemUptime + 2
+        var seeded = false
+        defer {
+            colorProbeDeadline = nil
+            if !seeded { pairer.discardQueuedPackets() }
+        }
+        var packet = av_packet_alloc()
+        defer { av_packet_free(&packet) }
+        guard let packet else { throw DolbyVisionPacketPairer.Failure.allocation }
+        var count = 0, bytes = 0
+        var firstPTS = Int64.min, firstDTS = Int64.min
+        // Observe the actual keyframe reached by the final demux seek.
+        while count < 512, bytes < 4 * 1024 * 1024, ProcessInfo.processInfo.systemUptime < (colorProbeDeadline ?? 0) {
+            guard av_read_frame(formatCtx, packet) >= 0 else { break }
+            count += 1; bytes += max(0, Int(packet.pointee.size))
+            if packet.pointee.stream_index == pairer.baseTrackID {
+                firstPTS = packet.pointee.pts; firstDTS = packet.pointee.dts
+                av_packet_unref(packet)
+                // A seek can cut after this AU's physical EL packet. Without
+                // any timestamp, a later EL cannot prove the first AU's RPU.
+                guard firstPTS != .min || firstDTS != .min else {
+                    throw DolbyVisionPacketPairer.Failure.invalidTimestamp
+                }
+                break
+            }
+            av_packet_unref(packet)
+        }
+        let timestamp = firstDTS != .min ? firstDTS : firstPTS
+        guard timestamp != .min else { throw DolbyVisionPacketPairer.Failure.invalidTimestamp }
+        let firstSeconds = Double(timestamp) * Double(base.pointee.time_base.num) / Double(base.pointee.time_base.den)
+        let probeTime = Int64(max(startTime.seconds, firstSeconds - 5) * Double(timebase.den) / Double(timebase.num))
+        guard avformat_seek_file(formatCtx, pairer.enhancementTrackID, Int64.min, probeTime, probeTime, AVSEEK_FLAG_BACKWARD) >= 0
+        else { throw DolbyVisionPacketPairer.Failure.invalidTimestamp }
+        var reachedFirst = false
+        while count < 4096, bytes < 32 * 1024 * 1024, ProcessInfo.processInfo.systemUptime < (colorProbeDeadline ?? 0) {
+            guard av_read_frame(formatCtx, packet) >= 0 else { break }
+            count += 1; bytes += max(0, Int(packet.pointee.size))
+            if packet.pointee.stream_index == pairer.enhancementTrackID {
+                let matchesPTS = firstPTS != .min && packet.pointee.pts != .min
+                    && av_compare_ts(firstPTS, base.pointee.time_base, packet.pointee.pts, timebase) == 0
+                let matchesDTS = (firstPTS == .min || packet.pointee.pts == .min)
+                    && firstDTS != .min && packet.pointee.dts != .min
+                    && av_compare_ts(firstDTS, base.pointee.time_base, packet.pointee.dts, timebase) == 0
+                if matchesPTS || matchesDTS {
+                    // A generic TS seek can begin at the base after its EL
+                    // was physically passed. Retain this exact converted RPU
+                    // to pair after restore, and skip one identical reread.
+                    try pairer.seedFirstMetadata(packet: packet)
+                    seeded = true
+                    reachedFirst = true
+                    av_packet_unref(packet)
+                    break
+                }
+                // An arbitrary prior keyframe can begin with an unresolved
+                // previous reference; a later full source RPU restores it.
+                do { _ = try pairer.warmMetadata(packet: packet) }
+                catch { }
+            }
+            av_packet_unref(packet)
+        }
+        guard reachedFirst else { throw DolbyVisionPacketPairer.Failure.missingRPU }
+    }
+
+    /// Inline P7 can reference an earlier RPU even on a video keyframe.
+    /// Rebuild source references in decode order, retain the exact first
+    /// converted AU, then let the caller restore its original demux seek.
+    private func warmInlineDolbyMetadata(at target: TimeInterval) throws {
+        guard target > 0, let formatCtx,
+              let track = assetTracks.first(where: { $0.mediaType == .video && $0.isEnabled }),
+              let converter = inlineDolbyConverters[track.trackID],
+              let stream = formatCtx.pointee.streams[Int(track.trackID)] else { return }
+        let timebase = stream.pointee.time_base
+        guard timebase.num > 0, timebase.den > 0 else { throw DolbyVisionPacketPairer.Failure.invalidTimestamp }
+        colorProbeDeadline = ProcessInfo.processInfo.systemUptime + 2
+        defer { colorProbeDeadline = nil }
+        var packet = av_packet_alloc()
+        defer { av_packet_free(&packet) }
+        guard let packet else { throw DolbyVisionPacketPairer.Failure.allocation }
+        var firstPTS = Int64.min, firstDTS = Int64.min, firstPos = Int64(-1)
+        var firstData = Data(), count = 0, bytes = 0
+        while count < 512, bytes < 4 * 1024 * 1024, ProcessInfo.processInfo.systemUptime < (colorProbeDeadline ?? 0) {
+            guard av_read_frame(formatCtx, packet) >= 0 else { break }
+            count += 1; bytes += max(0, Int(packet.pointee.size))
+            if packet.pointee.stream_index == track.trackID, packet.pointee.size > 0, let source = packet.pointee.data {
+                firstPTS = packet.pointee.pts; firstDTS = packet.pointee.dts; firstPos = packet.pointee.pos
+                firstData = Data(bytes: source, count: Int(packet.pointee.size))
+                av_packet_unref(packet)
+                break
+            }
+            av_packet_unref(packet)
+        }
+        let time = firstDTS != .min ? firstDTS : firstPTS
+        guard time != .min else { throw DolbyVisionPacketPairer.Failure.invalidTimestamp }
+        let seconds = Double(time) * Double(timebase.num) / Double(timebase.den)
+        let before = Int64(max(startTime.seconds, seconds - 5) * Double(timebase.den) / Double(timebase.num))
+        guard avformat_seek_file(formatCtx, track.trackID, Int64.min, before, before, AVSEEK_FLAG_BACKWARD) >= 0 else {
+            throw DolbyVisionPacketPairer.Failure.invalidTimestamp
+        }
+        while count < 4096, bytes < 32 * 1024 * 1024, ProcessInfo.processInfo.systemUptime < (colorProbeDeadline ?? 0) {
+            guard av_read_frame(formatCtx, packet) >= 0 else { break }
+            count += 1; bytes += max(0, Int(packet.pointee.size))
+            if packet.pointee.stream_index == track.trackID, packet.pointee.size > 0, let source = packet.pointee.data {
+                let ptsMatch = firstPTS != .min && packet.pointee.pts == firstPTS
+                let dtsMatch = (firstPTS == .min || packet.pointee.pts == .min) && packet.pointee.dts == firstDTS
+                let positionMatch = firstPos < 0 || packet.pointee.pos < 0 || packet.pointee.pos == firstPos
+                if (ptsMatch || dtsMatch), positionMatch,
+                   Data(bytes: source, count: Int(packet.pointee.size)) == firstData {
+                    try converter.seedFirst(packet: packet)
+                    av_packet_unref(packet)
+                    return
+                }
+                // An unresolved reference at the arbitrary prior keyframe can
+                // recover at the next source full RPU. Never output probe AUs.
+                do { try converter.warm(packet: packet) } catch { }
+            }
+            av_packet_unref(packet)
+        }
+        throw DolbyVisionPacketPairer.Failure.missingRPU
+    }
+
+    /// Matroska's video-index seek skips long subtitle cues beginning in an
+    /// earlier cluster. Fetch only the selected cue through its subtitle index,
+    /// then let the ordinary video seek restore the demuxer. No A/V pre-roll is
+    /// decoded or queued here, and all reads share the existing authenticated IO.
+    private func readSubtitlePreroll(at target: TimeInterval) -> [Packet] {
+        let requestedTrackIDs = options.subtitlePrerollTrackIDs
+        guard options.isAccurateSeek, options.formatName.contains("matroska"),
+              !requestedTrackIDs.isEmpty, let formatCtx else { return [] }
+        let selected = assetTracks.filter {
+            $0.mediaType == .subtitle && !$0.isImageSubtitle && requestedTrackIDs.contains($0.trackID)
+        }.prefix(2)
+        let absoluteTarget = target + startTime.seconds
+        var packets: [Packet] = [], bytes = 0, attempts = 0
+        subtitlePrerollDeadline = CACurrentMediaTime() + 2
+        defer { subtitlePrerollDeadline = nil }
+        for track in selected {
+            guard attempts < 512, bytes < 4 * 1024 * 1024,
+                  CACurrentMediaTime() < (subtitlePrerollDeadline ?? 0) else { break }
+            guard state == .seeking, seekTime == target, let stream = formatCtx.pointee.streams[Int(track.trackID)],
+                  avformat_index_get_entries_count(stream) > 0 else { continue }
+            let timestamp = Int64((absoluteTarget * Double(track.timebase.den) / Double(track.timebase.num)).rounded())
+            guard avformat_seek_file(formatCtx, track.trackID, Int64.min, timestamp, timestamp, AVSEEK_FLAG_BACKWARD) >= 0 else { continue }
+            while attempts < 512, bytes < 4 * 1024 * 1024, state == .seeking, seekTime == target,
+                  CACurrentMediaTime() < (subtitlePrerollDeadline ?? 0) {
+                let packet = Packet()
+                guard let native = packet.corePacket, av_read_frame(formatCtx, native) >= 0 else { break }
+                attempts += 1; bytes += max(0, Int(native.pointee.size))
+                guard native.pointee.stream_index == track.trackID else { continue }
+                packet.assetTrack = track
+                let start = packet.seconds
+                let duration = track.timebase.cmtime(for: packet.duration).seconds
+                if start <= absoluteTarget, duration > 0, start + duration >= absoluteTarget { packets.append(packet) }
+                // The indexed subtitle packet is either the containing cue or
+                // its successor. Do not scan a long empty subtitle interval.
+                break
+            }
+        }
+        return packets
+    }
+
+    private func consumesInjectedSubtitleDuplicate(_ packet: Packet) -> Bool {
+        guard let incoming = packet.corePacket?.pointee, let data = incoming.data, incoming.size > 0,
+              let index = injectedSubtitlePackets.firstIndex(where: { saved in
+                  guard let previous = saved.corePacket?.pointee, let bytes = previous.data else { return false }
+                  return previous.stream_index == incoming.stream_index && previous.pts == incoming.pts
+                      && previous.dts == incoming.dts && previous.pos == incoming.pos
+                      && previous.duration == incoming.duration && previous.size == incoming.size
+                      && Data(bytes: bytes, count: Int(previous.size)) == Data(bytes: data, count: Int(incoming.size))
+              }) else { return false }
+        injectedSubtitlePackets.remove(at: index)
+        return true
+    }
+
+    /// Demux on the reader thread. Dolby EL access units supply only RPU;
+    /// the output contains the unchanged base AU and converted single-layer RPU.
+    private func readColorPacket(into packet: UnsafeMutablePointer<AVPacket>) throws -> Int32 {
+        while true {
+            if let ready = try dolbyPacketPairer?.takeReady() {
+                av_packet_move_ref(packet, ready.packet)
+                return 0
+            }
+            let status: Int32
+            if colorProbePacketIndex < colorProbePackets.count {
+                colorProbePackets[colorProbePacketIndex].move(to: packet)
+                colorProbePacketIndex += 1
+                if colorProbePacketIndex == colorProbePackets.count {
+                    colorProbePackets.removeAll(); colorProbePacketIndex = 0
+                }
+                status = 0
+            } else {
+                status = av_read_frame(formatCtx, packet)
+            }
+            guard status == 0 else {
+                if status == AVError.eof.code, dolbyPacketPairer?.hasUnmatchedBase == true {
+                    throw DolbyVisionPacketPairer.Failure.missingRPU
+                }
+                return status
+            }
+            if let converter = inlineDolbyConverters[packet.pointee.stream_index] {
+                try converter.convert(packet: packet)
+                return status
+            }
+            guard let pairer = dolbyPacketPairer,
+                  packet.pointee.stream_index == pairer.baseTrackID || packet.pointee.stream_index == pairer.enhancementTrackID
+            else { return status }
+            try pairer.append(packet: packet)
+            av_packet_unref(packet)
+        }
+    }
+
     private func reading() -> Int32 {
+        defer { cacheInputIO.publishBytes() }
         let packet = Packet()
         guard let corePacket = packet.corePacket else {
             return 0
         }
-        let readResult = av_read_frame(formatCtx, corePacket)
+        let readResult: Int32
+        do { readResult = try readColorPacket(into: corePacket) }
+        catch {
+            if state == .closed { return 0 }
+            self.error = NSError(description: "杜比视界 P7 转 P8.1 失败：原始 RPU 或对应视频帧不可用，请切换线路。")
+            return AVError.invalidData.code
+        }
         if state == .closed {
             return 0
         }
@@ -801,11 +987,22 @@ extension MEPlayerItem {
                         audioTrack?.isLoopModel = true
                         videoTrack?.isLoopModel = true
                         let target = startTime + CMTime(seconds: loopRange.lowerBound, preferredTimescale: CMTimeScale(AV_TIME_BASE))
-                        _ = av_seek_frame(formatCtx, -1, target.value, AVSEEK_FLAG_BACKWARD)
+                        do { try seekLoopDemux(to: target, relativeTime: loopRange.lowerBound) }
+                        catch {
+                            self.error = NSError(description: "杜比视界循环元数据恢复失败，请重新播放。")
+                            return AVError.invalidData.code
+                        }
                         return readResult  // 当前 packet 已越界，丢弃；下一次 read 从 lowerBound 关键帧开始
                     }
                 }
                 packet.assetTrack = first
+                #if DEBUG
+                if seekTracePacketsRemaining > 0, first.mediaType == .video || first.mediaType == .audio {
+                    seekTracePacketsRemaining -= 1
+                    let timebase = first.timebase
+                    seekTrace += ";\(first.mediaType == .video ? "v" : "a")=\(timebase.cmtime(for: corePacket.pointee.pts).seconds)/\(timebase.cmtime(for: corePacket.pointee.dts).seconds)/\(packet.isKeyFrame ? 1 : 0)"
+                }
+                #endif
                 if first.mediaType == .video {
                     if options.readVideoTime == 0 {
                         options.readVideoTime = CACurrentMediaTime()
@@ -817,14 +1014,21 @@ extension MEPlayerItem {
                     }
                     audioTrack?.putPacket(packet: packet)
                 } else {
-                    first.subtitle?.putPacket(packet: packet)
+                    if !consumesInjectedSubtitleDuplicate(packet) { first.subtitle?.putPacket(packet: packet) }
                 }
             }
         } else {
-            if readResult == AVError.eof.code || avio_feof(formatCtx?.pointee.pb) > 0 {
+            // AVIO also sets eof_reached after transport/seek errors. Preserve
+            // the demuxer's error so recovery can reopen a failed Range read;
+            // otherwise a partial MP4 before its first packet waits forever.
+            if readResult == AVError.eof.code {
                 if options.isLoopPlay, allPlayerItemTracks.allSatisfy({ !$0.isLoopModel }) {
                     allPlayerItemTracks.forEach { $0.isLoopModel = true }
-                    _ = av_seek_frame(formatCtx, -1, startTime.value, AVSEEK_FLAG_BACKWARD)
+                    do { try seekLoopDemux(to: startTime, relativeTime: 0) }
+                    catch {
+                        self.error = NSError(description: "杜比视界循环元数据恢复失败，请重新播放。")
+                        return AVError.invalidData.code
+                    }
                 } else {
                     allPlayerItemTracks.forEach { $0.isEndOfFile = true }
                     state = .finished
@@ -835,6 +1039,25 @@ extension MEPlayerItem {
             }
         }
         return readResult
+    }
+
+    /// The seamless-loop queues keep their existing ownership. Only the
+    /// demux/RPU epoch resets when the input jumps backwards.
+    private func seekLoopDemux(to target: CMTime, relativeTime: TimeInterval) throws {
+        guard dolbyPacketPairer != nil || !inlineDolbyConverters.isEmpty else {
+            _ = av_seek_frame(formatCtx, -1, target.value, AVSEEK_FLAG_BACKWARD)
+            return
+        }
+        colorProbePackets.removeAll(); colorProbePacketIndex = 0
+        dolbyPacketPairer?.reset()
+        inlineDolbyConverters.values.forEach { $0.reset() }
+        guard av_seek_frame(formatCtx, -1, target.value, AVSEEK_FLAG_BACKWARD) >= 0 else {
+            throw DolbyVisionPacketPairer.Failure.invalidTimestamp
+        }
+        try warmDolbyMetadata(at: relativeTime)
+        guard av_seek_frame(formatCtx, -1, target.value, AVSEEK_FLAG_BACKWARD) >= 0 else {
+            throw DolbyVisionPacketPairer.Failure.invalidTimestamp
+        }
     }
 
     private func pause() {
@@ -848,7 +1071,6 @@ extension MEPlayerItem {
             state = .reading
             condition.signal()
         }
-        companionCondition.broadcast()
     }
 }
 
@@ -858,6 +1080,12 @@ extension MEPlayerItem: MediaPlayback {
     var seekable: Bool {
         guard let formatCtx else {
             return false
+        }
+        guard formatCtx.pointee.ctx_flags & AVFMTCTX_UNSEEKABLE == 0 else { return false }
+        // HLS/DASH seek in their segment demuxers. The manifest's HTTP AVIO
+        // may be a streamed/chunked response and cannot answer byte seeks.
+        if options.formatName == "hls" || options.formatName == "dash" {
+            return duration.isFinite && duration > 0
         }
         var seekable = true
         if let ioContext = formatCtx.pointee.pb {
@@ -883,15 +1111,17 @@ extension MEPlayerItem: MediaPlayback {
 
     public func shutdown() {
         guard state != .closed else { return }
+        invalidateAudioClockUpdates()
         state = .closed
-        companionClosed = true
-        companionCondition.broadcast()
         av_packet_free(&outputPacket)
         stopRecord()
         // 故意循环引用。等结束了。才释放
         let closeOperation = BlockOperation {
             Thread.current.name = (self.operationQueue.name ?? "") + "_close"
             self.allPlayerItemTracks.forEach { $0.shutdown() }
+            self.colorProbePackets.removeAll(); self.colorProbePacketIndex = 0
+            self.dolbyPacketPairer = nil
+            self.inlineDolbyConverters.removeAll()
             KSLog("清空formatCtx")
             // 自定义的协议才会av_class为空
             if let formatCtx = self.formatCtx, (formatCtx.pointee.flags & AVFMT_FLAG_CUSTOM_IO) != 0, let opaque = formatCtx.pointee.pb.pointee.opaque {
@@ -903,7 +1133,6 @@ extension MEPlayerItem: MediaPlayback {
             self.formatCtx?.pointee.interrupt_callback.opaque = nil
             self.formatCtx?.pointee.interrupt_callback.callback = nil
             avformat_close_input(&self.formatCtx)
-            avformat_close_input(&self.companionFormatCtx)
             avformat_close_input(&self.outputFormatCtx)
             self.duration = 0
             self.closeOperation = nil
@@ -917,10 +1146,6 @@ extension MEPlayerItem: MediaPlayback {
         } else if let openOperation {
             openOperation.cancel()
             closeOperation.addDependency(openOperation)
-        }
-        if let companionReadOperation {
-            companionReadOperation.cancel()
-            closeOperation.addDependency(companionReadOperation)
         }
         operationQueue.addOperation(closeOperation)
         condition.signal()
@@ -939,15 +1164,15 @@ extension MEPlayerItem: MediaPlayback {
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
-        if companionTrack != nil {
-            requestCompanionSeek(to: time)
+        if state == .reading || state == .paused || state == .finished || state == .seeking {
+            invalidateAudioClockUpdates()
         }
         if state == .reading || state == .paused {
             seekTime = time
             state = .seeking
             seekingCompletionHandler = completion
             condition.broadcast()
-            allPlayerItemTracks.forEach { $0.seek(time: time) }
+            allPlayerItemTracks.forEach { $0.seek(time: time + startTime.seconds) }
         } else if state == .finished {
             seekTime = time
             state = .seeking
@@ -956,6 +1181,9 @@ extension MEPlayerItem: MediaPlayback {
         } else if state == .seeking {
             seekTime = time
             seekingCompletionHandler = completion
+        } else {
+            DispatchQueue.main.async { completion(false) }
+            return
         }
         isAudioStalled = audioTrack == nil
     }
@@ -1064,7 +1292,13 @@ extension MEPlayerItem: CodecCapacityDelegate {
 
 extension MEPlayerItem: OutputRenderSourceDelegate {
     func mainClock() -> KSClock {
-        isAudioStalled ? videoClock : audioClock
+        if let clock = externalAudioClock?() { return clock.shifted(by: startTime.seconds) }
+        return isAudioStalled ? videoClock : audioClockLock.withLock { audioClock }
+    }
+
+    func relativeAudioClock() -> KSClock? {
+        guard !isAudioStalled else { return nil }
+        return audioClockLock.withLock { audioClock.shifted(by: -startTime.seconds) }
     }
 
     public func setVideo(time: CMTime, position: Int64) {
@@ -1081,12 +1315,31 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
     }
 
     public func setAudio(time: CMTime, position: Int64) {
-//        print("[audio] setAudio: \(time.seconds)")
-        // 切换到主线程的话，那播放起来会更顺滑
-        runOnMainThread {
-            self.audioClock.time = time
-            self.audioClock.position = position
-        }
+        // The PTS describes this render callback, not a later main-queue task.
+        // Publish a value snapshot under the existing short clock lock; no UI
+        // work, decoding, waiting for queues or task allocation belongs here.
+        audioClockLock.lock(); defer { audioClockLock.unlock() }
+        guard audioClockUpdatesEnabled else { return }
+        audioClock.time = time
+        audioClock.position = position
+    }
+
+    func updateAudioClockPlayback(isPlaying: Bool, rate: Double) {
+        audioClockLock.lock(); defer { audioClockLock.unlock() }
+        audioClock.updatePlayback(isPlaying: isPlaying, rate: rate)
+    }
+
+    private func invalidateAudioClockUpdates() {
+        audioClockLock.lock(); defer { audioClockLock.unlock() }
+        audioClockGeneration &+= 1
+        audioClockUpdatesEnabled = false
+    }
+
+    private func finishAudioClockSeek(time: CMTime, generation: UInt64) {
+        audioClockLock.lock(); defer { audioClockLock.unlock() }
+        guard audioClockGeneration == generation else { return }
+        audioClock.time = time
+        audioClockUpdatesEnabled = true
     }
 
     public func getVideoOutputRender(force: Bool) -> VideoVTBFrame? {
@@ -1094,20 +1347,45 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
             return nil
         }
         var type: ClockProcessType = force ? .next : .remain
+        var recoveryFrameCount = 0
         let predicate: ((VideoVTBFrame, Int) -> Bool)? = force ? nil : { [weak self] frame, count -> Bool in
             guard let self else { return true }
-            (self.dynamicInfo.audioVideoSyncDiff, type) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
+            recoveryFrameCount = max(0, count - 1)
+            (self.dynamicInfo.audioVideoSyncDiff, type) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count, videoOnly: self.isAudioStalled && self.externalAudioClock?() == nil)
             return type != .remain
         }
-        let frame = videoTrack.getOutputRender(where: predicate)
+        var frame = videoTrack.getOutputRender(where: predicate)
         switch type {
         case .remain:
             break
         case .next:
             break
         case .dropNextFrame:
-            if videoTrack.getOutputRender(where: nil) != nil {
-                dynamicInfo.droppedVideoFrameCount += 1
+            // Catch up by replacing the stale picture with a newer due one.
+            // Dropping the next picture while showing the old one reverses
+            // recovery and can lose the only frame after a segment/PTS gap.
+            // Reuse the clock snapshot that classified the stale picture;
+            // a future candidate stays in the queue until it becomes due.
+            let desiredTime = frame.map { $0.seconds - dynamicInfo.audioVideoSyncDiff }
+            if let desiredTime {
+                // A missed display tick can leave several already-decoded
+                // pictures behind audio. Replacing only one cannot recover a
+                // 60 fps source at 30 Hz and eventually flushes the backlog.
+                // Limit work to the queue snapshot so a refilling decoder
+                // cannot keep this display callback spinning indefinitely.
+                // The first predicate captured the count under the queue lock.
+                for _ in 0 ..< recoveryFrameCount {
+                    guard let next = videoTrack.getOutputRender(where: { candidate, _ in
+                        let fps = candidate.fps.isFinite && candidate.fps > 0 ? Double(candidate.fps) : 60
+                        return candidate.seconds - desiredTime < 1 / fps / 2
+                    }) else { break }
+                    frame = next
+                    dynamicInfo.audioVideoSyncDiff = next.seconds - desiredTime
+                    dynamicInfo.droppedVideoFrameCount += 1
+                }
+                if let frame {
+                    options.videoClockDidCatchUp(diff: dynamicInfo.audioVideoSyncDiff, fps: Double(frame.fps))
+                }
             }
         case .flush:
             let count = videoTrack.outputRenderQueue.count

@@ -193,6 +193,8 @@ extension Timebase {
 }
 
 final class Packet: ObjectQueueItem {
+    /// Track timeline when this packet entered its decode queue.
+    var decodeGeneration: UInt64?
     var duration: Int64 = 0
     var timestamp: Int64 = 0
     var position: Int64 = 0

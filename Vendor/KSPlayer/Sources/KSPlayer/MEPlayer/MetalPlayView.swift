@@ -20,12 +20,30 @@ public protocol VideoOutput: FrameOutput {
     var options: KSOptions { get set }
     var displayLayer: AVSampleBufferDisplayLayer { get }
     var pixelBuffer: PixelBufferProtocol? { get }
+    var playbackRate: Float { get set }
     init(options: KSOptions)
     func invalidate()
-    func readNextFrame()
+    func discardPendingFrame()
+    @discardableResult func readNextFrame() -> Bool
+}
+
+public extension VideoOutput {
+    var playbackRate: Float {
+        get { 1 }
+        set {}
+    }
+    func discardPendingFrame() {}
 }
 
 public final class MetalPlayView: UIView, VideoOutput {
+    /// A separate PiP presenter consumes the same decoded frame. When it owns presentation,
+    /// accepting that frame must not wait for an offscreen inline Metal drawable.
+    public var pictureInPictureFrame: ((PixelBufferProtocol, CMTime) -> Bool)?
+    public var pictureInPictureActive = false {
+        didSet { if oldValue != pictureInPictureActive { updatePictureInPictureTimer() } }
+    }
+    private var pictureInPictureTimer: DispatchSourceTimer?
+    private var outputPlaying = false
     public var displayLayer: AVSampleBufferDisplayLayer {
         displayView.displayLayer
     }
@@ -40,18 +58,25 @@ public final class MetalPlayView: UIView, VideoOutput {
     private var fps = Float(60) {
         didSet {
             if fps != oldValue {
-                if KSOptions.preferredFrame {
-                    let preferredFramesPerSecond = ceil(fps)
-                    if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
-                        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
-                    } else {
-                        displayLink.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
-                    }
-                }
+                updateDisplayCadence()
                 options.updateVideo(refreshRate: fps, isDovi: isDovi, formatDescription: formatDescription)
             }
         }
     }
+
+    public var playbackRate: Float = 1 {
+        didSet { if playbackRate != oldValue { updateDisplayCadence() } }
+    }
+    private var displayCadence: VideoDisplayCadence?
+    private var pendingFrame: VideoVTBFrame?
+    private var pendingForcedPicture = false
+    private var forcedPictureAccepted = false
+    private var forcedPictureRetry: DispatchWorkItem?
+    private var forcedPictureRetryDeadline: CFTimeInterval?
+    private var forcedPictureRetryEpoch: UInt64 = 0
+    private var outputInvalidated = false
+    private var outputUsesDisplayLayer: Bool?
+    private var outputDisplay: DisplayEnum?
 
     public private(set) var pixelBuffer: PixelBufferProtocol?
     /// 用displayLink会导致锁屏无法draw，
@@ -60,15 +85,9 @@ public final class MetalPlayView: UIView, VideoOutput {
     private var displayLink: CADisplayLink!
 //    private let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
     public var options: KSOptions
-    /// Yingxia local extension: every drawn frame is offered to this hook
-    /// (buffer + the frame's media timestamp) so the application can composite
-    /// its own PiP presentation. The return value reports whether the
-    /// consumer accepted the frame; inline rendering is unaffected either way.
-    public var pictureInPictureFrame: ((PixelBufferProtocol, CMTime) -> Bool)?
-    /// Whether the application's composited PiP presentation is active;
-    /// passed through to the consumer by the caller's own closure.
-    public var pictureInPictureActive: Bool = false
-    public weak var renderSource: OutputRenderSourceDelegate?
+    public weak var renderSource: OutputRenderSourceDelegate? {
+        didSet { discardPendingFrame() }
+    }
     // AVSampleBufferAudioRenderer AVSampleBufferRenderSynchronizer AVSampleBufferDisplayLayer
     var displayView = AVSampleBufferDisplayView() {
         didSet {
@@ -84,6 +103,11 @@ public final class MetalPlayView: UIView, VideoOutput {
         addSubview(displayView)
         addSubview(metalView)
         metalView.isHidden = true
+        metalView.onDrawableReady = { [weak self] in self?.retryPendingPicture() }
+        metalView.onClearRequested = { [weak self] in
+            self?.cancelForcedPictureRetry()
+            self?.pendingFrame = nil; self?.pendingForcedPicture = false; self?.forcedPictureAccepted = false
+        }
         //        displayLink = CADisplayLink(block: renderFrame)
         displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
         // 一定要用common。不然在视频上面操作view的话，那就会卡顿了。
@@ -92,11 +116,30 @@ public final class MetalPlayView: UIView, VideoOutput {
     }
 
     public func play() {
+        outputPlaying = true
+        cancelForcedPictureRetry()
+        metalView.invalidateDrawable()
+        forcedPictureAccepted = false
+        updateDisplayCadence()
         displayLink.isPaused = false
+        updatePictureInPictureTimer()
     }
 
     public func pause() {
+        outputPlaying = false
+        updatePictureInPictureTimer()
+        cancelForcedPictureRetry()
         displayLink.isPaused = true
+        pendingForcedPicture = false
+        metalView.invalidateDrawable()
+        forcedPictureAccepted = false
+    }
+
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        metalView.invalidateDrawable()
+        if window == nil { pendingForcedPicture = false; cancelForcedPictureRetry() }
+        updateDisplayCadence()
     }
 
     @available(*, unavailable)
@@ -150,6 +193,7 @@ public final class MetalPlayView: UIView, VideoOutput {
     #endif
 
     public func flush() {
+        discardPendingFrame()
         pixelBuffer = nil
         if displayView.isHidden {
             metalView.clear()
@@ -159,11 +203,22 @@ public final class MetalPlayView: UIView, VideoOutput {
     }
 
     public func invalidate() {
+        outputInvalidated = true
+        outputPlaying = false
+        updatePictureInPictureTimer()
+        discardPendingFrame()
         displayLink.invalidate()
     }
 
-    public func readNextFrame() {
-        draw(force: true)
+    public func discardPendingFrame() {
+        cancelForcedPictureRetry()
+        pendingFrame = nil; pendingForcedPicture = false; forcedPictureAccepted = false
+        metalView.invalidateDrawable()
+    }
+
+    @discardableResult public func readNextFrame() -> Bool {
+        if forcedPictureAccepted { forcedPictureAccepted = false; return true }
+        return draw(force: true)
     }
 
 //    deinit {
@@ -172,44 +227,123 @@ public final class MetalPlayView: UIView, VideoOutput {
 }
 
 extension MetalPlayView {
+    private func updatePictureInPictureTimer() {
+        let enabled = pictureInPictureActive && outputPlaying && !outputInvalidated
+        guard enabled else {
+            pictureInPictureTimer?.setEventHandler {}
+            pictureInPictureTimer?.cancel(); pictureInPictureTimer = nil
+            return
+        }
+        guard pictureInPictureTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.pictureInPictureActive, self.outputPlaying, !self.outputInvalidated else { return }
+            self.draw(force: false)
+        }
+        pictureInPictureTimer = timer
+        timer.resume()
+    }
+
+    private func updateDisplayCadence() {
+        guard KSOptions.preferredFrame, displayLink != nil else { return }
+        #if canImport(UIKit)
+        let screenMaximum = window?.screen.maximumFramesPerSecond ?? 60
+        #else
+        let screenMaximum = 60
+        #endif
+        let cadence = VideoDisplayCadence(sourceFPS: fps, playbackRate: playbackRate, screenMaximum: screenMaximum)
+        guard cadence != displayCadence else { return }
+        displayCadence = cadence
+        let refreshRate = Float(cadence.framesPerSecond)
+        if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
+            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: refreshRate, maximum: refreshRate, __preferred: refreshRate)
+        } else {
+            displayLink.preferredFramesPerSecond = cadence.framesPerSecond
+        }
+    }
+
     @objc private func renderFrame() {
+        guard pictureInPictureTimer == nil else { return }
         draw(force: false)
     }
 
-    private func draw(force: Bool) {
+    private func retryPendingPicture() {
+        guard !outputInvalidated, pendingFrame != nil,
+              !displayLink.isPaused || pendingForcedPicture else { return }
+        let forced = pendingForcedPicture
+        if draw(force: forced), forced { forcedPictureAccepted = true }
+    }
+
+    private func cancelForcedPictureRetry() {
+        forcedPictureRetryEpoch &+= 1
+        forcedPictureRetry?.cancel(); forcedPictureRetry = nil
+        forcedPictureRetryDeadline = nil
+    }
+
+    private func scheduleForcedPictureRetry() {
+        guard !outputInvalidated, displayLink.isPaused, pendingForcedPicture,
+              let picture = pendingFrame, forcedPictureRetry == nil,
+              let deadline = forcedPictureRetryDeadline, CACurrentMediaTime() < deadline else { return }
+        let epoch = forcedPictureRetryEpoch
+        let retry = DispatchWorkItem { [weak self, weak picture] in
+            guard let self, let picture, self.forcedPictureRetryEpoch == epoch,
+                  self.pendingFrame === picture else { return }
+            self.forcedPictureRetry = nil
+            guard self.displayLink.isPaused, self.pendingForcedPicture,
+                  !self.outputInvalidated, CACurrentMediaTime() < deadline else { return }
+            self.retryPendingPicture()
+        }
+        forcedPictureRetry = retry
+        // A paused seek has no display tick after a nil drawable or layer
+        // backpressure. Retry its same picture for at most one second; native
+        // drawable-ready events can still deliver it after that deadline.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: retry)
+    }
+
+    @discardableResult private func draw(force: Bool) -> Bool {
         autoreleasepool {
-            guard let frame = renderSource?.getVideoOutputRender(force: force) else {
-                return
+            guard !outputInvalidated else { return false }
+            defer { scheduleForcedPictureRetry() }
+            let usesDisplayLayer = options.isUseDisplayLayer()
+            if outputUsesDisplayLayer != usesDisplayLayer || outputDisplay != options.display {
+                metalView.invalidateDrawable()
+                outputUsesDisplayLayer = usesDisplayLayer; outputDisplay = options.display
             }
-            pixelBuffer = frame.corePixelBuffer
-            guard let pixelBuffer else {
-                return
+            guard let frame = pendingFrame ?? renderSource?.getVideoOutputRender(force: force) else {
+                return false
             }
-            if let pictureInPictureFrame {
-                _ = pictureInPictureFrame(pixelBuffer, frame.cmtime)
+            if force && !pendingForcedPicture {
+                cancelForcedPictureRetry()
+                forcedPictureRetryDeadline = CACurrentMediaTime() + 1
+            }
+            pendingFrame = frame
+            pendingForcedPicture = pendingForcedPicture || force
+            guard let pixelBuffer = frame.corePixelBuffer else {
+                pendingFrame = nil
+                pendingForcedPicture = false
+                cancelForcedPictureRetry()
+                return false
             }
             isDovi = frame.isDovi
             fps = frame.fps
             let cmtime = frame.cmtime
             let par = pixelBuffer.size
             let sar = pixelBuffer.aspectRatio
-            if let pixelBuffer = pixelBuffer.cvPixelBuffer, options.isUseDisplayLayer() {
+            if pictureInPictureActive, let pictureInPictureFrame {
+                guard pictureInPictureFrame(pixelBuffer, cmtime) else { return false }
+            } else if let pixelBuffer = pixelBuffer.cvPixelBuffer, usesDisplayLayer {
+                if let dar = options.customizeDar(sar: sar, par: par) {
+                    pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
+                }
+                checkFormatDescription(pixelBuffer: pixelBuffer)
+                guard set(pixelBuffer: pixelBuffer, time: cmtime) else { return false }
                 if displayView.isHidden {
                     displayView.isHidden = false
                     metalView.isHidden = true
                     metalView.clear()
                 }
-                if let dar = options.customizeDar(sar: sar, par: par) {
-                    pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
-                }
-                checkFormatDescription(pixelBuffer: pixelBuffer)
-                set(pixelBuffer: pixelBuffer, time: cmtime)
             } else {
-                if !displayView.isHidden {
-                    displayView.isHidden = true
-                    metalView.isHidden = false
-                    displayView.displayLayer.flushAndRemoveImage()
-                }
                 let size: CGSize
                 if options.display == .plane {
                     if let dar = options.customizeDar(sar: sar, par: par) {
@@ -226,15 +360,27 @@ extension MetalPlayView {
                     metalView.metalLayer.edrMetadata = frame.edrMetadata
                 }
                 #endif
-                metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size)
+                guard metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size) else { return false }
+                if !displayView.isHidden {
+                    displayView.isHidden = true
+                    metalView.isHidden = false
+                    displayView.displayLayer.flushAndRemoveImage()
+                }
             }
+            pendingFrame = nil
+            pendingForcedPicture = false
+            cancelForcedPictureRetry()
+            self.pixelBuffer = pixelBuffer
             renderSource?.setVideo(time: cmtime, position: frame.position)
+            if !pictureInPictureActive { _ = pictureInPictureFrame?(pixelBuffer, cmtime) }
+            return true
         }
     }
 
     private func checkFormatDescription(pixelBuffer: PixelBufferProtocol) {
         if formatDescription == nil || !pixelBuffer.matche(formatDescription: formatDescription!) {
             if formatDescription != nil {
+                metalView.invalidateDrawable()
                 displayView.removeFromSuperview()
                 displayView = AVSampleBufferDisplayView()
                 displayView.frame = frame
@@ -244,14 +390,29 @@ extension MetalPlayView {
         }
     }
 
-    private func set(pixelBuffer: CVPixelBuffer, time: CMTime) {
-        guard let formatDescription else { return }
-        displayView.enqueue(imageBuffer: pixelBuffer, formatDescription: formatDescription, time: time)
+    private func set(pixelBuffer: CVPixelBuffer, time: CMTime) -> Bool {
+        guard let formatDescription else { return false }
+        return displayView.enqueue(imageBuffer: pixelBuffer, formatDescription: formatDescription, time: time)
     }
+}
+
+/// CAMetalLayer permits nextDrawable on a rendering thread. All configuration
+/// remains on the main actor; the worker only calls that acquisition API.
+private final class MetalLayerDrawableProvider: @unchecked Sendable {
+    let layer: CAMetalLayer
+    init(_ layer: CAMetalLayer) { self.layer = layer }
+    func acquire() -> CAMetalDrawable? { layer.nextDrawable() }
 }
 
 class MetalView: UIView {
     private let render = MetalRender()
+    private let drawableAcquisition = MetalDrawableAcquisition<CAMetalDrawable>()
+    private var drawableDisplay: DisplayEnum?
+    private var pendingClear = false
+    private var clearRetry: DispatchWorkItem?
+    private var clearEpoch: UInt64 = 0
+    var onDrawableReady: (() -> Void)?
+    var onClearRequested: (() -> Void)?
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
@@ -277,16 +438,69 @@ class MetalView: UIView {
     }
 
     func clear() {
-        if let drawable = metalLayer.nextDrawable() {
-            render.clear(drawable: drawable)
+        onClearRequested?()
+        invalidateDrawable()
+        pendingClear = true
+        submitPendingClear()
+    }
+
+    func invalidateDrawable() {
+        clearEpoch &+= 1
+        clearRetry?.cancel(); clearRetry = nil
+        pendingClear = false
+        drawableAcquisition.invalidate()
+    }
+
+    private func drawableReady() {
+        if pendingClear { submitPendingClear() }
+        else { onDrawableReady?() }
+    }
+
+    private func nextReadyDrawable() -> CAMetalDrawable? {
+        let provider = MetalLayerDrawableProvider(metalLayer)
+        return drawableAcquisition.takeOrRequest(acquire: { provider.acquire() },
+                                                 completion: { [weak self] in self?.drawableReady() })
+    }
+
+    private func submitPendingClear() {
+        guard pendingClear else { return }
+        guard render.hasCapacity else { scheduleClearRetry(); return }
+        if let drawable = nextReadyDrawable() {
+            clearRetry?.cancel(); clearRetry = nil
+            if render.clear(drawable: drawable) {
+                pendingClear = false
+            } else {
+                scheduleClearRetry()
+            }
+        } else {
+            scheduleClearRetry()
         }
     }
 
-    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize) {
-        metalLayer.drawableSize = size
-        metalLayer.pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
+    private func scheduleClearRetry() {
+        guard pendingClear, clearRetry == nil else { return }
+        let epoch = clearEpoch
+        let retry = DispatchWorkItem { [weak self] in
+            guard let self, self.clearEpoch == epoch, self.pendingClear else { return }
+            self.clearRetry = nil
+            self.submitPendingClear()
+        }
+        clearRetry = retry
+        // Paused/flush/stop has no display-link tick. One cancellable 50 ms
+        // retry waits for GPU/drawable recovery without spinning or queuing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: retry)
+    }
+
+    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize) -> Bool {
+        if pendingClear { invalidateDrawable() }
+        guard render.hasCapacity else { return false }
+        if drawableDisplay != display { invalidateDrawable(); drawableDisplay = display }
+        if metalLayer.drawableSize != size { invalidateDrawable(); metalLayer.drawableSize = size }
+        let pixelFormat = KSOptions.colorPixelFormat(bitDepth: pixelBuffer.bitDepth)
+        if metalLayer.pixelFormat != pixelFormat { invalidateDrawable(); metalLayer.pixelFormat = pixelFormat }
         let colorspace = pixelBuffer.colorspace
         if colorspace != nil, metalLayer.colorspace != colorspace {
+            invalidateDrawable()
             metalLayer.colorspace = colorspace
             KSLog("[video] CAMetalLayer colorspace \(String(describing: colorspace))")
             #if !os(tvOS)
@@ -304,11 +518,8 @@ class MetalView: UIView {
             }
             #endif
         }
-        guard let drawable = metalLayer.nextDrawable() else {
-            KSLog("[video] CAMetalLayer not readyForMoreMediaData")
-            return
-        }
-        render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
+        guard let drawable = nextReadyDrawable() else { return false }
+        return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
     }
 }
 
@@ -341,7 +552,14 @@ class AVSampleBufferDisplayView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func enqueue(imageBuffer: CVPixelBuffer, formatDescription: CMVideoFormatDescription, time: CMTime) {
+    func enqueue(imageBuffer: CVPixelBuffer, formatDescription: CMVideoFormatDescription, time: CMTime) -> Bool {
+        // Recover the layer before enqueueing: a post-enqueue flush would
+        // discard the very picture whose PTS was just published to overlays.
+        if #available(macOS 11.0, iOS 14, tvOS 14, *), displayLayer.requiresFlushToResumeDecoding {
+            displayLayer.flush()
+        }
+        if displayLayer.status == .failed { displayLayer.flush() }
+        guard displayLayer.isReadyForMoreMediaData else { return false }
         let timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
         //        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: time, decodeTimeStamp: .invalid)
         var sampleBuffer: CMSampleBuffer?
@@ -350,26 +568,10 @@ class AVSampleBufferDisplayView: UIView {
             if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true) as? [NSMutableDictionary], let dic = attachmentsArray.first {
                 dic[kCMSampleAttachmentKey_DisplayImmediately] = true
             }
-            if displayLayer.isReadyForMoreMediaData {
-                displayLayer.enqueue(sampleBuffer)
-            } else {
-                KSLog("[video] AVSampleBufferDisplayLayer not readyForMoreMediaData. video time \(time), controlTime \(displayLayer.timebase.time) ")
-                displayLayer.enqueue(sampleBuffer)
-            }
-            if #available(macOS 11.0, iOS 14, tvOS 14, *) {
-                if displayLayer.requiresFlushToResumeDecoding {
-                    KSLog("[video] AVSampleBufferDisplayLayer requiresFlushToResumeDecoding so flush")
-                    displayLayer.flush()
-                }
-            }
-            if displayLayer.status == .failed {
-                KSLog("[video] AVSampleBufferDisplayLayer status failed so flush")
-                displayLayer.flush()
-                //                    if let error = displayLayer.error as NSError?, error.code == -11847 {
-                //                        displayLayer.stopRequestingMediaData()
-                //                    }
-            }
+            displayLayer.enqueue(sampleBuffer)
+            return displayLayer.status != .failed
         }
+        return false
     }
 }
 

@@ -19,3 +19,20 @@ Local extension KSOptions.onVideoDecoderChanged reports actual VideoToolbox/FFmp
 FFmpeg frames refine software versus VideoToolbox-backed output. KSMEPlayer exposes playbackCommand
 and seekCommand so system PiP actions use the application's serialized playback controls.
 
+---
+
+## Official source landed (2026-11-18)
+
+lmentor published the modified KSPlayer source on branch `iOS16.2-NoJava`
+(commit `ec9c0e3`「补全 KSPlayer Sources 和 模板.js」, 2026-11-18 16:39; the
+following commit `113a64b` only fixes .gitignore and does not touch KSPlayer).
+The 60-file reconstruction (kingslay/KSPlayer `be7f60d` base, local FFmpeg 8
+adaptations, three extension APIs recreated from App call sites) was replaced
+wholesale by the author's own 74 files under `Sources/` (71 Swift +
+DisplayCriteria.m/.h + Shaders.metal; the author's LICENSE is identical to the
+one already vendored). The three extension APIs and the FFmpeg 8 adaptations
+above are the author's own in this tree; the 14 files the reconstruction
+lacked (Dolby Vision pipeline, MEPlaybackSource/PlaybackInputIO, playback
+clock/cadence, Metal gating, ASSAnimation) are present. Official source wins
+any conflict.
+

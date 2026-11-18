@@ -8,7 +8,6 @@
 import AVFoundation
 import CoreMedia
 import FFmpegKit
-
 extension OSType {
     var bitDepth: Int32 {
         switch self {

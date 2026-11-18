@@ -70,7 +70,6 @@ public class ThumbnailController {
         }
         var codecContext = try videoStream.pointee.codecpar.pointee.createContext(options: nil)
         defer {
-            // FFmpeg 8 removed avcodec_close; freeing the context closes it.
             var codecContext: UnsafeMutablePointer<AVCodecContext>? = codecContext
             avcodec_free_context(&codecContext)
         }

@@ -9,7 +9,6 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import FFmpegKit
-
 protocol FrameTransfer {
     func transfer(avframe: UnsafeMutablePointer<AVFrame>) -> UnsafeMutablePointer<AVFrame>
     func shutdown()
@@ -84,7 +83,11 @@ class VideoSwresample: FrameChange {
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
         let frame = VideoVTBFrame(fps: fps, isDovi: isDovi)
         if avframe.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue {
-            frame.corePixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
+            let pixelBuffer = unsafeBitCast(avframe.pointee.data.3, to: CVPixelBuffer.self)
+            // The native decoder already labels its output color space. Add
+            // actual per-frame HDR mastering/light metadata to display buffers.
+            VideoColorMetadata.applyHDR(frame: UnsafePointer(avframe), pixelBuffer: pixelBuffer)
+            frame.corePixelBuffer = pixelBuffer
         } else {
             frame.corePixelBuffer = transfer(frame: avframe.pointee)
         }
@@ -108,7 +111,7 @@ class VideoSwresample: FrameChange {
         } else {
             let dstFormat = dstFormat ?? format.bestPixelFormat
             pixelFormatType = dstFormat.osType()!
-//            imgConvertCtx = sws_getContext(width, height, self.format, width, height, dstFormat, SWS_FAST_BILINEAR, nil, nil, nil)
+//            imgConvertCtx = sws_getContext(width, height, self.format, width, height, dstFormat, Int32(SWS_FAST_BILINEAR.rawValue), nil, nil, nil)
             // AV_PIX_FMT_VIDEOTOOLBOX格式是无法进行swscale的
             imgConvertCtx = sws_getCachedContext(imgConvertCtx, width, height, self.format, dstWidth, dstHeight, dstFormat, Int32(SWS_FAST_BILINEAR.rawValue), nil, nil, nil)
         }
@@ -124,19 +127,8 @@ class VideoSwresample: FrameChange {
         }
         let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize))
         if let pbuf {
-            pbuf.aspectRatio = frame.sample_aspect_ratio.size
-            pbuf.yCbCrMatrix = frame.colorspace.ycbcrMatrix
-            pbuf.colorPrimaries = frame.color_primaries.colorPrimaries
-            pbuf.transferFunction = frame.color_trc.transferFunction
-            // vt_pixbuf_set_colorspace
-            if pbuf.transferFunction == kCVImageBufferTransferFunction_UseGamma {
-                let gamma = NSNumber(value: frame.color_trc == AVCOL_TRC_GAMMA22 ? 2.2 : 2.8)
-                CVBufferSetAttachment(pbuf, kCVImageBufferGammaLevelKey, gamma, .shouldPropagate)
-            }
-            if let chroma = frame.chroma_location.chroma {
-                CVBufferSetAttachment(pbuf, kCVImageBufferChromaLocationTopFieldKey, chroma, .shouldPropagate)
-            }
-            pbuf.colorspace = KSOptions.colorSpace(ycbcrMatrix: pbuf.yCbCrMatrix, transferFunction: pbuf.transferFunction)
+            var metadata = frame
+            withUnsafePointer(to: &metadata) { VideoColorMetadata.apply(frame: $0, pixelBuffer: pbuf) }
         }
         return pbuf
     }
@@ -146,7 +138,7 @@ class VideoSwresample: FrameChange {
         guard let pool else {
             return nil
         }
-        return autoreleasepool {
+        return autoreleasepool { () -> CVPixelBuffer? in
             var pbuf: CVPixelBuffer?
             let ret = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pbuf)
             guard let pbuf, ret == kCVReturnSuccess else {
@@ -216,9 +208,6 @@ extension BinaryInteger {
     }
 }
 
-// libswresample's SwrContext is an opaque forward-declared struct; the FFmpeg 8
-// umbrella does not surface it as a named Swift type (its functions import with
-// OpaquePointer parameters), so the context is held as an OpaquePointer.
 typealias SwrContext = OpaquePointer
 
 class AudioSwresample: FrameChange {

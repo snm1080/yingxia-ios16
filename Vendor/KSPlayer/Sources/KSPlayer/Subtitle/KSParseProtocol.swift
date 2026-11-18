@@ -71,6 +71,7 @@ public class AssParse: KSParseProtocol {
             guard let values = scanner.scanUpToCharacters(from: .newlines)?.components(separatedBy: ",") else {
                 continue
             }
+            guard values.count >= keys.count else { continue }
             var dic = [String: String]()
             for i in 1 ..< keys.count {
                 dic[keys[i]] = values[i]
@@ -137,71 +138,15 @@ public class AssParse: KSParseProtocol {
         guard var text = dic["Text"] else {
             return nil
         }
-        let rawText = text
         text = text.replacingOccurrences(of: "\\N", with: "\n")
         text = text.replacingOccurrences(of: "\\n", with: "\n")
         let part = SubtitlePart(start, end, attributedString: text.build(textPosition: &textPosition, attributed: attributes))
         part.textPosition = textPosition
-        if playResX > 0, playResY > 0 {
-            part.canvasSize = CGSize(width: CGFloat(playResX), height: CGFloat(playResY))
-        }
-        applyOverrides(rawText: rawText, to: part)
+        part.canvasSize = CGSize(width: CGFloat(playResX), height: CGFloat(playResY))
+        part.animation = ASSAnimation.parse(text)
+        part.usesAuthoredPosition = ASSPositionIntent.isAuthored(text: text, style: dic["Style"], effect: dic["Effect"],
+            specialAlignment: textPosition.verticalAlign != .bottom || textPosition.horizontalAlign != .center)
         return part
-    }
-
-    /// Extracts the override tags the attributed-string builder does not model:
-    /// \pos (authored position), \move, \fad and \t (animation). Tags are read
-    /// from every {...} block in the raw event text, in order.
-    private func applyOverrides(rawText: String, to part: SubtitlePart) {
-        var blocks = [String]()
-        var rest = rawText[...]
-        while let open = rest.firstIndex(of: "{"), let close = rest[open...].firstIndex(of: "}") {
-            blocks.append(String(rest[rest.index(after: open) ..< close]))
-            rest = rest[rest.index(after: close)...]
-        }
-        guard !blocks.isEmpty else {
-            return
-        }
-        var animation = ASSAnimation()
-        var position: CGPoint?
-        for block in blocks {
-            for tag in block.split(separator: "\\", omittingEmptySubsequences: true) {
-                if tag.hasPrefix("pos("), let values = overrideNumbers(tag.dropFirst(4)), values.count >= 2 {
-                    position = CGPoint(x: values[0], y: values[1])
-                } else if tag.hasPrefix("move("), let values = overrideNumbers(tag.dropFirst(5)), values.count >= 4 {
-                    animation.moveFrom = CGPoint(x: values[0], y: values[1])
-                    animation.moveTo = CGPoint(x: values[2], y: values[3])
-                    if values.count >= 6 {
-                        animation.moveStart = values[4] / 1000
-                        animation.moveEnd = values[5] / 1000
-                    }
-                } else if tag.hasPrefix("fad("), let values = overrideNumbers(tag.dropFirst(4)), values.count >= 2 {
-                    animation.fadeIn = values[0] / 1000
-                    animation.fadeOut = values[1] / 1000
-                } else if tag.hasPrefix("t(") {
-                    animation.hasTransform = true
-                }
-            }
-        }
-        if let moveFrom = animation.moveFrom {
-            part.origin = moveFrom
-            part.usesAuthoredPosition = true
-        } else if let position {
-            part.origin = position
-            part.usesAuthoredPosition = true
-        }
-        part.animation = animation
-    }
-
-    /// Parses the comma-separated numbers of an override tag body (the text
-    /// after the opening parenthesis has been dropped). Returns nil when the
-    /// body holds no numbers at all.
-    private func overrideNumbers(_ body: Substring) -> [Double]? {
-        let values = body.split(separator: ",").map { component -> Double in
-            let trimmed = component.trimmingCharacters(in: CharacterSet(charactersIn: " )"))
-            return Double(trimmed) ?? 0
-        }
-        return values.isEmpty ? nil : values
     }
 }
 
@@ -339,11 +284,20 @@ public extension [String: String] {
         if let assColor = self["SecondaryColour"] {
 //            attributes[.backgroundColor] = UIColor(assColor: assColor)
         }
-        if self["Bold"] == "1" {
-            attributes[.expansion] = 1
-        }
-        if self["Italic"] == "1" {
-            attributes[.obliqueness] = 1
+        let bold = ASSAnimation.styleFlag(self["Bold"]), italic = ASSAnimation.styleFlag(self["Italic"])
+        if bold || italic {
+            let base = attributes[.font] as? UIFont ?? UIFont.systemFont(ofSize: 17)
+            #if canImport(UIKit)
+            var traits = base.fontDescriptor.symbolicTraits
+            if bold { traits.insert(.traitBold) }
+            if italic { traits.insert(.traitItalic) }
+            if let descriptor = base.fontDescriptor.withSymbolicTraits(traits) { attributes[.font] = UIFont(descriptor: descriptor, size: base.pointSize) }
+            #else
+            var traits = base.fontDescriptor.symbolicTraits
+            if bold { traits.insert(.bold) }
+            if italic { traits.insert(.italic) }
+            attributes[.font] = UIFont(descriptor: base.fontDescriptor.withSymbolicTraits(traits), size: base.pointSize)
+            #endif
         }
         if self["Underline"] == "1" {
             attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -398,7 +352,6 @@ public extension [String: String] {
 }
 
 public class VTTParse: KSParseProtocol {
-    public init() {}
     public func canParse(scanner: Scanner) -> Bool {
         let result = scanner.scanString("WEBVTT")
         if result != nil {
@@ -446,7 +399,6 @@ public class VTTParse: KSParseProtocol {
 }
 
 public class SrtParse: KSParseProtocol {
-    public init() {}
     public func canParse(scanner: Scanner) -> Bool {
         let result = scanner.string.contains(" --> ")
         if result {

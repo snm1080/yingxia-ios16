@@ -7,7 +7,6 @@
 
 import AVFoundation
 import FFmpegKit
-
 public class FFmpegAssetTrack: MediaPlayerTrack {
     public private(set) var trackID: Int32 = 0
     public let codecName: String
@@ -34,10 +33,17 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     // video
     public private(set) var rotation: Int16 = 0
     public var dovi: DOVIDecoderConfigurationRecord?
+    /// Separate UHD residual layers are not independent video choices.
+    public internal(set) var isDolbyVisionEnhancementLayer = false
+    public internal(set) var hasDolbyVisionEnhancementLayer = false
+    public internal(set) var convertsDolbyVisionP7ToP81 = false
+    var requiresNativeDolbyVision: Bool { dovi?.dv_profile == 5 || convertsDolbyVisionP7ToP81 }
     public let fieldOrder: FFmpegFieldOrder
     public let formatDescription: CMFormatDescription?
     var closedCaptionsTrack: FFmpegAssetTrack?
     let isConvertNALSize: Bool
+    private(set) var isAnnexB = false
+    private(set) var nalLengthFieldBytes = 4
     var seekByBytes = false
     public var description: String {
         var description = codecName
@@ -187,8 +193,12 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             if codecpar.nb_coded_side_data > 0, let sideDatas = codecpar.coded_side_data {
                 for i in 0 ..< codecpar.nb_coded_side_data {
                     let sideData = sideDatas[Int(i)]
-                    if sideData.type == AV_PKT_DATA_DOVI_CONF {
-                        dovi = sideData.data.withMemoryRebound(to: DOVIDecoderConfigurationRecord.self, capacity: 1) { $0 }.pointee
+                    if sideData.type == AV_PKT_DATA_DOVI_CONF, sideData.size >= 8, let data = sideData.data {
+                        // FFmpeg's record size is not ABI-stable; copy documented
+                        // bytes and tolerate the pre-compression eight-byte form.
+                        dovi = DOVIDecoderConfigurationRecord(dv_version_major: data[0], dv_version_minor: data[1],
+                            dv_profile: data[2], dv_level: data[3], rpu_present_flag: data[4], el_present_flag: data[5],
+                            bl_present_flag: data[6], dv_bl_signal_compatibility_id: data[7], dv_md_compression: sideData.size > 8 ? data[8] : 0)
                     } else if sideData.type == AV_PKT_DATA_DISPLAYMATRIX {
                         let matrix = sideData.data.withMemoryRebound(to: Int32.self, capacity: 1) { $0 }
                         let rawRotation = -av_display_rotation_get(matrix)
@@ -208,13 +218,20 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             let atomsData: Data?
             if let extradata {
                 extradataSize = codecpar.extradata_size
-                if extradataSize >= 5, extradata[4] == 0xFE {
-                    extradata[4] = 0xFF
-                    isConvertNALSize = true
-                } else {
-                    isConvertNALSize = false
+                var data = Data(bytes: extradata, count: max(0, Int(extradataSize)))
+                let isNALCodec = [kCMVideoCodecType_H264, kCMVideoCodecType_HEVC].contains(codecType.rawValue)
+                isAnnexB = isNALCodec && VideoNALFormat.isAnnexB(data)
+                if !isAnnexB, isNALCodec, data.first == 1 {
+                    // AVC's lengthSizeMinusOne is byte 4; HEVC's is byte 21.
+                    // Rewrite an owned atom, never FFmpeg's shared extradata.
+                    let field = codecType.rawValue == kCMVideoCodecType_HEVC ? 21 : 4
+                    if data.count > field {
+                        nalLengthFieldBytes = Int(data[field] & 3) + 1
+                        data[field] = (data[field] & 0xfc) | 3
+                    }
                 }
-                atomsData = Data(bytes: extradata, count: Int(extradataSize))
+                isConvertNALSize = !isAnnexB && isNALCodec && nalLengthFieldBytes != 4
+                atomsData = data
             } else {
                 if codecType.rawValue == kCMVideoCodecType_VP9 {
                     // ff_videotoolbox_vpcc_extradata_create
@@ -247,9 +264,36 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
                 kCMFormatDescriptionExtension_FullRangeVideo: fullRange,
                 codecType.rawValue == kCMVideoCodecType_HEVC ? "EnableHardwareAcceleratedVideoDecoder" : "RequireHardwareAcceleratedVideoDecoder": true,
             ]
+            if codecpar.nb_coded_side_data > 0, let sideData = codecpar.coded_side_data {
+                for index in 0 ..< Int(codecpar.nb_coded_side_data) {
+                    let side = sideData[index]
+                    guard let bytes = side.data else { continue }
+                    if side.type == AV_PKT_DATA_MASTERING_DISPLAY_METADATA,
+                       side.size >= MemoryLayout<AVMasteringDisplayMetadata>.size,
+                       let metadata = VideoColorMetadata.masteringData(UnsafeRawPointer(bytes).load(as: AVMasteringDisplayMetadata.self)) {
+                        dic[kCMFormatDescriptionExtension_MasteringDisplayColorVolume] = metadata
+                    } else if side.type == AV_PKT_DATA_CONTENT_LIGHT_LEVEL,
+                              side.size >= MemoryLayout<AVContentLightMetadata>.size {
+                        dic[kCMFormatDescriptionExtension_ContentLightLevelInfo] = VideoColorMetadata.contentLightData(
+                            UnsafeRawPointer(bytes).load(as: AVContentLightMetadata.self))
+                    }
+                }
+            }
             // kCMFormatDescriptionExtension_BitsPerComponent
             if let atomsData {
-                dic[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] = [codecType.rawValue.avc: atomsData]
+                var nativeAtom = atomsData
+                if isAnnexB, let parsed = VideoNALFormat.makeFormatDescription(parameterSets: atomsData,
+                    codec: codecType.rawValue, extensions: dic),
+                   let extensions = CMFormatDescriptionGetExtension(parsed,
+                    extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms) as? [String: Data],
+                   let atom = extensions[codecType.rawValue.avc] {
+                    nativeAtom = atom
+                }
+                var atoms = [codecType.rawValue.avc: nativeAtom]
+                if let dovi, codecType.rawValue == kCMVideoCodecType_HEVC, [5, 8].contains(dovi.dv_profile) {
+                    atoms[dovi.dv_profile > 7 ? "dvvC" : "dvcC"] = dovi.configurationData
+                }
+                dic[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] = atoms
             }
             dic[kCVPixelBufferPixelFormatTypeKey] = format.osType(fullRange: fullRange)
             dic[kCVImageBufferPixelAspectRatioKey] = sar.aspectRatio
@@ -257,7 +301,8 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             dic[kCVImageBufferTransferFunctionKey] = codecpar.color_trc.transferFunction as String?
             dic[kCVImageBufferYCbCrMatrixKey] = codecpar.color_space.ycbcrMatrix as String?
             // swiftlint:disable line_length
-            _ = CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: codecType.rawValue, width: codecpar.width, height: codecpar.height, extensions: dic, formatDescriptionOut: &formatDescriptionOut)
+            let nativeCodec = codecType.rawValue == kCMVideoCodecType_HEVC && dovi?.dv_profile == 5 ? kCMVideoCodecType_DolbyVisionHEVC : codecType.rawValue
+            _ = CMVideoFormatDescriptionCreate(allocator: kCFAllocatorDefault, codecType: nativeCodec, width: codecpar.width, height: codecpar.height, extensions: dic, formatDescriptionOut: &formatDescriptionOut)
             // swiftlint:enable line_length
             if let name = av_get_pix_fmt_name(format) {
                 formatName = String(cString: name)
@@ -285,28 +330,17 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         try codecpar.createContext(options: options)
     }
 
-    /// True for the enhancement-layer stream of a dual-layer Dolby Vision
-    /// presentation: its DOVI configuration carries an enhancement layer but
-    /// no base layer of its own, so it cannot be presented standalone and is
-    /// hidden from the video track list.
-    public var isDolbyVisionEnhancementLayer: Bool {
-        guard let dovi else {
-            return false
-        }
-        return dovi.el_present_flag != 0 && dovi.bl_present_flag == 0
-    }
-
-    /// Reassigns the public track id. Used when a track comes from a companion
-    /// input whose stream indexes would collide with the main input's.
-    func assignTrackID(_ id: Int32) {
-        trackID = id
-    }
-
     public var isEnabled: Bool {
         get {
-            stream?.pointee.discard == AVDISCARD_DEFAULT
+            if isDolbyVisionEnhancementLayer { return false }
+            return stream?.pointee.discard == AVDISCARD_DEFAULT
         }
         set {
+            if isDolbyVisionEnhancementLayer {
+                // Retain RPU demuxing while never selecting residual pixels.
+                stream?.pointee.discard = AVDISCARD_DEFAULT
+                return
+            }
             var discard = newValue ? AVDISCARD_DEFAULT : AVDISCARD_ALL
             if mediaType == .subtitle, !isImageSubtitle {
                 discard = AVDISCARD_DEFAULT

@@ -19,14 +19,8 @@ class SubtitleDecode: DecodeProtocol {
     private var subtitle = AVSubtitle()
     private var startTime = TimeInterval(0)
     private let assParse = AssParse()
-    /// Bitmap subtitle rects are authored against the subtitle stream's own
-    /// canvas (codecpar width/height); text parts take theirs from ASS PlayRes.
-    private var canvasSize = CGSize.zero
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
         startTime = assetTrack.startTime.seconds
-        if assetTrack.codecpar.width > 0, assetTrack.codecpar.height > 0 {
-            canvasSize = CGSize(width: Int(assetTrack.codecpar.width), height: Int(assetTrack.codecpar.height))
-        }
         do {
             codecContext = try assetTrack.createContext(options: options)
             if let pointer = codecContext?.pointee.subtitle_header {
@@ -86,10 +80,8 @@ class SubtitleDecode: DecodeProtocol {
     func shutdown() {
         scale.shutdown()
         avsubtitle_free(&subtitle)
-        if codecContext != nil {
-            // FFmpeg 8 removed avcodec_close; freeing the context closes it.
-            avcodec_free_context(&self.codecContext)
-        }
+        // FFmpeg 8 closes the codec when its context is freed.
+        avcodec_free_context(&codecContext)
     }
 
     private func text(subtitle: AVSubtitle) -> [SubtitlePart] {
@@ -123,7 +115,11 @@ class SubtitleDecode: DecodeProtocol {
         if images.count > 0 {
             let part = SubtitlePart(0, 0, attributedString: nil)
             if images.count > 1 {
-                origin = .zero
+                // Combine in a tight local rectangle while keeping its authored origin.
+                // A full transparent canvas would hide the real dialogue bounds from pairing.
+                let bounds = images.reduce(CGRect.null) { $0.union($1.0) }
+                origin = bounds.origin
+                images = images.map { ($0.0.offsetBy(dx: -bounds.minX, dy: -bounds.minY), $0.1) }
             }
             var image: UIImage?
             // 因为字幕需要有透明度,所以不能用jpg；tif在iOS支持没有那么好，会有绿色背景； 用heic格式，展示的时候会卡主线程；所以最终用png。
@@ -132,9 +128,11 @@ class SubtitleDecode: DecodeProtocol {
             }
             part.image = image
             part.origin = origin
-            // Bitmap rects carry their own authored placement on the canvas.
-            part.canvasSize = canvasSize
-            part.usesAuthoredPosition = true
+            // PGS/DVD/DVB coordinates use the subtitle decoder canvas, which can differ
+            // from the movie resolution (e.g. 1080p subtitles on a 4K video).
+            if let codecContext, codecContext.pointee.width > 0, codecContext.pointee.height > 0 {
+                part.canvasSize = CGSize(width: Int(codecContext.pointee.width), height: Int(codecContext.pointee.height))
+            }
             parts.append(part)
         }
         if let attributedString {

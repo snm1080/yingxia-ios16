@@ -18,6 +18,20 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     private let expanding: Bool
     private let sorted: Bool
     private var destroyed = false
+    private var _generation: UInt64 = 0
+    var generation: UInt64 {
+        condition.lock()
+        defer { condition.unlock() }
+        return _generation
+    }
+
+    @discardableResult func perform(ifGeneration generation: UInt64, _ body: () -> Void) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        guard !destroyed, generation == _generation else { return false }
+        body()
+        return true
+    }
     @inline(__always)
     private var _count: Int { Int(tailIndex &- headIndex) }
     @inline(__always)
@@ -40,12 +54,11 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         assert(_buffer.count == capacity)
     }
 
-    public func push(_ value: Item) {
+    public func push(_ value: Item, generation: UInt64? = nil, accepting: (() -> Bool)? = nil) {
         condition.lock()
         defer { condition.unlock() }
-        if destroyed {
-            return
-        }
+        guard !destroyed, generation == nil || generation == _generation,
+              accepting?() != false else { return }
         if _buffer[Int(tailIndex & mask)] != nil {
             assertionFailure("value is not nil of headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
         }
@@ -150,9 +163,48 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         return result
     }
 
-    public func flush() {
+    /// Samples timed cues without consuming cues that are still on screen. Expired cues are
+    /// compacted out even when they overlap a longer active cue, releasing their ring slots.
+    /// Ordinary `search(where:)` keeps its consuming behavior for its existing callers.
+    public func search(inspecting inspect: ((Item) -> Void)? = nil,
+                       removing expired: (Item) -> Bool, where predicate: (Item) -> Bool) -> [Item] {
         condition.lock()
         defer { condition.unlock() }
+        // Observe the complete locked snapshot before discarding anything. A timed display
+        // update can replace an indefinite predecessor even when that update already ended
+        // before the first poll; dropping it first would lose the replacement boundary.
+        if let inspect {
+            for index in headIndex ..< tailIndex {
+                if let item = _buffer[Int(index & mask)] { inspect(item) }
+            }
+        }
+        var result = [Item]()
+        var writeIndex = headIndex
+        let previousTail = tailIndex
+        for readIndex in headIndex ..< previousTail {
+            let readSlot = Int(readIndex & mask)
+            guard let item = _buffer[readSlot] else { continue }
+            if expired(item) {
+                _buffer[readSlot] = nil
+                continue
+            }
+            if predicate(item) { result.append(item) }
+            if writeIndex != readIndex {
+                _buffer[Int(writeIndex & mask)] = item
+                _buffer[readSlot] = nil
+            }
+            writeIndex &+= 1
+        }
+        tailIndex = writeIndex
+        if writeIndex != previousTail { condition.broadcast() }
+        return result
+    }
+
+    public func flush(advanceGeneration: Bool = false, updating update: (() -> Void)? = nil) {
+        condition.lock()
+        defer { condition.unlock() }
+        if advanceGeneration { _generation &+= 1 }
+        update?()
         headIndex = 0
         tailIndex = 0
         _buffer.removeAll(keepingCapacity: !destroyed)
