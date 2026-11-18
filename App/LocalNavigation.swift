@@ -79,7 +79,7 @@ struct LocalAppNavigation: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(LocalHTMLHomeStore.key) private var htmlHomeData = Data()
     let page: (AppSection) -> AnyView
-    private let entries: [AppSection] = [.home, .history, .music, .settings]
+    private let entries: [AppSection] = [.home, .favorites, .history, .music, .settings]
     private var current: AppSection {
         switch store.section {
         case .discover, .live: .home
@@ -350,12 +350,13 @@ struct LocalAppNavigation: View {
             .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(entry.title)
             .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityIdentifier("local.dock." + (entry == .home ? "home" : entry == .history ? "history" : entry == .music ? "music" : "settings"))
+            .accessibilityIdentifier("local.dock." + (entry == .home ? "home" : entry == .favorites ? "favorites" : entry == .history ? "history" : entry == .music ? "music" : "settings"))
     }
 
     private func dockColor(_ entry: AppSection) -> Color {
         switch entry {
         case .home: Color(light: Color(red: 0.04, green: 0.42, blue: 0.82), dark: Brand.cyan)
+        case .favorites: Color(light: Color(red: 0.84, green: 0.20, blue: 0.28), dark: Color(red: 1.0, green: 0.45, blue: 0.50))
         case .history: Color(light: Color(red: 0.68, green: 0.36, blue: 0.02), dark: Brand.amber)
         case .music: Color(light: Color(red: 0.78, green: 0.18, blue: 0.34), dark: Brand.rose)
         case .settings: Color(light: Color(red: 0.36, green: 0.29, blue: 0.80), dark: Brand.indigo)
