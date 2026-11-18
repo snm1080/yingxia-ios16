@@ -208,6 +208,19 @@ private extension KSMEPlayer {
             (track as? FFmpegAssetTrack)?.audioDescriptor?.updateAudioFormat()
         }
         audioOutput.flush()
+        // A route change (e.g. wired headphones plugged in mid-playback) stops
+        // the AVAudioEngine behind the default AudioEnginePlayer: iOS reconfigures
+        // the hardware and the engine stops rendering, while the video path keeps
+        // going — picture with no sound. updateAudioFormat() above only re-prepares
+        // the format (prepare() restarts the engine only when it was still running)
+        // and flush() only clears queued renders, so nothing brings the engine back.
+        // Restart the output the same way play()/enterForeground() already do:
+        // AudioEnginePlayer.play() starts the engine only when it is not running,
+        // so this is a no-op for route changes that did not stop it.
+        if playbackState == .playing {
+            KSOptions.activateAudioSession()
+            audioOutput.play()
+        }
     }
     #endif
 }
