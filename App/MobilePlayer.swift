@@ -960,7 +960,7 @@ struct MobilePlayerView: View {
                             Image(systemName: PlayerEpisodesSheet.symbol)
                             Text(L10n.text("Episodes"))
                         }
-                        .font(.system(size: 16, weight: .medium)).padding(.horizontal, 8).playerControlTarget()
+                        .font(.system(size: 18, weight: .medium)).padding(.horizontal, 8).playerControlTarget()
                     }
                     .buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == .episodes))
                     .accessibilityLabel("选集").accessibilityIdentifier("player.episodes")
@@ -1093,8 +1093,8 @@ struct MobilePlayerView: View {
             ForEach(availablePanels) { panel in
                 Button { togglePanel(panel) } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: panel.symbol).font(.system(size: 18))
-                        if playerSize.width >= 760 { Text(panel.title).font(.system(size: 14)) }
+                        Image(systemName: panel.symbol).font(.system(size: 24))
+                        if playerSize.width >= 760 { Text(panel.title).font(.system(size: 15)) }
                     }
                     .padding(.horizontal, playerSize.width >= 760 ? 7 : 0).playerControlTarget()
                 }.buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == panel)).accessibilityLabel(panel.title)
