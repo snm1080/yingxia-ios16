@@ -80,9 +80,6 @@ struct MobilePlayerView: View {
     @State private var taps = PictureTaps()
     @State private var skipped: (forward: Bool, total: Double)?
     @State private var skippedTask: Task<Void, Never>?
-    /// Controls a tap just brought up let a second tap through to the picture, which may be a double tap.
-    @State private var settling = false
-    @State private var settleTask: Task<Void, Never>?
     /// Sliding sideways across the picture: where the slide began.
     @State private var swipeStart: Double?
     /// Sliding up or down: the brightness in the left third, episodes in the middle, the volume in the right third.
@@ -124,7 +121,7 @@ struct MobilePlayerView: View {
                     playbackInformationOverlay
                     playbackOSDOverlay
                     controls.opacity(chromeVisible && !locked ? 1 : 0)
-                        .allowsHitTesting(chromeVisible && !locked && !settling)
+                        .allowsHitTesting(chromeVisible && !locked)
                     playbackNotices
                     localPopup
                         .opacity(chromeVisible && !locked ? 1 : 0)
@@ -449,7 +446,7 @@ struct MobilePlayerView: View {
 
     private func tapped(_ x: CGFloat, _ width: CGFloat) {
         #if DEBUG
-        Diagnostics.shared.record(.debug, "player.chrome", "event=picture-tap x=\(x) width=\(width) visible=\(chromeVisible) settling=\(settling) locked=\(locked)")
+        Diagnostics.shared.record(.debug, "player.chrome", "event=picture-tap x=\(x) width=\(width) visible=\(chromeVisible) locked=\(locked)")
         #endif
         // Locked, a tap shows (or hides) the lock button and nothing else: no controls, no skip, no pause.
         if locked {
@@ -461,7 +458,7 @@ struct MobilePlayerView: View {
         case .toggleControls:
             let showing = !chromeVisible
             toggleChrome()
-            if showing { settle(); clearLabels() }
+            if showing { clearLabels() }
         case .togglePlayback:
             toggleChrome()
             session.togglePlayback()
@@ -476,16 +473,6 @@ struct MobilePlayerView: View {
                 try? await Task.sleep(for: .seconds(PictureTaps.streak + 0.1))
                 if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { skipped = nil } }
             }
-        }
-    }
-
-    /// For as long as a second tap would make a double tap, it reaches the picture rather than the controls it showed.
-    private func settle() {
-        settling = true
-        settleTask?.cancel()
-        settleTask = Task {
-            try? await Task.sleep(for: .seconds(PictureTaps.interval))
-            if !Task.isCancelled { settling = false }
         }
     }
 
@@ -506,7 +493,7 @@ struct MobilePlayerView: View {
 
     private func swiped(_ phase: PictureGestures.Swipe) {
         #if DEBUG
-        Diagnostics.shared.record(.debug, "player.picture-gesture", "phase=\(String(describing: phase)) visible=\(chromeVisible) settling=\(settling)")
+        Diagnostics.shared.record(.debug, "player.picture-gesture", "phase=\(String(describing: phase)) visible=\(chromeVisible)")
         #endif
         if locked, case .began = phase { return }
         switch phase {
@@ -701,7 +688,7 @@ struct MobilePlayerView: View {
         .offset(y: playerSize.width > playerSize.height ? -36 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .opacity(visible ? 1 : 0)
-        .allowsHitTesting(visible && !settling)
+        .allowsHitTesting(visible)
         .animation(.easeOut(duration: 0.2), value: visible)
     }
 
@@ -1038,7 +1025,7 @@ struct MobilePlayerView: View {
                     panelButtons
                     if let toggleFullScreen {
                         Button(action: toggleFullScreen) {
-                            Image(systemName: layout == .pageFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").playerControlTarget()
+                            Image(systemName: layout == .pageFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").playerControlTarget(48)
                         }.buttonStyle(PlayerToolbarButtonStyle())
                             .accessibilityLabel(layout == .pageFullScreen ? "退出全屏" : "全屏")
                             .accessibilityIdentifier("player.fullScreen")
@@ -1106,20 +1093,20 @@ struct MobilePlayerView: View {
         HStack(spacing: 3) {
             let previous = store.step(back: true, from: channel, session: session)
             let next = store.step(back: false, from: channel, session: session)
-            Button { previous?.go(); poke() } label: { Image(systemName: "backward.end.fill").playerControlTarget() }
+            Button { previous?.go(); poke() } label: { Image(systemName: "backward.end.fill").playerControlTarget(48) }
                 .disabled(previous == nil || previous?.busy == true).accessibilityLabel("上一集")
                 .accessibilityIdentifier("player.previous")
-            Button { session.togglePlayback(); poke() } label: { Image(systemName: session.paused ? "play.fill" : "pause.fill").playerControlTarget() }
+            Button { session.togglePlayback(); poke() } label: { Image(systemName: session.paused ? "play.fill" : "pause.fill").playerControlTarget(48) }
                 .accessibilityLabel(session.paused ? "播放" : "暂停")
                 .accessibilityIdentifier("player.playPause")
-            Button { next?.go(); poke() } label: { Image(systemName: "forward.end.fill").playerControlTarget() }
+            Button { next?.go(); poke() } label: { Image(systemName: "forward.end.fill").playerControlTarget(48) }
                 .disabled(next == nil || next?.busy == true).accessibilityLabel("下一集")
                 .accessibilityIdentifier("player.next")
-            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 17, weight: .semibold)).playerControlTarget() }
+            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 17, weight: .semibold)).playerControlTarget(48) }
                 .accessibilityLabel("倍速")
                 .accessibilityIdentifier("player.panel.speed").disabled(session.isLive)
             Button { togglePanel(.volume) } label: {
-                Image(systemName: session.engine.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").playerControlTarget()
+                Image(systemName: session.engine.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").playerControlTarget(48)
             }.accessibilityLabel("音量").accessibilityIdentifier("player.panel.volume")
         }.buttonStyle(PlayerToolbarButtonStyle())
     }
@@ -1132,7 +1119,7 @@ struct MobilePlayerView: View {
                         Image(systemName: panel.symbol).font(.system(size: 24))
                         if playerSize.width >= 760 { Text(panel.title).font(.system(size: 15)) }
                     }
-                    .padding(.horizontal, playerSize.width >= 760 ? 7 : 0).playerControlTarget()
+                    .padding(.horizontal, playerSize.width >= 760 ? 7 : 0).playerControlTarget(48)
                 }.buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == panel)).accessibilityLabel(panel.title)
                     .accessibilityIdentifier("player.panel." + panel.rawValue)
             }
