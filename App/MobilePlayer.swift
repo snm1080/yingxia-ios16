@@ -82,11 +82,19 @@ struct MobilePlayerView: View {
     @State private var settleTask: Task<Void, Never>?
     /// Sliding sideways across the picture: where the slide began.
     @State private var swipeStart: Double?
-    /// Sliding up or down: the brightness on the left, the volume on the right, from where the slide began.
+    /// Sliding up or down: the brightness in the left third, episodes in the middle, the volume in the right third.
     @AppStorage(PictureLevel.key) private var slidesLevels = true
     @State private var level: (volume: Bool, start: Double, value: Double)?
     @State private var leveling = false
     @State private var levelTask: Task<Void, Never>?
+    /// Sliding up or down in the middle third steps episodes: whether this slide
+    /// is an episode slide, and whether it has already fired (one step per slide).
+    @State private var episodeSliding = false
+    @State private var episodeSlideFired = false
+    /// "Already the first/last episode", shown briefly when an episode slide
+    /// runs off the end of the list.
+    @State private var episodeEdge: String?
+    @State private var episodeEdgeTask: Task<Void, Never>?
     /// The system's volume slider, on screen only around a slide, which keeps the system's own volume overlay away.
     @State private var systemVolume = MusicVolumeSlider.SystemSlider()
     @State private var mountsVolume = false
@@ -202,6 +210,7 @@ struct MobilePlayerView: View {
                 skippedLabel
                 swipeLabel
                 levelLabel
+                episodeEdgeLabel
                 if let playingOn {
                     PlayOnPlaceholder(receiver: playingOn) {
                         self.playingOn = nil
@@ -454,6 +463,7 @@ struct MobilePlayerView: View {
     /// The controls a tap brings up replace the labels a skip or a slide leaves for a moment.
     private func clearLabels() {
         skippedTask?.cancel(); skipped = nil
+        episodeEdgeTask?.cancel(); episodeEdge = nil
         guard !leveling else { return }
         levelTask?.cancel(); level = nil; mountsVolume = false
     }
@@ -472,6 +482,11 @@ struct MobilePlayerView: View {
             swipeStart = start
             clock.scrub(to: start)
             hideChrome()
+        case .began(.episode):
+            // Nothing happens yet: the slide must first travel far enough
+            // (see .moved), so a short middle slide stays a no-op.
+            episodeSliding = true
+            episodeSlideFired = false
         case .began(let slide):
             let volume = slide == .volume
             guard volume || screen != nil else { return }
@@ -489,6 +504,12 @@ struct MobilePlayerView: View {
                 level.value = PictureLevel.value(from: level.start, moved: moved.height, height: size.height)
                 self.level = level
                 if level.volume { systemVolume.set(level.value) } else { screen?.brightness = CGFloat(level.value) }
+            } else if episodeSliding, !episodeSlideFired,
+                      abs(moved.height) >= 60, abs(moved.height) >= abs(moved.width) * 1.5 {
+                // One step per slide, past 60pt of vertical travel: up is the
+                // next episode, down is the previous one.
+                episodeSlideFired = true
+                stepEpisode(back: moved.height > 0)
             }
         case .ended:
             if swipeStart != nil {
@@ -503,6 +524,26 @@ struct MobilePlayerView: View {
                     guard !Task.isCancelled else { return }
                     level = nil; mountsVolume = false
                 }
+            }
+            episodeSliding = false
+            episodeSlideFired = false
+        }
+    }
+
+    /// An episode slide (or the boundary note at either end), through the same
+    /// step the Previous/Next buttons take — no second implementation.
+    private func stepEpisode(back: Bool) {
+        if let action = store.step(back: back, from: channel, session: session) {
+            if !action.busy { action.go() }
+        } else if store.step(back: !back, from: channel, session: session) != nil {
+            // The other direction exists, so this end of the list is real. A
+            // title with no episodes at all stays silent either way.
+            episodeEdge = back ? "已是第一集" : "已是最后一集"
+            episodeEdgeTask?.cancel()
+            episodeEdgeTask = Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                guard !Task.isCancelled else { return }
+                episodeEdge = nil
             }
         }
     }
@@ -531,6 +572,21 @@ struct MobilePlayerView: View {
             .accessibilityLabel(L10n.text(level.volume ? "Volume" : "Brightness"))
             .accessibilityValue(Text(level.value, format: .percent.precision(.fractionLength(0))))
             .accessibilityIdentifier("player.level")
+        }
+    }
+
+    /// "Already the first/last episode", in the middle, in the level label's form.
+    @ViewBuilder private var episodeEdgeLabel: some View {
+        if let episodeEdge {
+            Text(episodeEdge)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .glassSurface(.regular, in: Capsule())
+                .environment(\.colorScheme, .dark)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .accessibilityIdentifier("player.episodeEdge")
         }
     }
 
@@ -1850,8 +1906,9 @@ private struct PlayerCircleStyle: ButtonStyle {
 /// SwiftUI's long press ends where a drag would begin, and a tap beside it can fire as the held finger lifts.
 private struct PictureGestures: UIViewRepresentable {
     enum Hold { case began, moved(CGSize), ended }
-    /// Sideways seeks; up or down sets the brightness on the left half and the volume on the right.
-    enum Slide { case seek, brightness, volume }
+    /// Sideways seeks; up or down sets the brightness in the left third, steps
+    /// episodes in the middle third and sets the volume in the right third.
+    enum Slide { case seek, brightness, volume, episode }
     enum Swipe { case began(Slide), moved(CGSize, in: CGSize), ended }
     /// Where the tap landed across the picture, and the picture's width.
     let tap: (CGFloat, CGFloat) -> Void
@@ -1927,7 +1984,11 @@ private struct PictureGestures: UIViewRepresentable {
             if abs(velocity.x) > abs(velocity.y) { slide = .seek; return true }
             let location = pan.location(in: view)
             guard parent?.levels == true, PictureLevel.slides(fromY: location.y, height: view.bounds.height) else { return false }
-            slide = location.x < view.bounds.width / 2 ? .brightness : .volume
+            // Thirds: brightness | episodes | volume. (This used to split the
+            // width in half between brightness and volume; the middle third is
+            // the episode zone Sam asked for.)
+            let third = view.bounds.width / 3
+            slide = location.x < third ? .brightness : location.x > third * 2 ? .volume : .episode
             return true
         }
     }
