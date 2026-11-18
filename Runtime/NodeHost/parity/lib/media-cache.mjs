@@ -144,6 +144,11 @@ export class MediaCache {
     // One slot deadlocks that handover on moov-at-end MP4 and resume/seek.
     this.requestBudget = new RequestBudget({ perResource: 2 });
     this.owners = new Map(); this.routes = new Map(); this.cleanups = new Set(); this.forwardWaiters = new Set();
+    // Process-lifetime totals for released video owners. The per-session counters
+    // die with their owner on release(), which made the settings page read 0
+    // whenever no session was live; the released totals keep the page honest
+    // ("cached so far this run") without changing any cache behavior.
+    this.lifetime = { bytes: 0, written: 0, hits: 0, networkBytes: 0 };
     this.tail = Promise.resolve(); this.closed = false;
     this.ready = this.initialize();
     this.ready.catch(() => {});
@@ -717,6 +722,10 @@ export class MediaCache {
   release(id) {
     const owner = this.owners.get(id);
     if (!owner) return Promise.resolve();
+    if (!owner.music && !owner.speculative) {
+      this.lifetime.bytes += owner.bytes; this.lifetime.written += owner.written;
+      this.lifetime.hits += owner.hits; this.lifetime.networkBytes += owner.networkBytes;
+    }
     owner.closed = true; owner.controller.abort(); this.owners.delete(id);
     for (const resource of owner.resources.values()) this.routes.delete(resource.token);
     this.wakeForward();
@@ -731,9 +740,10 @@ export class MediaCache {
   }
   videoStatistics() {
     const owners = [...this.owners.values()].filter(owner => !owner.music && !owner.speculative);
-    return { bytes: owners.reduce((sum, owner) => sum + owner.bytes, 0), maxBytes: this.videoMaxBytes,
-      sessions: owners.length, hits: owners.reduce((sum, owner) => sum + owner.hits, 0),
-      written: owners.reduce((sum, owner) => sum + owner.written, 0), networkBytes: owners.reduce((sum, owner) => sum + owner.networkBytes, 0) };
+    return { bytes: owners.reduce((sum, owner) => sum + owner.bytes, 0) + this.lifetime.bytes, maxBytes: this.videoMaxBytes,
+      sessions: owners.length, hits: owners.reduce((sum, owner) => sum + owner.hits, 0) + this.lifetime.hits,
+      written: owners.reduce((sum, owner) => sum + owner.written, 0) + this.lifetime.written,
+      networkBytes: owners.reduce((sum, owner) => sum + owner.networkBytes, 0) + this.lifetime.networkBytes };
   }
   async clearVideos() {
     const owners = [...this.owners.values()].filter(owner => !owner.music && !owner.speculative);
