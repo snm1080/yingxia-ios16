@@ -164,7 +164,7 @@ struct CompactDanmakuStylePanel: View {
                     Text("正值延后显示，负值提前显示。").font(.system(size: 16)).foregroundStyle(.secondary)
                 } else {
                     PlaybackStyleRange(title: "显示区域", value: $areaPercent, range: 10...100, step: 5, unit: "%")
-                    PlaybackStyleRange(title: "行间距", value: $spacing, range: -16...32, unit: " px")
+                    PlaybackStyleRange(title: "行间距", value: $spacing, range: -28...32, unit: " px")
                     PlaybackStyleRange(title: "最大滚动行数", value: Binding(get: { Double(rows) }, set: { rows = Int($0) }), range: 0...30, unit: " 行")
                     Text("弹幕限制在画面上方所选区域；行数 0 为自动，实际行数同时受区域和字号限制。").font(.system(size: 16)).foregroundStyle(.secondary)
                 }
