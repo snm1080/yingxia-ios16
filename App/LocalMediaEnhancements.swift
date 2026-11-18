@@ -164,6 +164,7 @@ import TVCore
             }
         }
         let service = NativeDanmakuCatalog(context: context)
+        if await matchRememberedShow(service: service, context: context, generation: active) { return }
         for source in await service.sources() {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             do {
@@ -319,6 +320,53 @@ import TVCore
             "title": result.title, "sourceID": result.source.id, "builtin": result.source.isBuiltin ? "1" : "0"]) {
             UserDefaults.standard.set(data, forKey: key)
         }
+        // The per-episode record above cannot help the next episode. Remember the
+        // choice per show as well - which source and which anime served it - so
+        // automatic matching tries that pairing first, the way WebHTV's
+        // danmaku_source_for_<name> memory prefers a remembered source.
+        let showKey = "danmaku.show." + (channel.historyContext?.id ?? channel.id)
+        if let data = try? JSONEncoder().encode(["sourceID": result.source.id,
+            "animeTitle": result.title, "animeID": result.animeID ?? ""]) {
+            UserDefaults.standard.set(data, forKey: showKey)
+        }
+    }
+    private struct ShowDanmakuMemory { let sourceID: String, animeTitle: String, animeID: String }
+    private func showMemory(for context: PlaybackHistoryContext?) -> ShowDanmakuMemory? {
+        guard let context else { return nil }
+        guard let data = UserDefaults.standard.data(forKey: "danmaku.show." + context.id),
+              let record = try? JSONDecoder().decode([String: String].self, from: data),
+              let sourceID = record["sourceID"], !sourceID.isEmpty,
+              let title = record["animeTitle"], !title.isEmpty else { return nil }
+        return ShowDanmakuMemory(sourceID: sourceID, animeTitle: title, animeID: record["animeID"] ?? "")
+    }
+    /// The remembered pairing for this show, tried before the full source sweep:
+    /// search only the remembered source, take the remembered anime, and match
+    /// this episode by number. Any miss falls through to the normal matching.
+    private func matchRememberedShow(service: NativeDanmakuCatalog, context: PlaybackHistoryContext, generation active: UUID) async -> Bool {
+        guard let memory = showMemory(for: context) else { return false }
+        guard let source = await service.sources().first(where: { $0.id == memory.sourceID }),
+              NativeDanmakuCatalog.isEnabled(source) else { return false }
+        func current() -> Bool { active == generation && !Task.isCancelled && catalog.enabled && !catalog.selection.hasExplicitChoice }
+        do {
+            let results = try await service.search(context.videoName, source: source)
+            guard current() else { return false }
+            let remembered = results.first { result in
+                (!memory.animeID.isEmpty && result.animeID == memory.animeID) ||
+                CatalogDanmakuMatcher.normalized(result.title) == CatalogDanmakuMatcher.normalized(memory.animeTitle)
+            }
+            guard let result = remembered, let number = CatalogDanmakuMatcher.episodeNumber(context.episodeName) else { return false }
+            let episodes = try await service.episodes(result)
+            guard current() else { return false }
+            let matched = episodes.filter { CatalogDanmakuMatcher.episodeNumber($0.title) == number }
+            guard matched.count == 1, let episode = matched.first else { return false }
+            let parameters = try await service.prepareParameters(episode, result: result)
+            guard current() else { return false }
+            catalog.sourceSelected()
+            let count = try await prepare(parameters, manual: false, source: source)
+            guard current() else { return false }
+            if count > 0 { setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success); return true }
+        } catch { /* A stale memory must never block the normal matching below. */ }
+        return false
     }
 
     func importFile(_ url: URL) async throws {
