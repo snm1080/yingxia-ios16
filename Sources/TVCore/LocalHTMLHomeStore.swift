@@ -43,7 +43,10 @@ public struct LocalHTMLHomeStore: Codable, Equatable, Sendable {
     }
     public mutating func select(_ id: String) {
         if id == "builtin" { activeID = id }
-        else if sources.contains(where: { $0.id == id }) { activeID = id; lastHTMLID = id }
+        else if sources.contains(where: { $0.id == id }) {
+            activeID = id; lastHTMLID = id
+            UserDefaults.standard.set("html", forKey: LocalHomeDestination.lastKindKey)
+        }
     }
     /// Startup and explicit source selection have different meanings. Home
     /// always means built-in; only Last HTML restores the previous HTML source.

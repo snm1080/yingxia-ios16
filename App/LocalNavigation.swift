@@ -279,6 +279,7 @@ struct LocalAppNavigation: View {
         let section: AppSection = store.localSourceGroup(for: site) == .python ? .python : .sites
         pickedSites[section] = site
         if let config = store.subscription { selection(for: site, origin: config.origin).save() }
+        UserDefaults.standard.set(section == .python ? "python" : "sites", forKey: LocalHomeDestination.lastKindKey)
         store.section = section
         visited.insert(section)
         sourcePanel = nil
@@ -294,6 +295,33 @@ struct LocalAppNavigation: View {
         store.section = .home
         visited.insert(.home)
         sourcePanel = nil
+    }
+
+    /// Home goes straight to the site used last, instead of popping the source
+    /// panel. Only when no last site resolves (first run, or the site is gone
+    /// from the subscription) does it fall back to the panel. Switching sites
+    /// still goes through the panel, via the site name at the top of a site page.
+    private func openLastSite() {
+        let defaults = UserDefaults.standard
+        let kind = defaults.string(forKey: LocalHomeDestination.lastKindKey)
+        if kind == "html", LocalHTMLHomeStore.load().active != nil {
+            selectHome()
+            return
+        }
+        if let config = store.subscription {
+            let sites = store.orderedSites(config).filter { !$0.isBuiltIn }
+            let available = sites.map { selection(for: $0, origin: config.origin) }
+            // The remembered kind first, then the other kind, so a deleted last
+            // site still lands on the other kind's last site instead of the panel.
+            for preference in kind == "python" ? ["lastPython", "lastSite"] : ["lastSite", "lastPython"] {
+                if let desired = LocalHomeSourceSelection.destination(preference, available: available, defaults: defaults),
+                   let site = sites.first(where: { selection(for: $0, origin: config.origin) == desired }) {
+                    select(site)
+                    return
+                }
+            }
+        }
+        openHomeSources()
     }
 
     private func openHomeSources() {
@@ -352,7 +380,7 @@ struct LocalAppNavigation: View {
         let color = dockColor(entry)
         return Button {
             restoredDestination = true
-            if entry == .home { openHomeSources() }
+            if entry == .home { openLastSite() }
             else { selectSection(entry) }
         } label: {
             Image(systemName: entry == .home ? "house.fill" : entry == .settings ? "gearshape.fill" : entry.icon)
