@@ -1532,7 +1532,7 @@ struct SiteView: View {
     /// Moves one stop along [Recommendations?, categories…] without wrapping,
     /// making exactly the selection a chip tap makes (same load, same state).
     private func stepCategory(_ delta: Int) {
-        enum Stop { case home; case category(Category) }
+        enum Stop { case home; case category(TVCore.Category) }
         var stops: [Stop] = site.isCatPawOpen ? [] : [.home]
         stops += browser.categories.map(Stop.category)
         let current: Int?
