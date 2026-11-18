@@ -121,54 +121,9 @@ struct DiscoverCalendarView: View {
             ScrollView {
                 WithPerceptionTracking {
                     VStack(alignment: .leading, spacing: 12) {
-                        ScrollView(.horizontal) {
-                            WithPerceptionTracking {
-                                HStack(spacing: 8) {
-                                    ForEach(TMDBCalendar.Kind.allCases, id: \.self) { value in
-                                        WithPerceptionTracking {
-                                            calendarChip(value.title, selected: kind == value) { kind = value }
-                                                .accessibilityIdentifier("calendar.kind.\(value.rawValue)")
-                                        }
-                                    }
-                                    if kind == .tv {
-                                        Divider().frame(height: 18).padding(.horizontal, 4)
-                                        ForEach(TMDBCalendar.Region.allCases, id: \.self) { value in
-                                            WithPerceptionTracking {
-                                                calendarChip(value.title, selected: region == value) { region = value }
-                                                    .accessibilityIdentifier("calendar.region.\(value.rawValue)")
-                                            }
-                                        }
-                                    }
-                                }.padding(.horizontal, DiscoverLayout.gutter)
-                            }
-                        }.scrollIndicators(.hidden)
-                        if let week {
-                            ScrollView(.horizontal) {
-                                WithPerceptionTracking {
-                                    HStack(spacing: 8) {
-                                        ForEach(week.days) { value in
-                                            WithPerceptionTracking {
-                                                calendarChip(DiscoverAiring.dayName(value.date, in: week), selected: value.date == date) { picked[key] = value.date }
-                                                    .accessibilityIdentifier("calendar.day.\(value.weekday)")
-                                            }
-                                        }
-                                    }.padding(.horizontal, DiscoverLayout.gutter)
-                                }
-                            }.scrollIndicators(.hidden)
-                        }
-                        if let day, !day.items.isEmpty {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: DiscoverLayout.posterWidth), spacing: DiscoverLayout.spacing)], alignment: .leading, spacing: 22) {
-                                WithPerceptionTracking {
-                                    ForEach(day.items) { item in
-                                        WithPerceptionTracking {
-                                            DiscoverAiringLink(item: item) { DiscoverAiringTile(item: item, next: item.id == next) }
-                                                .accessibilityIdentifier("calendar.item.\(item.id)")
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, DiscoverLayout.gutter).padding(.top, 8)
-                        }
+                        kindRegionStrip
+                        dayStrip
+                        itemsGrid
                         status.frame(maxWidth: .infinity)
                         if let week { DiscoverCalendarCredits(week: week).padding(.horizontal, DiscoverLayout.gutter) }
                     }
@@ -189,6 +144,65 @@ struct DiscoverCalendarView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar(glassDialog ? .hidden : .visible, for: .navigationBar)
         #endif
+    }
+
+    // The three strips below were extracted verbatim from `content` — as one
+    // expression the iOS branch exceeded the Swift 6.1 type-checker budget.
+    private var kindRegionStrip: some View {
+        ScrollView(.horizontal) {
+            WithPerceptionTracking {
+                HStack(spacing: 8) {
+                    ForEach(TMDBCalendar.Kind.allCases, id: \.self) { value in
+                        WithPerceptionTracking {
+                            calendarChip(value.title, selected: kind == value) { kind = value }
+                                .accessibilityIdentifier("calendar.kind.\(value.rawValue)")
+                        }
+                    }
+                    if kind == .tv {
+                        Divider().frame(height: 18).padding(.horizontal, 4)
+                        ForEach(TMDBCalendar.Region.allCases, id: \.self) { value in
+                            WithPerceptionTracking {
+                                calendarChip(value.title, selected: region == value) { region = value }
+                                    .accessibilityIdentifier("calendar.region.\(value.rawValue)")
+                            }
+                        }
+                    }
+                }.padding(.horizontal, DiscoverLayout.gutter)
+            }
+        }.scrollIndicators(.hidden)
+    }
+
+    @ViewBuilder private var dayStrip: some View {
+        if let week {
+            ScrollView(.horizontal) {
+                WithPerceptionTracking {
+                    HStack(spacing: 8) {
+                        ForEach(week.days) { value in
+                            WithPerceptionTracking {
+                                calendarChip(DiscoverAiring.dayName(value.date, in: week), selected: value.date == date) { picked[key] = value.date }
+                                    .accessibilityIdentifier("calendar.day.\(value.weekday)")
+                            }
+                        }
+                    }.padding(.horizontal, DiscoverLayout.gutter)
+                }
+            }.scrollIndicators(.hidden)
+        }
+    }
+
+    @ViewBuilder private var itemsGrid: some View {
+        if let day, !day.items.isEmpty {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: DiscoverLayout.posterWidth), spacing: DiscoverLayout.spacing)], alignment: .leading, spacing: 22) {
+                WithPerceptionTracking {
+                    ForEach(day.items) { item in
+                        WithPerceptionTracking {
+                            DiscoverAiringLink(item: item) { DiscoverAiringTile(item: item, next: item.id == next) }
+                                .accessibilityIdentifier("calendar.item.\(item.id)")
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, DiscoverLayout.gutter).padding(.top, 8)
+        }
     }
     #endif
 
