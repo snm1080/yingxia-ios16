@@ -562,10 +562,13 @@ final class DanmakuEngine: @unchecked Sendable {
         let stageScale = min(size.width / 1280, size.height / 720)
         let verticalScale = size.height / 720
         fontSize = 22 * textScale * stageScale
-        let spacing = max(0, min(32, preferences?.spacing ?? 7))
+        let spacing = max(-16, min(32, preferences?.spacing ?? 7))
         let decorated = comments.contains { $0.effect.map { $0.kind != "positioned" && $0.kind != "bas" } == true }
         let extraPitch = preferences?.fancyEnabled == true ? 0.7 : decorated ? 0.42 : 0
-        let stagePitch = 22 * textScale * (1 + extraPitch) + spacing
+        // Negative spacing tightens lanes below one line height; the pitch keeps a
+        // floor of 45% of the text size so small fonts still get sane lane geometry.
+        // At spacing >= 0 the pitch is exactly what it was before.
+        let stagePitch = max(22 * textScale * 0.45, 22 * textScale * (1 + extraPitch) + spacing)
         // Lua: floor((areaHeight - 8 + lineSpacing) / pitch).
         let usableHeight = max(1, size.height * areaShare(area) - (8 - spacing) * verticalScale)
         layout = DanmakuLayout(width: size.width, height: usableHeight, laneHeight: stagePitch * verticalScale, scrollArea: 1,
