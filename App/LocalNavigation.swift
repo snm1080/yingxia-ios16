@@ -325,12 +325,12 @@ struct LocalAppNavigation: View {
             HStack(spacing: metrics.buttonSpacing) {
                 ForEach(entries) { entry in WithPerceptionTracking { dockButton(entry, width: metrics.buttonWidth) } }
             }
-                .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 29)
+                .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
             HStack(spacing: metrics.buttonSpacing) {
                 searchButton(width: metrics.buttonWidth)
                 pushButton(width: metrics.buttonWidth)
             }
-            .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 29)
+            .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
         }
         .frame(maxWidth: .infinity).frame(height: LocalDockLayout.dockHeight)
     }
@@ -344,7 +344,7 @@ struct LocalAppNavigation: View {
             else { selectSection(entry) }
         } label: {
             Image(systemName: entry == .home ? "house.fill" : entry == .settings ? "gearshape.fill" : entry.icon)
-            .font(.system(size: 19, weight: .semibold))
+            .font(.system(size: 22, weight: .semibold))
             .frame(width: width, height: LocalDockLayout.controlHeight)
             .foregroundStyle(selected ? color : .primary)
             .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
@@ -370,7 +370,7 @@ struct LocalAppNavigation: View {
         return Button {
             selectSection(.search)
         } label: {
-            Image(systemName: "magnifyingglass").font(.system(size: 19, weight: .semibold))
+            Image(systemName: "magnifyingglass").font(.system(size: 22, weight: .semibold))
                 .frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
                 .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
@@ -386,7 +386,7 @@ struct LocalAppNavigation: View {
             selectSection(.push)
         } label: {
             Image(systemName: selected ? "paperplane.fill" : "paperplane")
-                .font(.system(size: 19, weight: .semibold)).frame(width: width, height: LocalDockLayout.controlHeight)
+                .font(.system(size: 22, weight: .semibold)).frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
                 .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
                 .contentShape(Rectangle())

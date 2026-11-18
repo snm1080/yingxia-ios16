@@ -1513,7 +1513,14 @@ struct SiteView: View {
 
     private var catalogColumns: [GridItem] {
         #if os(iOS)
-        landscapePosters ? [GridItem(.adaptive(minimum: 160), spacing: 12, alignment: .top)] : Layout.posterColumns
+        if landscapePosters {
+            [GridItem(.adaptive(minimum: 160), spacing: 12, alignment: .top)]
+        } else if UIDevice.current.userInterfaceIdiom == .pad {
+            // Sam: five poster columns on iPad; the adaptive minimum gave six.
+            Array(repeating: GridItem(.flexible(), spacing: Layout.gridSpacing, alignment: .top), count: 5)
+        } else {
+            Layout.posterColumns
+        }
         #else
         Layout.posterColumns
         #endif

@@ -80,7 +80,10 @@ import TVCore
             do {
                 guard let identity = try await self.identity(context) else {
                     guard active == self.generation, !Task.isCancelled else { return }
-                    self.setStatus("作品或季集不明确，可手动记录片头片尾")
+                    // Sam: this one message must not pop over the player. Keep it as
+                    // the skip panel's status text only, with no PlayerNotice.
+                    self.status = "作品或季集不明确，可手动记录片头片尾"
+                    if self.notice?.message == "正在匹配片头片尾" { self.notice = nil }
                     self.attempts = 2; return
                 }
                 guard active == self.generation, !Task.isCancelled else { return }

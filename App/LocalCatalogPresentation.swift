@@ -108,7 +108,7 @@ struct LocalSitePosterCard: View {
                         badgeRow(Array(badges.bottom.prefix(3)))
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                Text(video.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Text(video.name).font(.headline.weight(.semibold)).foregroundStyle(.primary)
                     .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
             }.contentShape(Rectangle())
         }
@@ -122,7 +122,7 @@ struct LocalSitePosterCard: View {
     private func badgeChips(_ values: [String]) -> some View {
         Group {
             ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                Text(value).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                Text(value).font(.system(size: 11, weight: .semibold)).lineLimit(1)
                     .foregroundStyle(.white.opacity(0.94))
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .background(Color(white: 0.07).opacity(0.72), in: RoundedRectangle(cornerRadius: 4))

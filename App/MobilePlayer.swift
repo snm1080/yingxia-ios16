@@ -757,11 +757,11 @@ struct MobilePlayerView: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(channel.historyContext?.videoName ?? channel.name)
-                        .font(.system(size: inline ? 13 : 16, weight: .semibold)).lineLimit(1)
+                        .font(.system(size: inline ? 13 : 18, weight: .semibold)).lineLimit(1)
                         .accessibilityIdentifier("player.title")
                     if let episode = channel.historyContext?.episodeName, !episode.isEmpty,
                        episode != channel.historyContext?.videoName {
-                        Text(episode).font(.system(size: inline ? 10 : 12, weight: .medium))
+                        Text(episode).font(.system(size: inline ? 10 : 14, weight: .medium))
                             .foregroundStyle(.white.opacity(0.8)).lineLimit(1)
                             .accessibilityIdentifier("player.episodeTitle")
                     }
@@ -879,7 +879,7 @@ struct MobilePlayerView: View {
                             Image(systemName: PlayerEpisodesSheet.symbol)
                             Text(L10n.text("Episodes"))
                         }
-                        .font(.system(size: 14, weight: .medium)).padding(.horizontal, 8).playerControlTarget()
+                        .font(.system(size: 16, weight: .medium)).padding(.horizontal, 8).playerControlTarget()
                     }
                     .buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == .episodes))
                     .accessibilityLabel("选集").accessibilityIdentifier("player.episodes")
@@ -929,7 +929,7 @@ struct MobilePlayerView: View {
                 }.frame(minWidth: viewport.size.width, alignment: .leading)
             }.accessibilityIdentifier("player.controls.bottom")
         }
-        .frame(height: 44)
+        .frame(height: 48)
         .padding(.top, 2)
     }
 
@@ -998,7 +998,7 @@ struct MobilePlayerView: View {
             Button { next?.go(); poke() } label: { Image(systemName: "forward.end.fill").playerControlTarget() }
                 .disabled(next == nil || next?.busy == true).accessibilityLabel("下一集")
                 .accessibilityIdentifier("player.next")
-            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.subheadline.weight(.semibold)).playerControlTarget() }
+            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 17, weight: .semibold)).playerControlTarget() }
                 .accessibilityLabel("倍速")
                 .accessibilityIdentifier("player.panel.speed").disabled(session.isLive)
             Button { togglePanel(.volume) } label: {
@@ -1012,8 +1012,8 @@ struct MobilePlayerView: View {
             ForEach(availablePanels) { panel in
                 Button { togglePanel(panel) } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: panel.symbol).font(.system(size: 16))
-                        if playerSize.width >= 760 { Text(panel.title).font(.system(size: 12)) }
+                        Image(systemName: panel.symbol).font(.system(size: 18))
+                        if playerSize.width >= 760 { Text(panel.title).font(.system(size: 14)) }
                     }
                     .padding(.horizontal, playerSize.width >= 760 ? 7 : 0).playerControlTarget()
                 }.buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == panel)).accessibilityLabel(panel.title)

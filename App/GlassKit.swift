@@ -686,10 +686,10 @@ private struct FilterChipStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         WithPerceptionTracking {
             configuration.label
-                .font(.subheadline.weight(.semibold))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(selected ? Brand.onAccent : .primary)
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .frame(minHeight: 44)
+                .frame(minHeight: 48)
                 .glassSurface(selected ? .regular.tint(Brand.accent).interactive() : .regular.interactive(), in: Capsule())
                 .contentShape(Capsule())
                 .opacity(configuration.isPressed ? 0.8 : 1)
@@ -1147,14 +1147,14 @@ struct PosterCard: View {
                     .coverOverlay(alignment: .bottomLeading) {
                         WithPerceptionTracking {
                             if !remarks.isEmpty {
-                                Text(remarks).font(.caption2.weight(.semibold)).lineLimit(1)
+                                Text(remarks).font(.caption.weight(.semibold)).lineLimit(1)
                                     .foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 3)
                                     .glassSurface(.regular.tint(.black.opacity(0.45)), in: Capsule()).padding(8)
                             }
                         }
                     }
                 // One line, cut with an ellipsis: a title that wrapped made its card taller than the rest of the row.
-                Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Text(name).font(.headline.weight(.semibold)).foregroundStyle(.primary)
                     .lineLimit(1).truncationMode(.tail).cardCaption()
             }
         }

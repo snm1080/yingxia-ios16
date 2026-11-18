@@ -8,8 +8,8 @@ public enum LocalDockLayout {
     public static let bottomPadding: CGFloat = 6
     public static let musicHeight: CGFloat = 56
     public static let musicSpacing: CGFloat = 8
-    public static let controlHeight: CGFloat = 46
-    public static let groupPadding: CGFloat = 4
+    public static let controlHeight: CGFloat = 52
+    public static let groupPadding: CGFloat = 5
     public static var dockHeight: CGFloat { controlHeight + 2 * groupPadding }
 
     public struct Metrics: Equatable, Sendable {
@@ -23,7 +23,7 @@ public enum LocalDockLayout {
         let buttonSpacing: CGFloat = compact ? 2 : 4
         let groupSpacing: CGFloat = compact ? 8 : 12
         let width = (availableWidth - 16 - buttonSpacing * 4 - groupSpacing) / 6
-        return Metrics(buttonWidth: max(44, min(50, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
+        return Metrics(buttonWidth: max(48, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
     }
 
     public static func inset(showsMusic: Bool) -> CGFloat {
