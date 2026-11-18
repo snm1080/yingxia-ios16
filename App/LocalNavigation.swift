@@ -73,13 +73,15 @@ struct LocalAppNavigation: View {
     @State private var activeScrollObservers: Set<UUID> = []
     @State private var htmlDockHidden = false
     @State private var restoredDestination = false
+    @State private var dockConfiguration = LocalDockConfiguration.load()
     @State private var preparedHomeSource = false
     @State private var homeRevision = 0
     @State private var homeResetID: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(LocalHTMLHomeStore.key) private var htmlHomeData = Data()
     let page: (AppSection) -> AnyView
-    private let entries: [AppSection] = [.home, .favorites, .history, .music, .settings]
+    /// The dock's buttons as arranged in Settings > Dock 按钮 (order + hidden).
+    private var dockButtons: [LocalDockButton] { dockConfiguration.visible }
     private var current: AppSection {
         switch store.section {
         case .discover, .live: .home
@@ -137,7 +139,7 @@ struct LocalAppNavigation: View {
                                 .padding(.horizontal, LocalDockLayout.horizontalPadding)
                                 .padding(.top, LocalDockLayout.topPadding).padding(.bottom, LocalDockLayout.bottomPadding)
                                 .localDockHitRegions(frames: LocalDockLayout.touchFrames(containerWidth: viewport.size.width,
-                                    showsMusic: store.music.showsStrip(videoPlaying: store.playing != nil), buttonCount: entries.count + 2))
+                                    showsMusic: store.music.showsStrip(videoPlaying: store.playing != nil), buttonCount: dockButtons.count))
                                 .disabled(sourcePanelBlocksInput)
                                 .allowsHitTesting(!sourcePanelBlocksInput)
                                 // Fade only: sliding the dock in moved the painted bar
@@ -161,6 +163,9 @@ struct LocalAppNavigation: View {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 visited.insert(current)
                 revealDock()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: LocalDockConfiguration.changed)) { _ in
+                dockConfiguration = LocalDockConfiguration.load()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             // Keep the dock out of the keyboard's shrinking safe area until dismissal finishes.
@@ -324,14 +329,22 @@ struct LocalAppNavigation: View {
     private func dock(availableWidth: CGFloat) -> some View {
         // Sam: one capsule for every button (was two), so the whole bar is a
         // single hit region and nothing falls through the gap between groups.
-        let metrics = LocalDockLayout.metrics(availableWidth: availableWidth, buttonCount: entries.count + 2)
+        // The buttons shown, and their order, come from Settings > Dock 按钮.
+        let buttons = dockButtons
+        let metrics = LocalDockLayout.metrics(availableWidth: availableWidth, buttonCount: buttons.count)
         return HStack(spacing: metrics.buttonSpacing) {
-            ForEach(entries) { entry in WithPerceptionTracking { dockButton(entry, width: metrics.buttonWidth) } }
-            searchButton(width: metrics.buttonWidth)
-            pushButton(width: metrics.buttonWidth)
+            ForEach(buttons) { button in WithPerceptionTracking { dockButtonView(button, width: metrics.buttonWidth) } }
         }
         .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: 31)
         .frame(maxWidth: .infinity, alignment: .center).frame(height: LocalDockLayout.dockHeight)
+    }
+
+    @ViewBuilder private func dockButtonView(_ button: LocalDockButton, width: CGFloat) -> some View {
+        switch button {
+        case .search: searchButton(width: width)
+        case .push: pushButton(width: width)
+        default: dockButton(button.section, width: width)
+        }
     }
 
     private func dockButton(_ entry: AppSection, width: CGFloat) -> some View {

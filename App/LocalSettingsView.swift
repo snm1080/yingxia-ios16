@@ -13,6 +13,7 @@ struct LocalSettingsView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 12) {
                 LocalSettingsCard(symbol: "house.fill", title: "首页") { LocalHomeSettingsView() }
+                LocalSettingsCard(symbol: "dock.rectangle", title: "Dock 按钮") { LocalDockButtonsSettingsView() }
                 LocalSettingsCard(symbol: "list.bullet.rectangle", title: "订阅") { LocalSourceSettingsView(kind: .subscription) }
                 LocalSettingsCard(symbol: "chevron.left.forwardslash.chevron.right", title: "python") { LocalSourceSettingsView(kind: .python) }
                 LocalSettingsCard(symbol: "heart.fill", title: "收藏") { FavoritesView() }
