@@ -68,6 +68,9 @@ struct MobilePlayerView: View {
     @State private var holding = false
     @AppStorage(SpeedBoost.key) private var holdSpeed = SpeedBoost.standard
     @AppStorage(PlaybackInfo.key) private var showsPlaybackInfo = false
+    /// The heads-up line over the picture — progress, picture size, frame rate, the clock and the download
+    /// rate — as WebHTV shows it; on by default, its switch sits in the player settings.
+    @AppStorage("local.playback.osd") private var showsOSD = true
     /// The full-screen top row's height, which the info panel keeps clear of while the controls show.
     @State private var topRowHeight: CGFloat = 44
     @State private var bottomControlsHeight: CGFloat = 0
@@ -119,6 +122,7 @@ struct MobilePlayerView: View {
                     playbackPicture
                     playbackInteractionOverlay
                     playbackInformationOverlay
+                    playbackOSDOverlay
                     controls.opacity(chromeVisible && !locked ? 1 : 0)
                         .allowsHitTesting(chromeVisible && !locked && !settling)
                     playbackNotices
@@ -229,6 +233,23 @@ struct MobilePlayerView: View {
                     PlaybackInfoPanel(session: session)
                         .padding(inline ? 8 : 16)
                         .padding(.top, chromeVisible && !inline ? topRowHeight + 12 : 0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .opacity(chromeVisible && inline ? 0 : 1)
+                        .animation(.appSmooth(duration: 0.25), value: chromeVisible)
+                        .allowsHitTesting(false)
+                }
+        }
+    }
+
+    /// The heads-up line stays with the bare picture (it is a display, not a control), but keeps clear of
+    /// the top row while the controls show and of the technical information panel when both are on; on a
+    /// watch page it yields its corner to the controls exactly as that panel does.
+    private var playbackOSDOverlay: some View {
+        WithPerceptionTracking {
+                if showsOSD && session.error == nil && session.showsPicture && !pip.active && playingOn == nil {
+                    PlayerOSD(session: session)
+                        .padding(inline ? 8 : 16)
+                        .padding(.top, (chromeVisible && !inline ? topRowHeight + 12 : 0) + (showsPlaybackInfo ? 68 : 0))
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .opacity(chromeVisible && inline ? 0 : 1)
                         .animation(.appSmooth(duration: 0.25), value: chromeVisible)
@@ -2426,6 +2447,82 @@ private enum LocalPlayerPanel: String, Identifiable {
             center.playbackState = .stopped
         }
     }
+}
+
+/// The heads-up line itself: one quiet line over the picture, rebuilt once a second. Every value is state
+/// the session and its engine already keep — the position and duration off the engine's clock, the picture
+/// size it samples, the frame rate its PlaybackInfo carries (the source's rate, the display rate behind it),
+/// and the download rate the session's transfer ticker already samples from the engine's byte count for the
+/// top row. Nothing here reaches into the player core.
+private struct PlayerOSD: View {
+    let session: PlaybackSession
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            WithPerceptionTracking {
+                if let line = line(at: context.date) {
+                    Text(line)
+                        .font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        // A plain tint, not a material, like the info panel: it sits over moving video.
+                        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1) }
+                        .environment(\.colorScheme, .dark)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("player.osd")
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// "12:34 / 45:06 · 1920×1080 · 25 fps · 21:47:05 · 1.3 MB/s" — a part with no value yet drops out.
+    private func line(at date: Date) -> String? {
+        let engine = session.engine
+        var parts: [String] = []
+        if engine.duration > 0 && !session.isLive {
+            parts.append(Self.time(engine.position) + " / " + Self.time(engine.duration))
+        } else if engine.position > 0 {
+            parts.append(Self.time(engine.position))
+        }
+        let size = engine.presentationSize
+        if size.width > 0, size.height > 0 {
+            parts.append("\(Int(size.width.rounded()))×\(Int(size.height.rounded()))")
+        }
+        let rate = engine.playbackInfo.frameRate ?? (engine.frameRate > 0 ? engine.frameRate : nil)
+        if let rate, rate.isFinite, rate > 0 { parts.append(Self.rate(rate) + " fps") }
+        parts.append(Self.clock.string(from: date))
+        if let speed = session.transfer.bytesPerSecond, speed.isFinite, speed >= 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: Int64(speed.rounded()), countStyle: .file) + "/s")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// The same wording as the seek bar's clock: "12:34", or "1:02:03" past an hour.
+    private static func time(_ seconds: Double) -> String {
+        let total = Int(seconds.isFinite ? max(0, seconds) : 0)
+        let hours = total / 3600, minutes = total / 60 % 60, rest = total % 60
+        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, rest) : String(format: "%d:%02d", minutes, rest)
+    }
+
+    /// At most two decimals, trailing zeros dropped: 25, 23.98, 29.97.
+    private static func rate(_ value: Double) -> String {
+        var text = String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
+        if text.contains(".") {
+            while text.hasSuffix("0") { text.removeLast() }
+            if text.hasSuffix(".") { text.removeLast() }
+        }
+        return text
+    }
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
 
 

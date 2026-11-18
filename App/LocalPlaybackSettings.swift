@@ -65,9 +65,11 @@ struct LocalAdSettingsView: View {
 #if os(iOS)
 struct LocalPlayerSettingsView: View {
     @AppStorage(PlaybackInfo.key) private var showsPlaybackInfo = false
+    @AppStorage("local.playback.osd") private var showsOSD = true
     var body: some View {
         SettingsPage(title: "播放器", symbol: "play.rectangle") {
             SettingsGroup(title: "播放信息") {
+                Toggle("播放屏显", isOn: $showsOSD)
                 Toggle("显示视频技术信息", isOn: $showsPlaybackInfo)
             }
         }
