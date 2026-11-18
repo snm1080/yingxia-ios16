@@ -44,7 +44,9 @@ jobs:
             echo "No Xcode 16.x found; keeping the runner default"
           fi
           xcodebuild -version
+          sudo xcodebuild -runFirstLaunch || true
           xcodebuild -downloadPlatform iOS || true
+          xcodebuild -checkFirstLaunchStatus || true
           xcrun --sdk iphoneos --show-sdk-path
           df -h /
 
