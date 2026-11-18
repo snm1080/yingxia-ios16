@@ -37,6 +37,7 @@ public extension KSParseProtocol {
 }
 
 public class AssParse: KSParseProtocol {
+    public init() {}
     private var styleMap = [String: ASSStyle]()
     private var eventKeys = ["Layer", "Start", "End", "Style", "Name", "MarginL", "MarginR", "MarginV", "Effect", "Text"]
     private var playResX = Float(0.0)
@@ -397,6 +398,7 @@ public extension [String: String] {
 }
 
 public class VTTParse: KSParseProtocol {
+    public init() {}
     public func canParse(scanner: Scanner) -> Bool {
         let result = scanner.scanString("WEBVTT")
         if result != nil {
@@ -444,6 +446,7 @@ public class VTTParse: KSParseProtocol {
 }
 
 public class SrtParse: KSParseProtocol {
+    public init() {}
     public func canParse(scanner: Scanner) -> Bool {
         let result = scanner.string.contains(" --> ")
         if result {
