@@ -515,6 +515,10 @@ struct MobilePlayerView: View {
                     .frame(width: 26)
                 Capsule().fill(.white.opacity(0.3)).frame(width: 150, height: 6)
                     .overlay(alignment: .leading) { WithPerceptionTracking { Capsule().fill(.white).frame(width: 150 * level.value, height: 6) } }
+                // Sam: show the number, not just the bar. Display only — the value
+                // is the one the slide gesture already computed and applied.
+                Text(level.value, format: .percent.precision(.fractionLength(0)))
+                    .monospacedDigit().frame(minWidth: 46, alignment: .leading)
             }
             .font(.headline)
             .foregroundStyle(.white)
