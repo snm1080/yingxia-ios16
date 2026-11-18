@@ -20,12 +20,15 @@ public enum LocalDockLayout {
 
     public static func metrics(availableWidth: CGFloat, buttonCount: Int) -> Metrics {
         let compact = availableWidth < 336
-        let buttonSpacing: CGFloat = compact ? 2 : 4
+        let buttonSpacing: CGFloat = compact ? 6 : 12
         let groupSpacing: CGFloat = compact ? 8 : 12
         // One capsule holds every button now; its width follows the visible count.
+        // The width floor sits below the 44pt touch ideal so a full row of buttons
+        // with the wider gaps still fits a narrow phone instead of spilling the
+        // capsule past the padded width (and its touch frame off the screen edge).
         let count = max(1, buttonCount)
         let width = (availableWidth - 2 * groupPadding - buttonSpacing * CGFloat(count - 1)) / CGFloat(count)
-        return Metrics(buttonWidth: max(44, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
+        return Metrics(buttonWidth: max(36, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
     }
 
     public static func inset(showsMusic: Bool) -> CGFloat {
