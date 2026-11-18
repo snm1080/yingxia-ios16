@@ -6,6 +6,13 @@ import TVCore
 enum LocalHomeSourceKind: String, CaseIterable, Identifiable {
     case sites, python, html
     var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .sites: "站点"
+        case .python: "python"
+        case .html: "html"
+        }
+    }
 }
 
 /// All homepage destinations live in the same compact dock selector.
@@ -42,13 +49,7 @@ struct LocalHomeSourcePanel: View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
                 if !keyboardVisible {
-                    Picker("来源类别", selection: $kind) {
-                        Text("站点").tag(LocalHomeSourceKind.sites)
-                        Text("python").tag(LocalHomeSourceKind.python)
-                        Text("html").tag(LocalHomeSourceKind.html)
-                    }
-                    .pickerStyle(.segmented).padding(.horizontal, 14).padding(.vertical, 8)
-                    .accessibilityIdentifier("home.source.kind")
+                    kindPicker
                     header
                 }
                 if kind == .html {
@@ -65,6 +66,10 @@ struct LocalHomeSourcePanel: View {
                 }
             }
             .localGlassBackdrop()
+            // The whole panel reads one Dynamic Type step larger; the tab row and the
+            // subscription row use the same subheadline as the site names, so they
+            // stay exactly as large as the names below them at any size.
+            .dynamicTypeSize(.xLarge)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in keyboardVisible = false }
             .toolbar(.hidden, for: .navigationBar)
@@ -82,6 +87,35 @@ struct LocalHomeSourcePanel: View {
                 }
             }
         }
+    }
+
+    /// A segmented row drawn by hand: the system segmented control keeps its own
+    /// small fixed font, while these labels take the site names' subheadline.
+    private var kindPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(LocalHomeSourceKind.allCases) { option in
+                Button { kind = option } label: {
+                    Text(option.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .background {
+                            if kind == option {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.13))
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(kind == option ? .isSelected : [])
+                .accessibilityIdentifier("home.source.kind." + option.rawValue)
+            }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("来源类别")
+        .accessibilityIdentifier("home.source.kind")
     }
 
     private var header: some View {

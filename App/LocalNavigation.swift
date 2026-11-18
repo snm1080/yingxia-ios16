@@ -174,7 +174,7 @@ struct LocalAppNavigation: View {
                 metadataRevision = TMDBServiceSettings.identity
             }
             .localGlassDialog(isPresented: Binding(get: { sourcePanel != nil }, set: { if !$0 { sourcePanel = nil } }), title: "",
-                              maxWidth: 440, maxHeight: 520, layout: .centered,
+                              maxWidth: 440, maxHeight: 700, layout: .centered,
                               onDismiss: { sourcePanelBlocksInput = false }) {
                 RouteStack {
                     WithPerceptionTracking {
