@@ -842,7 +842,7 @@ struct MobilePlayerView: View {
                         .accessibilityIdentifier("player.title")
                     if let episode = channel.historyContext?.episodeName, !episode.isEmpty,
                        episode != channel.historyContext?.videoName {
-                        Text(episode).font(.system(size: inline ? 10 : 14, weight: .medium))
+                        Text(episode).font(.system(size: inline ? 10 : 16, weight: .medium))
                             .foregroundStyle(.white.opacity(0.8)).lineLimit(1)
                             .accessibilityIdentifier("player.episodeTitle")
                     }
