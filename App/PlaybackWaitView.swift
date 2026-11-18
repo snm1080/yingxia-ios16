@@ -28,9 +28,12 @@ struct PlaybackWait: Equatable {
     let starting: Bool
     var showsWords = true
     var appearAfter: TimeInterval = 0
+    /// The outgoing episode's picture size while a switch is loading, so the
+    /// placeholder keeps its shape; zero when nothing has played yet.
+    var expectedSize: CGSize = .zero
     let state: @MainActor (TimeInterval) -> PlaybackWait
     var view: some View {
-        PlaybackWaitView(artwork: artwork, starting: starting, showsWords: showsWords, appearAfter: appearAfter, state: state).id(starting)
+        PlaybackWaitView(artwork: artwork, starting: starting, showsWords: showsWords, appearAfter: appearAfter, expectedSize: expectedSize, state: state).id(starting)
     }
 }
 
@@ -42,6 +45,7 @@ struct PlaybackWaitView: View {
     let starting: Bool
     var showsWords = true
     var appearAfter: TimeInterval = 0
+    var expectedSize: CGSize = .zero
     let state: @MainActor (TimeInterval) -> PlaybackWait
     @State private var started = Date()
     @State private var poster: CGImage?
@@ -52,7 +56,7 @@ struct PlaybackWaitView: View {
         WithPerceptionTracking {
             GeometryReader { proxy in
                 WithPerceptionTracking {
-                    let picture = Self.picture(in: proxy.size)
+                    let picture = Self.picture(in: proxy.size, source: expectedSize)
                     let layout = Self.layout(size: proxy.size, picture: picture)
                     ZStack {
                         if starting {
@@ -78,8 +82,15 @@ struct PlaybackWaitView: View {
         }
     }
 
-    /// Where the video will appear: 16:9, fitted and centred, as the players lay it out.
-    static func picture(in size: CGSize) -> CGRect {
+    /// Where the video will appear, fitted and centred. While a switch is loading
+    /// the incoming size is still unknown, so the placeholder keeps the outgoing
+    /// episode's shape; 16:9 is only the shape of a first-ever load.
+    static func picture(in size: CGSize, source: CGSize) -> CGRect {
+        if source.width > 0, source.height > 0 {
+            let scale = min(size.width / source.width, size.height / source.height)
+            let fitted = CGSize(width: source.width * scale, height: source.height * scale)
+            return CGRect(x: (size.width - fitted.width) / 2, y: (size.height - fitted.height) / 2, width: fitted.width, height: fitted.height)
+        }
         let width = min(size.width, size.height * 16 / 9), height = width * 9 / 16
         return CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height)
     }

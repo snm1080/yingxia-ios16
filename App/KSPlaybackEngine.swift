@@ -111,6 +111,10 @@ struct KSPlaybackChapter: Identifiable, Equatable {
     private(set) var duration = 0.0
     private(set) var bufferedPosition = 0.0
     private(set) var presentationSize = CGSize.zero
+    /// The most recent non-zero picture size. A switch zeroes presentationSize
+    /// until the new input reports its own; the waiting layer keeps laying its
+    /// placeholder out in this shape instead of falling back to 16:9.
+    private(set) var lastPresentationSize = CGSize.zero
     private(set) var mediaID: String?
     private(set) var isReady = false
     private(set) var paused = true
@@ -353,7 +357,9 @@ struct KSPlaybackChapter: Identifiable, Equatable {
         isReady = false; paused = true; buffering = false; wantsPlaying = false; hasPicture = false
         hasPresentedPicture = false
         externalSubtitleDocuments = [:]; externalSubtitleOrder = []
-        tracks = []; chapters = []; clearSubtitleOutput(); presentationSize = .zero
+        tracks = []; chapters = []; clearSubtitleOutput()
+        if presentationSize.width > 0, presentationSize.height > 0 { lastPresentationSize = presentationSize }
+        presentationSize = .zero
         bytesRead = 0; bitrate = 0; frameRate = 0; audioOff = false
         videoSelection = nil; audioSelection = nil; subtitleSelection = nil; secondarySubtitleSelection = "no"; subtitlePolicy = SubtitleTrackSelection(); pendingTrackSelections = []; defaultTracks = [:]; suppliedChapters = []; playbackInfo = PlaybackInfo(); currentDecoder = "准备中"
         renderingRevision = UUID()
@@ -547,6 +553,7 @@ struct KSPlaybackChapter: Identifiable, Equatable {
         duration = Self.finite(player.duration)
         bufferedPosition = max(position, Self.finite(player.playableTime))
         presentationSize = player.naturalSize
+        if presentationSize.width > 0, presentationSize.height > 0 { lastPresentationSize = presentationSize }
         hasPicture = player.videoOutput?.pixelBuffer != nil || (player.isReadyToPlay && player.tracks(mediaType: .video).isEmpty)
         if hasPicture { hasPresentedPicture = true }
         isReady = player.isReadyToPlay

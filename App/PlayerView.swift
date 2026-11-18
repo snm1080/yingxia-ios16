@@ -465,7 +465,12 @@ extension PlaybackWaitContent {
         let artwork = PlaybackArtwork(poster: catalog?.video.poster ?? channel.historyContext?.poster,
                                       headers: catalog?.video.posterHeaders ?? channel.historyContext?.posterHeaders ?? [:])
         let resume = channel.resumePosition, hint = linesHint && catalog != nil
-        return PlaybackWaitContent(artwork: artwork, starting: starting, showsWords: session.error == nil, appearAfter: starting ? 0.6 : 1.5) { [session] elapsed in
+        #if os(iOS)
+        let expectedSize = session.engine.lastPresentationSize
+        #else
+        let expectedSize = CGSize.zero
+        #endif
+        return PlaybackWaitContent(artwork: artwork, starting: starting, showsWords: session.error == nil, appearAfter: starting ? 0.6 : 1.5, expectedSize: expectedSize) { [session] elapsed in
             session.wait(elapsed: elapsed, resume: resume, linesHint: hint)
         }
     }

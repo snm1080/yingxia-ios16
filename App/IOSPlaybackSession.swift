@@ -58,7 +58,6 @@ import TVCore
     var upcomingEpisode: (@MainActor () async -> Channel?)?
     var playsOn: @MainActor () -> Bool = { false }
     var onAdvance: (@MainActor (Channel) -> Void)?
-    static let upcomingLead = 30.0
     private(set) var boost: Float?
     private(set) var boostWanted: Float?
     var preferredSpeed: Float { selectedSpeed }
@@ -214,6 +213,9 @@ import TVCore
     func start(_ channel: Channel) {
         Self.current = self
         if sourceChannel == channel, error == nil, engine.mediaID != nil { return }
+        // A manual switch to the episode that is already prepared must consume
+        // the preparation, not release it in stop() and resolve from cold.
+        if consumeUpcoming(for: channel) { return }
         stop()
         begin(channel); sourceChannel = channel
         let active = generation
@@ -778,8 +780,11 @@ import TVCore
         }
         if healthyPrefetchSince == nil { healthyPrefetchSince = Date() }
         if upcoming != nil { warmUpcomingIfSafe(); return }
+        // Arm as soon as playback is healthy, not in the last seconds of the
+        // episode: the next episode is resolved, prepared and head-warmed while
+        // this one plays, so a manual switch can reuse it like an automatic one.
         guard Date().timeIntervalSince(healthyPrefetchSince!) >= 3, !upcomingAttempted, !looping, !isLive,
-              duration > 0, duration - position < Self.upcomingLead * Double(max(1, engine.speed)), let upcomingEpisode else { return }
+              duration > 0, let upcomingEpisode else { return }
         upcomingAttempted = true; let active = generation
         upcomingTask = Task { [weak self] in
             guard let next = await upcomingEpisode(), let self, self.generation == active, !Task.isCancelled else { return }
@@ -811,6 +816,17 @@ import TVCore
         prefetchWarmID = UUID(); prefetchWarm?.cancel(); prefetchWarm = nil; prefetchComplete = false
         upcomingTask?.cancel(); upcomingTask = nil
         if let (channel, prepared) = upcoming { Self.release(channel, prepared) }; upcoming = nil
+    }
+    /// True when `channel` is the prepared upcoming episode (same video, episode
+    /// and line; the freshly resolved copy need not be the same object or URL)
+    /// and it has been taken over for playback.
+    private func consumeUpcoming(for channel: Channel) -> Bool {
+        guard let (next, _) = upcoming else { return false }
+        if next == channel { return playUpcoming() }
+        guard let wanted = channel.historyContext, let prepared = next.historyContext,
+              wanted.id == prepared.id, wanted.episodeID == prepared.episodeID,
+              wanted.episodeFlag == prepared.episodeFlag else { return false }
+        return playUpcoming()
     }
     func playUpcoming() -> Bool {
         guard let (channel, prepared) = upcoming, !advancing else { return false }
