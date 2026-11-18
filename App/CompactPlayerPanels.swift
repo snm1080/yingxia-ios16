@@ -318,12 +318,15 @@ extension View {
 struct CompactPlayerTabs: View {
     let names: [String]
     @Binding var selected: String
+    /// Panels whose section titles set the text size pass their shared style;
+    /// the danmaku panel's tabs match its section titles this way.
+    var labelFont: Font = .system(size: 16, weight: .medium)
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(names, id: \.self) { name in
                     Button { selected = name } label: {
-                        Text(name).font(.system(size: 16, weight: .medium)).padding(.horizontal, 12).frame(height: 44)
+                        Text(name).font(labelFont).padding(.horizontal, 12).frame(height: 44)
                             .contentShape(Rectangle())
                             .background(selected == name ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain).accessibilityAddTraits(selected == name ? [.isSelected] : [])

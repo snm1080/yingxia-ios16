@@ -204,6 +204,13 @@ private struct FancyDanmakuPreview: View {
     }
 }
 
+/// The danmaku panel's section titles （显示区域 / 行间距 / 最大滚动行数） and its
+/// tab row （来源 / 花式弹幕 / 外观 / 时间 / 密度） share this one style, so the two
+/// cannot drift apart in size again.
+enum DanmakuPanelTextStyle {
+    static let sectionTitle = Font.system(size: 19)
+}
+
 private struct PlaybackStyleRange: View {
     let title: String
     @Binding var value: Double
@@ -219,7 +226,7 @@ private struct PlaybackStyleRange: View {
                     .keyboardType(.numbersAndPunctuation).multilineTextAlignment(.trailing)
                     .textFieldStyle(LocalGlassTextFieldStyle()).frame(width: 88)
             }
-        }.font(.system(size: 19))
+        }.font(DanmakuPanelTextStyle.sectionTitle)
     }
 }
 

@@ -1366,7 +1366,7 @@ struct MobilePlayerView: View {
     private var danmakuPanel: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 12) {
-                CompactPlayerTabs(names: ["来源", "花式弹幕", "外观", "时间", "密度"], selected: $danmakuTab)
+                CompactPlayerTabs(names: ["来源", "花式弹幕", "外观", "时间", "密度"], selected: $danmakuTab, labelFont: DanmakuPanelTextStyle.sectionTitle)
                 if danmakuTab == "来源" { danmakuSourcePanel }
                 else { CompactDanmakuStylePanel(section: danmakuTab, model: session.catalogDanmaku) }
             }
