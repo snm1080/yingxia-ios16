@@ -521,7 +521,7 @@ extension MEPlayerItem {
         let useCacheIO = options.companionAudioCacheIOURL != nil
         let inputURL = options.companionAudioCacheIOURL ?? companionAudioURL
         var ctx = avformat_alloc_context()
-        guard let ctx else {
+        guard ctx != nil else {
             return
         }
         var interruptCB = AVIOInterruptCB()
@@ -541,7 +541,7 @@ extension MEPlayerItem {
                 return 0
             }
         }
-        ctx.pointee.interrupt_callback = interruptCB
+        ctx?.pointee.interrupt_callback = interruptCB
         var formatOptions = options.formatContextOptions
         if useCacheIO {
             formatOptions["headers"] = nil
@@ -557,13 +557,16 @@ extension MEPlayerItem {
             avformat_close_input(&ctx)
             return
         }
-        result = avformat_find_stream_info(ctx, nil)
+        guard let openedCtx = ctx else {
+            return
+        }
+        result = avformat_find_stream_info(openedCtx, nil)
         guard result == 0 else {
             avformat_close_input(&ctx)
             return
         }
-        let bestIndex = av_find_best_stream(ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nil, 0)
-        guard bestIndex >= 0, let stream = ctx.pointee.streams[Int(bestIndex)],
+        let bestIndex = av_find_best_stream(openedCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nil, 0)
+        guard bestIndex >= 0, let stream = openedCtx.pointee.streams[Int(bestIndex)],
               let track = FFmpegAssetTrack(stream: stream)
         else {
             avformat_close_input(&ctx)
