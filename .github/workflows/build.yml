@@ -71,6 +71,22 @@ jobs:
           python3 Scripts/build-ios-ipa.py --build-number "$BN"
           ls -lh artifacts/latest/
 
+      - name: Dump archive log errors on failure
+        if: failure()
+        run: |
+          LOG="build/ipa/archive.log"
+          if [ -f "$LOG" ]; then
+            echo "::group::error lines"
+            grep -n -E "error:|warning: .*deprecated|BUILD FAILED|The following build commands failed" "$LOG" | head -200 || true
+            echo "::endgroup::"
+            echo "::group::archive log tail"
+            tail -300 "$LOG" || true
+            echo "::endgroup::"
+          else
+            echo "archive log not found"
+            ls -R build/ipa 2>/dev/null || true
+          fi
+
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
