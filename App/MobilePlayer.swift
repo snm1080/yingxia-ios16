@@ -241,17 +241,15 @@ struct MobilePlayerView: View {
         }
     }
 
-    /// The heads-up line stays with the bare picture (it is a display, not a control), but keeps clear of
-    /// the top row while the controls show and of the technical information panel when both are on; on a
-    /// watch page it yields its corner to the controls exactly as that panel does.
+    /// The heads-up display belongs to the bare picture, as in WebHTV: it yields entirely while the
+    /// controls are up (their top row carries the clock and speed then), and its top-left corner
+    /// yields to the technical information panel when that is on.
     private var playbackOSDOverlay: some View {
         WithPerceptionTracking {
                 if showsOSD && session.error == nil && session.showsPicture && !pip.active && playingOn == nil {
-                    PlayerOSD(session: session)
-                        .padding(inline ? 8 : 16)
-                        .padding(.top, (chromeVisible && !inline ? topRowHeight + 12 : 0) + (showsPlaybackInfo ? 68 : 0))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .opacity(chromeVisible && inline ? 0 : 1)
+                    PlayerOSD(session: session, hidesTopLeft: showsPlaybackInfo, fontSize: inline ? 16 : 23)
+                        .padding(inline ? 10 : 14)
+                        .opacity(chromeVisible ? 0 : 1)
                         .animation(.appSmooth(duration: 0.25), value: chromeVisible)
                         .allowsHitTesting(false)
                 }
@@ -2473,55 +2471,75 @@ private enum LocalPlayerPanel: String, Identifiable {
     }
 }
 
-/// The heads-up line itself: one quiet line over the picture, rebuilt once a second. Every value is state
-/// the session and its engine already keep — the position and duration off the engine's clock, the picture
-/// size it samples, the frame rate its PlaybackInfo carries (the source's rate, the display rate behind it),
-/// and the download rate the session's transfer ticker already samples from the engine's byte count for the
-/// top row. Nothing here reaches into the player core.
+/// The heads-up display itself: the five values split across the four corners, WebHTV-style, rebuilt
+/// once a second — resolution · frame rate top-left, the clock top-right, progress bottom-left, the
+/// download rate bottom-right. Plain shadowed text with no backing plate, like WebHTV's. Every value
+/// is state the session and its engine already keep — the position and duration off the engine's
+/// clock, the picture size it samples, the frame rate its PlaybackInfo carries (the source's rate,
+/// the display rate behind it), and the download rate the session's transfer ticker already samples
+/// from the engine's byte count for the top row. Nothing here reaches into the player core.
 private struct PlayerOSD: View {
     let session: PlaybackSession
+    /// The technical information panel takes the top-left corner while it is on (WebHTV yields it too).
+    var hidesTopLeft = false
+    var fontSize: CGFloat = 23
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             WithPerceptionTracking {
-                if let line = line(at: context.date) {
-                    Text(line)
-                        .font(.system(size: 11.5, weight: .medium)).monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(1)
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        // A plain tint, not a material, like the info panel: it sits over moving video.
-                        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay { RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1) }
-                        .environment(\.colorScheme, .dark)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityIdentifier("player.osd")
+                ZStack {
+                    if !hidesTopLeft, let text = resolutionAndRate {
+                        corner(text, alignment: .topLeading)
+                    }
+                    corner(Self.clock.string(from: context.date), alignment: .topTrailing)
+                    if let text = progress {
+                        corner(text, alignment: .bottomLeading)
+                    }
+                    if let text = speed {
+                        corner(text, alignment: .bottomTrailing)
+                    }
                 }
+                .environment(\.colorScheme, .dark)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("player.osd")
             }
         }
         .allowsHitTesting(false)
     }
 
-    /// "12:34 / 45:06 · 1920×1080 · 25 fps · 21:47:05 · 1.3 MB/s" — a part with no value yet drops out.
-    private func line(at date: Date) -> String? {
+    private func corner(_ text: String, alignment: Alignment) -> some View {
+        Text(text)
+            .font(.system(size: fontSize, weight: .medium)).monospacedDigit()
+            .foregroundStyle(.white.opacity(0.95))
+            .shadow(color: .black.opacity(0.8), radius: 2, x: 1.5, y: 1.5)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+    }
+
+    /// "1920×1080 · 25 fps" — either half drops out until the engine reports it.
+    private var resolutionAndRate: String? {
         let engine = session.engine
         var parts: [String] = []
-        if engine.duration > 0 && !session.isLive {
-            parts.append(Self.time(engine.position) + " / " + Self.time(engine.duration))
-        } else if engine.position > 0 {
-            parts.append(Self.time(engine.position))
-        }
         let size = engine.presentationSize
         if size.width > 0, size.height > 0 {
             parts.append("\(Int(size.width.rounded()))×\(Int(size.height.rounded()))")
         }
         let rate = engine.playbackInfo.frameRate ?? (engine.frameRate > 0 ? engine.frameRate : nil)
         if let rate, rate.isFinite, rate > 0 { parts.append(Self.rate(rate) + " fps") }
-        parts.append(Self.clock.string(from: date))
-        if let speed = session.transfer.bytesPerSecond, speed.isFinite, speed >= 0 {
-            parts.append(ByteCountFormatter.string(fromByteCount: Int64(speed.rounded()), countStyle: .file) + "/s")
-        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "12:34 / 45:06" — WebHTV shows no corner at all for live or durationless playback.
+    private var progress: String? {
+        let engine = session.engine
+        guard engine.duration > 0, !session.isLive else { return nil }
+        return Self.time(engine.position) + " / " + Self.time(engine.duration)
+    }
+
+    /// "1.3 MB/s".
+    private var speed: String? {
+        guard let value = session.transfer.bytesPerSecond, value.isFinite, value >= 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(value.rounded()), countStyle: .file) + "/s"
     }
 
     /// The same wording as the seek bar's clock: "12:34", or "1:02:03" past an hour.
