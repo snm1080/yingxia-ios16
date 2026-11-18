@@ -40,7 +40,7 @@ struct CompactPlayerQueuePanel: View {
         VStack(spacing: 0) {
             Toggle("播完自动播放下一集", isOn: Binding(get: { store.autoPlayNext }, set: { store.autoPlayNext = $0 })).padding(.vertical, 8)
             Toggle("预缓存下一集", isOn: $prefetch).padding(.vertical, 8)
-        }.font(.system(size: 14)).toggleStyle(.switch).controlSize(.mini)
+        }.font(.system(size: 16)).toggleStyle(.switch).controlSize(.mini)
             .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
             .padding(.horizontal, 16).padding(.bottom, 10)
     }
@@ -105,7 +105,7 @@ struct CompactPlayerQueuePanel: View {
                             .foregroundStyle(.secondary).padding()
                     }
                     playbackSettings
-                }.font(.system(size: 14))
+                }.font(.system(size: 16))
             }
         }.scrollDismissesKeyboard(.interactively)
     }
@@ -183,8 +183,8 @@ struct CompactPlayerQueuePanel: View {
 
     private var resolvingStatus: some View {
         WithPerceptionTracking {
-            if let pending = store.resolvingEpisode { ProgressView("正在打开 " + pending.name).font(.system(size: 14)) }
-            if let error = store.episodeError { Text(error).foregroundStyle(.orange).font(.system(size: 14)) }
+            if let pending = store.resolvingEpisode { ProgressView("正在打开 " + pending.name).font(.system(size: 16)) }
+            if let error = store.episodeError { Text(error).foregroundStyle(.orange).font(.system(size: 16)) }
         }
     }
 
@@ -238,7 +238,7 @@ struct CompactPlayerQueuePanel: View {
         }.clipShape(RoundedRectangle(cornerRadius: 7))
     }
     private func badge(_ title: String) -> some View {
-        Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(.white).lineLimit(1)
+        Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(.white).lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 3).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 4))
     }
     private func lookup() async {

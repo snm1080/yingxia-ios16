@@ -213,7 +213,7 @@ struct CompactPlayerInformationPanel: View {
                 field("Headers", headers)
                 if let video = info.video { summary("视频", video, copyable: false) }
                 if let audio = info.audio { summary("音频", audio, copyable: false) }
-            }.font(.system(size: 14))
+            }.font(.system(size: 16))
         }
     }
     private func summary(_ label: String, _ value: String, copyable: Bool = true) -> some View {
@@ -226,7 +226,7 @@ struct CompactPlayerInformationPanel: View {
     private func field(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack { Text(label).fontWeight(.semibold); Spacer(); copyButton(label, value) }
-            Text(value.isEmpty ? "正在读取播放地址…" : value).font(.system(size: 13, design: .monospaced))
+            Text(value.isEmpty ? "正在读取播放地址…" : value).font(.system(size: 15, design: .monospaced))
                 .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
         }

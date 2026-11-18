@@ -47,8 +47,8 @@ struct LocalDanmakuCatalogPanel: View {
                 sourceControls
                 searchControls
                 if busy { ProgressView() }
-                if !status.isEmpty { Text(status).font(.system(size: 14)).foregroundStyle(.secondary) }
-                if let importError { Text(importError).font(.system(size: 14)).foregroundStyle(.orange) }
+                if !status.isEmpty { Text(status).font(.system(size: 16)).foregroundStyle(.secondary) }
+                if let importError { Text(importError).font(.system(size: 16)).foregroundStyle(.orange) }
                 if importing { ProgressView("正在导入弹幕…") }
                 resultContent
                 importControls
@@ -59,7 +59,7 @@ struct LocalDanmakuCatalogPanel: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("启用来源").font(.system(size: 17, weight: .semibold))
+                    Text("启用来源").font(.system(size: 19, weight: .semibold))
                     Spacer()
                     Button { refreshSources() } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }
                         .buttonStyle(.plain).localGlassInputSurface()
@@ -87,9 +87,9 @@ struct LocalDanmakuCatalogPanel: View {
                     .accessibilityIdentifier("player.danmaku.source." + source.id)
                 }
                 if !sources.isEmpty && enabledSources.isEmpty {
-                    Text("选择至少一个来源以搜索弹幕。").font(.system(size: 14)).foregroundStyle(.secondary)
+                    Text("选择至少一个来源以搜索弹幕。").font(.system(size: 16)).foregroundStyle(.secondary)
                 }
-                if sources.isEmpty && !busy { Text("没有可用弹幕来源，可在弹幕设置中添加 API。").font(.system(size: 14)).foregroundStyle(.secondary) }
+                if sources.isEmpty && !busy { Text("没有可用弹幕来源，可在弹幕设置中添加 API。").font(.system(size: 16)).foregroundStyle(.secondary) }
             }
         }
     }
@@ -114,23 +114,23 @@ struct LocalDanmakuCatalogPanel: View {
     private func episodeContent(_ chosen: NativeDanmakuCatalogResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("返回搜索结果") { cancel(); self.chosen = nil; episodes = [] }
-            Text(chosen.title).font(.system(size: 19, weight: .semibold))
+            Text(chosen.title).font(.system(size: 21, weight: .semibold))
             TextField("筛选弹幕集数", text: $episodeQuery).textFieldStyle(LocalGlassTextFieldStyle())
             episodePages
             ForEach(visibleEpisodes) { episode in
                 Button(episode.title) { load(episode, result: chosen) }
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).disabled(busy)
             }
-            if filteredEpisodes.isEmpty { Text("没有匹配的集数").font(.system(size: 14)).foregroundStyle(.secondary) }
+            if filteredEpisodes.isEmpty { Text("没有匹配的集数").font(.system(size: 16)).foregroundStyle(.secondary) }
         }
     }
     private var episodePages: some View {
         HStack {
-            Text("\(filteredEpisodes.count) 集").font(.system(size: 14)).foregroundStyle(.secondary)
+            Text("\(filteredEpisodes.count) 集").font(.system(size: 16)).foregroundStyle(.secondary)
             Spacer()
             if pageCount > 1 {
                 Button("上一页") { page -= 1 }.disabled(page <= 0)
-                Text("\(min(page, pageCount - 1) + 1) / \(pageCount)").font(.system(size: 14)).monospacedDigit()
+                Text("\(min(page, pageCount - 1) + 1) / \(pageCount)").font(.system(size: 16)).monospacedDigit()
                 Button("下一页") { page += 1 }.disabled(page >= pageCount - 1)
             }
         }

@@ -1597,7 +1597,7 @@ struct PlaybackInfoPanel: View {
         #if os(tvOS)
         static let font: CGFloat = 21, spacing: CGFloat = 6, padding: CGFloat = 14, corner: CGFloat = 18, icon: CGFloat = 28
         #else
-        static let font: CGFloat = 14, spacing: CGFloat = 4, padding: CGFloat = 10, corner: CGFloat = 12, icon: CGFloat = 18
+        static let font: CGFloat = 16, spacing: CGFloat = 5, padding: CGFloat = 12, corner: CGFloat = 14, icon: CGFloat = 20
         #endif
     }
 }
