@@ -7,7 +7,9 @@ enum LocalSettingsReorderProvider {
     static func make(_ data: Data) -> NSItemProvider {
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: UTType.data.identifier, visibility: .ownProcess) { completion in
-            completion(data, nil)
+            // The iOS 18.5 SDK annotates this completion as @MainActor; the data is
+            // already in hand, so complete synchronously under that contract.
+            MainActor.assumeIsolated { completion(data, nil) }
             return nil
         }
         return provider

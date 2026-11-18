@@ -34,7 +34,7 @@ jobs:
         run: |
           ls -d /Applications/Xcode_*.app || true
           XC=""
-          for CAND in /Applications/Xcode_16.2.app /Applications/Xcode_16.1.app; do
+          for CAND in /Applications/Xcode_16.4.app /Applications/Xcode_16.2.app /Applications/Xcode_16.1.app; do
             if [ -d "$CAND" ]; then XC="$CAND"; break; fi
           done
           if [ -z "$XC" ]; then
