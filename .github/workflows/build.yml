@@ -33,8 +33,11 @@ jobs:
       - name: Select Xcode 16.x if available (maintainer env is Xcode 16.1 / SDK 18.1)
         run: |
           ls -d /Applications/Xcode_*.app || true
-          XC="/Applications/Xcode_16.1.app"
-          if [ ! -d "$XC" ]; then
+          XC=""
+          for CAND in /Applications/Xcode_16.2.app /Applications/Xcode_16.1.app; do
+            if [ -d "$CAND" ]; then XC="$CAND"; break; fi
+          done
+          if [ -z "$XC" ]; then
             XC="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
           fi
           if [ -n "$XC" ]; then
