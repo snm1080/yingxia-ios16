@@ -66,12 +66,26 @@ struct LocalAdSettingsView: View {
 struct LocalPlayerSettingsView: View {
     @AppStorage(PlaybackInfo.key) private var showsPlaybackInfo = false
     @AppStorage("local.playback.osd") private var showsOSD = true
+    @AppStorage("local.playback.osd.title") private var osdTitle = true
+    @AppStorage("local.playback.osd.resolution") private var osdResolution = true
+    @AppStorage("local.playback.osd.fps") private var osdFPS = true
+    @AppStorage("local.playback.osd.clock") private var osdClock = true
+    @AppStorage("local.playback.osd.progress") private var osdProgress = true
+    @AppStorage("local.playback.osd.speed") private var osdSpeed = true
     var body: some View {
         SettingsPage(title: "播放器", symbol: "play.rectangle") {
             SettingsGroup(title: "播放信息") {
                 Toggle("播放屏显", isOn: $showsOSD)
                 Toggle("显示视频技术信息", isOn: $showsPlaybackInfo)
             }
+            SettingsGroup(title: "屏显内容", footer: "每一项单独显隐；「播放屏显」关闭时整体隐藏。") {
+                Toggle("标题", isOn: $osdTitle)
+                Toggle("分辨率", isOn: $osdResolution)
+                Toggle("帧率", isOn: $osdFPS)
+                Toggle("时钟", isOn: $osdClock)
+                Toggle("进度", isOn: $osdProgress)
+                Toggle("网速", isOn: $osdSpeed)
+            }.disabled(!showsOSD)
         }
     }
 }

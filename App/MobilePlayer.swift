@@ -241,13 +241,27 @@ struct MobilePlayerView: View {
         }
     }
 
+    /// The heads-up display's title line, paired the way the top row pairs them:
+    /// the work's name, then the episode's name when it adds anything.
+    private var osdTitle: String? {
+        guard let context = channel.historyContext else {
+            return channel.name.isEmpty ? nil : channel.name
+        }
+        var parts = [context.videoName]
+        if !context.episodeName.isEmpty, context.episodeName != context.videoName {
+            parts.append(context.episodeName)
+        }
+        let joined = parts.filter { !$0.isEmpty }.joined(separator: " ")
+        return joined.isEmpty ? nil : joined
+    }
+
     /// The heads-up display belongs to the bare picture, as in WebHTV: it yields entirely while the
     /// controls are up (their top row carries the clock and speed then), and its top-left corner
     /// yields to the technical information panel when that is on.
     private var playbackOSDOverlay: some View {
         WithPerceptionTracking {
                 if showsOSD && session.error == nil && session.showsPicture && !pip.active && playingOn == nil {
-                    PlayerOSD(session: session, hidesTopLeft: showsPlaybackInfo, fontSize: inline ? 16 : 23)
+                    PlayerOSD(session: session, title: osdTitle, hidesTopLeft: showsPlaybackInfo, fontSize: inline ? 13 : 17)
                         .padding(inline ? 10 : 14)
                         .opacity(chromeVisible ? 0 : 1)
                         .animation(.appSmooth(duration: 0.25), value: chromeVisible)
@@ -2471,31 +2485,42 @@ private enum LocalPlayerPanel: String, Identifiable {
     }
 }
 
-/// The heads-up display itself: the five values split across the four corners, WebHTV-style, rebuilt
-/// once a second — resolution · frame rate top-left, the clock top-right, progress bottom-left, the
-/// download rate bottom-right. Plain shadowed text with no backing plate, like WebHTV's. Every value
-/// is state the session and its engine already keep — the position and duration off the engine's
-/// clock, the picture size it samples, the frame rate its PlaybackInfo carries (the source's rate,
-/// the display rate behind it), and the download rate the session's transfer ticker already samples
-/// from the engine's byte count for the top row. Nothing here reaches into the player core.
+/// The heads-up display itself: the values split across the four corners, WebHTV-style, rebuilt
+/// once a second — the title over resolution · frame rate top-left, the clock top-right, progress
+/// bottom-left, the download rate bottom-right. Plain shadowed text with no backing plate, like
+/// WebHTV's. Every element follows its own switch in Settings (WebHTV's OSD settings do the same);
+/// the `local.playback.osd` toggle still governs the whole display. Every value is state the session
+/// and its engine already keep — the position and duration off the engine's clock, the picture size
+/// it samples, the frame rate its PlaybackInfo carries (the source's rate, the display rate behind
+/// it), and the download rate the session's transfer ticker already samples from the engine's byte
+/// count for the top row. Nothing here reaches into the player core.
 private struct PlayerOSD: View {
     let session: PlaybackSession
+    /// The work's name with its episode, for the title line above the resolution (WebHTV's first line).
+    var title: String?
     /// The technical information panel takes the top-left corner while it is on (WebHTV yields it too).
     var hidesTopLeft = false
-    var fontSize: CGFloat = 23
+    var fontSize: CGFloat = 17
+
+    @AppStorage("local.playback.osd.title") private var showsTitle = true
+    @AppStorage("local.playback.osd.resolution") private var showsResolution = true
+    @AppStorage("local.playback.osd.fps") private var showsFPS = true
+    @AppStorage("local.playback.osd.clock") private var showsClock = true
+    @AppStorage("local.playback.osd.progress") private var showsProgress = true
+    @AppStorage("local.playback.osd.speed") private var showsSpeed = true
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             WithPerceptionTracking {
                 ZStack {
-                    if !hidesTopLeft, let text = resolutionAndRate {
-                        corner(text, alignment: .topLeading)
+                    if !hidesTopLeft { topLeft }
+                    if showsClock {
+                        corner(Self.clock.string(from: context.date), alignment: .topTrailing)
                     }
-                    corner(Self.clock.string(from: context.date), alignment: .topTrailing)
-                    if let text = progress {
+                    if showsProgress, let text = progress {
                         corner(text, alignment: .bottomLeading)
                     }
-                    if let text = speed {
+                    if showsSpeed, let text = speed {
                         corner(text, alignment: .bottomTrailing)
                     }
                 }
@@ -2507,25 +2532,44 @@ private struct PlayerOSD: View {
         .allowsHitTesting(false)
     }
 
-    private func corner(_ text: String, alignment: Alignment) -> some View {
+    /// WebHTV's two lines: the title, then "1920×1080 · 25 fps". Each element drops
+    /// out on its own switch and the surviving line takes its place, no gap left.
+    @ViewBuilder private var topLeft: some View {
+        let titleLine = showsTitle ? title : nil
+        let metricsLine = resolutionAndRate
+        if titleLine != nil || metricsLine != nil {
+            VStack(alignment: .leading, spacing: 2) {
+                if let titleLine { osdText(titleLine) }
+                if let metricsLine { osdText(metricsLine) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func osdText(_ text: String) -> some View {
         Text(text)
             .font(.system(size: fontSize, weight: .medium)).monospacedDigit()
             .foregroundStyle(.white.opacity(0.95))
             .shadow(color: .black.opacity(0.8), radius: 2, x: 1.5, y: 1.5)
             .lineLimit(1)
+    }
+
+    private func corner(_ text: String, alignment: Alignment) -> some View {
+        osdText(text)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
-    /// "1920×1080 · 25 fps" — either half drops out until the engine reports it.
+    /// "1920×1080 · 25 fps" — each half follows its own switch, and drops out
+    /// until the engine reports it.
     private var resolutionAndRate: String? {
         let engine = session.engine
         var parts: [String] = []
         let size = engine.presentationSize
-        if size.width > 0, size.height > 0 {
+        if showsResolution, size.width > 0, size.height > 0 {
             parts.append("\(Int(size.width.rounded()))×\(Int(size.height.rounded()))")
         }
         let rate = engine.playbackInfo.frameRate ?? (engine.frameRate > 0 ? engine.frameRate : nil)
-        if let rate, rate.isFinite, rate > 0 { parts.append(Self.rate(rate) + " fps") }
+        if showsFPS, let rate, rate.isFinite, rate > 0 { parts.append(Self.rate(rate) + " fps") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
