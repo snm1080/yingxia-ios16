@@ -111,7 +111,7 @@ struct LocalDockButtonsSettingsView: View {
                         WithPerceptionTracking {
                             HStack(spacing: 12) {
                                 Image(systemName: button.dockIcon)
-                                    .font(.system(size: 17, weight: .semibold))
+                                    .font(.system(size: 19, weight: .semibold))
                                     .frame(width: 30)
                                 Text(button.title).font(.body.weight(.medium)).lineLimit(1)
                                 Spacer(minLength: 8)

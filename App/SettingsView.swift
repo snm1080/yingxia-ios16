@@ -169,6 +169,10 @@ struct SettingsPage<Content: View>: View {
                     .padding(16)
                     .frame(maxWidth: .infinity)
             }
+            // Settings text runs one Dynamic Type step larger than the app default:
+            // every settings subpage is built on this container, so the semantic
+            // fonts its rows use all follow from here.
+            .dynamicTypeSize(.xLarge)
             .scrollDismissesKeyboard(.interactively)
             .localGlassSettingsCanvas()
             .navigationTitle(title)

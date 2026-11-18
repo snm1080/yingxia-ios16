@@ -28,6 +28,10 @@ struct LocalSettingsView: View {
             }
             .frame(maxWidth: Layout.settingsWidth).padding(16).frame(maxWidth: .infinity)
         }
+        // One Dynamic Type step up, matching SettingsPage: the hub's cards scale,
+        // and the size carries into destinations that are not SettingsPage-based
+        // (the Dock buttons list, favorites).
+        .dynamicTypeSize(.xLarge)
         .localGlassSettingsCanvas().navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
