@@ -363,7 +363,8 @@ struct LocalAppNavigation: View {
         return HStack(spacing: metrics.buttonSpacing) {
             ForEach(buttons) { button in WithPerceptionTracking { dockButtonView(button, width: metrics.buttonWidth) } }
         }
-        .padding(LocalDockLayout.groupPadding).localGlassSurface(cornerRadius: LocalDockLayout.dockHeight / 2)
+        .padding(.horizontal, metrics.capsulePadding).padding(.vertical, LocalDockLayout.groupPadding)
+        .localGlassSurface(cornerRadius: LocalDockLayout.dockHeight / 2)
         .frame(maxWidth: .infinity, alignment: .center).frame(height: LocalDockLayout.dockHeight)
     }
 

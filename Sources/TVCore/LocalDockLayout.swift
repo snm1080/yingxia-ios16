@@ -16,7 +16,19 @@ public enum LocalDockLayout {
         public let buttonWidth: CGFloat
         public let buttonSpacing: CGFloat
         public let groupSpacing: CGFloat
+        /// Inset from each end of the capsule to the nearest button. It is the
+        /// group padding until the capsule spreads; then it grows to half the
+        /// gap, so the buttons rest on even centres across the whole capsule.
+        public let capsulePadding: CGFloat
     }
+
+    /// The centre-to-centre pitch the capsule aims for once it may spread
+    /// (MiraPlay's bar, measured: a 510pt capsule on a 768pt iPad — two thirds
+    /// of the screen — with its buttons on even centres, ≈102pt apart at the
+    /// five buttons this app usually shows).
+    public static let spreadPitch: CGFloat = 102
+    /// The widest share of the screen the capsule may take while spreading.
+    public static let spreadWidthFraction: CGFloat = 0.66
 
     public static func metrics(availableWidth: CGFloat, buttonCount: Int) -> Metrics {
         let compact = availableWidth < 336
@@ -28,7 +40,28 @@ public enum LocalDockLayout {
         // capsule past the padded width (and its touch frame off the screen edge).
         let count = max(1, buttonCount)
         let width = (availableWidth - 2 * groupPadding - buttonSpacing * CGFloat(count - 1)) / CGFloat(count)
-        return Metrics(buttonWidth: max(36, min(56, width)), buttonSpacing: buttonSpacing, groupSpacing: groupSpacing)
+        let buttonWidth = max(36, min(56, width))
+        let natural = Metrics(buttonWidth: buttonWidth, buttonSpacing: buttonSpacing,
+                              groupSpacing: groupSpacing, capsulePadding: groupPadding)
+        guard !compact, count > 1 else { return natural }
+        // Spread the buttons evenly across a wider capsule, MiraPlay-style: the
+        // capsule grows with the button count toward the pitch above, capped at
+        // two thirds of the screen width, and never past the padded width. Where
+        // the natural capsule already reaches the target (narrow screens, full
+        // rows), the layout above stands unchanged, so nothing can overflow.
+        let screenWidth = availableWidth + 2 * horizontalPadding
+        let naturalCapsule = naturalWidth(buttonWidth: buttonWidth, spacing: buttonSpacing, count: count)
+        let target = min(availableWidth, max(naturalCapsule,
+                                             min(CGFloat(count) * spreadPitch, spreadWidthFraction * screenWidth)))
+        guard target > naturalCapsule + 0.5 else { return natural }
+        let pitch = target / CGFloat(count)
+        let spacing = pitch - buttonWidth
+        return Metrics(buttonWidth: buttonWidth, buttonSpacing: spacing,
+                       groupSpacing: groupSpacing, capsulePadding: spacing / 2)
+    }
+
+    private static func naturalWidth(buttonWidth: CGFloat, spacing: CGFloat, count: Int) -> CGFloat {
+        CGFloat(count) * buttonWidth + CGFloat(count - 1) * spacing + 2 * groupPadding
     }
 
     public static func inset(showsMusic: Bool) -> CGFloat {
@@ -44,7 +77,7 @@ public enum LocalDockLayout {
         let count = max(1, buttonCount)
         // The whole capsule is one hit region: gaps and padding inside it absorb
         // touches instead of passing them through to the content underneath.
-        let capsuleWidth = CGFloat(count) * metrics.buttonWidth + CGFloat(count - 1) * metrics.buttonSpacing + 2 * groupPadding
+        let capsuleWidth = CGFloat(count) * metrics.buttonWidth + CGFloat(count - 1) * metrics.buttonSpacing + 2 * metrics.capsulePadding
         let left = horizontalPadding + max(0, (availableWidth - capsuleWidth) / 2)
         let top = topPadding + (showsMusic ? musicHeight + musicSpacing : 0)
         var frames: [CGRect] = []
