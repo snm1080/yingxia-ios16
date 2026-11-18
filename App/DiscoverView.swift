@@ -1279,7 +1279,7 @@ struct DiscoverScrollObserver: ViewModifier {
                     geometry.contentOffset.y + geometry.contentInsets.top
                 } action: { _, value in offset = value }
             } else {
-                content.onPreferenceChange(DiscoverScrollKey.self) { offset = $0 }
+                content.onPreferenceChange(DiscoverScrollKey.self) { MainActor.assumeIsolated { offset = $0 } }
             }
         }
     }

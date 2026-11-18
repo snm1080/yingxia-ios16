@@ -309,12 +309,14 @@ struct GlobalSearchView: View {
                             restoringSearchPosition = false
                         }
                         .onPreferenceChange(SearchResultFrames.self) { frames in
-                            guard !restoringSearchPosition else { return }
-                            let visible = frames.filter { $0.value.maxY > 0 }
-                                .min { first, second in
-                                    first.value.minY == second.value.minY ? first.value.minX < second.value.minX : first.value.minY < second.value.minY
-                                }?.key
-                            if let visible, model.scrollID != visible { model.scrollID = visible }
+                            MainActor.assumeIsolated {
+                                guard !restoringSearchPosition else { return }
+                                let visible = frames.filter { $0.value.maxY > 0 }
+                                    .min { first, second in
+                                        first.value.minY == second.value.minY ? first.value.minX < second.value.minX : first.value.minY < second.value.minY
+                                    }?.key
+                                if let visible, model.scrollID != visible { model.scrollID = visible }
+                            }
                         }
                         .appOnChange(of: model.selectedSource) { _, _ in
                             reader.scrollTo("search.top", anchor: .top)
@@ -1997,8 +1999,10 @@ struct ScrollStrip<Content: View>: View {
                     }
                 }
                 .onPreferenceChange(ScrollStripLegacyWidth.self) { width in
-                    tracking.legacyWidth = width
-                    updateLegacyMetrics()
+                    MainActor.assumeIsolated {
+                        tracking.legacyWidth = width
+                        updateLegacyMetrics()
+                    }
                 }
         }
     }
@@ -2022,8 +2026,10 @@ struct ScrollStrip<Content: View>: View {
                     }
                 }
                 .onPreferenceChange(ScrollStripLegacyFrame.self) { frame in
-                    tracking.legacyFrame = frame
-                    updateLegacyMetrics()
+                    MainActor.assumeIsolated {
+                        tracking.legacyFrame = frame
+                        updateLegacyMetrics()
+                    }
                 }
         }
     }

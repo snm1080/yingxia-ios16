@@ -493,7 +493,7 @@ private struct TVCardButton: ViewModifier {
         WithPerceptionTracking {
             content.buttonStyle(.borderless).buttonBorderShape(shape)
                 .environment(\.inCardButton, true).environment(\.cardCoverHeight, cover)
-                .onPreferenceChange(CardCoverHeightKey.self) { cover = $0 }
+                .onPreferenceChange(CardCoverHeightKey.self) { MainActor.assumeIsolated { cover = $0 } }
         }
     }
 }

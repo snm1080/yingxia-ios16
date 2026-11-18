@@ -143,11 +143,13 @@ struct SitesView: View {
                 .coordinateSpace(name: "source.panel")
                 .accessibilityIdentifier(pick == nil ? "source.list.scroll" : "source.panel.scroll")
                 .onPreferenceChange(SourcePanelFrames.self) { frames in
-                    guard pick != nil, query.isEmpty, !restoringPanelPosition else { return }
-                    let first = frames.filter { $0.value.maxY > 0 }.min {
-                        $0.value.minY == $1.value.minY ? $0.value.minX < $1.value.minX : $0.value.minY < $1.value.minY
-                    }?.key
-                    if let first, first != rememberedRow { rememberedRow = first; UserDefaults.standard.set(first, forKey: panelKey + ".row") }
+                    MainActor.assumeIsolated {
+                        guard pick != nil, query.isEmpty, !restoringPanelPosition else { return }
+                        let first = frames.filter { $0.value.maxY > 0 }.min {
+                            $0.value.minY == $1.value.minY ? $0.value.minX < $1.value.minX : $0.value.minY < $1.value.minY
+                        }?.key
+                        if let first, first != rememberedRow { rememberedRow = first; UserDefaults.standard.set(first, forKey: panelKey + ".row") }
+                    }
                 }
                 .onAppear {
                     if pick != nil {

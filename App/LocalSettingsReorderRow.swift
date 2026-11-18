@@ -38,7 +38,7 @@ struct LocalSettingsReorderList<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .coordinateSpace(name: "local-settings-reorder-list")
-            .onPreferenceChange(LocalSettingsRowFrames.self) { frames = $0 }
+            .onPreferenceChange(LocalSettingsRowFrames.self) { MainActor.assumeIsolated { frames = $0 } }
             .onDrop(of: [UTType.data.identifier], delegate: LocalSettingsListDrop(
                 validIDs: validIDs, enabled: enabled, frames: frames,
                 session: $session, target: $target, move: move))

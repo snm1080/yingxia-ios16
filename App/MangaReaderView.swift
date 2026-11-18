@@ -573,9 +573,11 @@ struct MangaVerticalReader: View {
                 }
                 .coordinateSpace(name: "reader.vertical.viewport")
                 .onPreferenceChange(ReaderPageFrames.self) { frames in
-                    guard rotationAnchor == nil,
-                          let position = ReaderVerticalViewport.visiblePage(frames: frames, height: size.height, current: model.position) else { return }
-                    model.seen(position)
+                    MainActor.assumeIsolated {
+                        guard rotationAnchor == nil,
+                              let position = ReaderVerticalViewport.visiblePage(frames: frames, height: size.height, current: model.position) else { return }
+                        model.seen(position)
+                    }
                 }
                 .appOnChange(of: model.target) { _, target in
                     guard let target, model.target == target, model.chapterRequest == nil else { return }
