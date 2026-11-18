@@ -33,7 +33,7 @@ private struct LocalDockTouchRegions: ViewModifier {
                         .allowsHitTesting(false)
                 }
             }
-            .onPreferenceChange(LocalDockFrames.self) { if frames != $0 { frames = $0 } }
+            .onPreferenceChange(LocalDockFrames.self) { newFrames in MainActor.assumeIsolated { if frames != newFrames { frames = newFrames } } }
             .contentShape(.interaction, LocalDockTouchShape(frames: frames))
     }
 }

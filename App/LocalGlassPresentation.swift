@@ -216,9 +216,11 @@ private struct LocalGlassDialog<Content: View>: View {
                     .accessibilityIdentifier("local.dialog")
                     .accessibilityAddTraits(.isModal)
                     .onPreferenceChange(LocalDialogContentHeightKey.self) { height in
-                        if height.isFinite, height >= 0, abs(contentHeight - height) > 0.5 {
-                            var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
-                            withTransaction(transaction) { contentHeight = height }
+                        MainActor.assumeIsolated {
+                            if height.isFinite, height >= 0, abs(contentHeight - height) > 0.5 {
+                                var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+                                withTransaction(transaction) { contentHeight = height }
+                            }
                         }
                     }
                     .padding(.vertical, 12).padding(.horizontal, 14)
