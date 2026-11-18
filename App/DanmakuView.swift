@@ -812,7 +812,7 @@ struct DanmakuListView: View {
                         Button(action: chosen) { Label("弹幕设置", systemImage: "chevron.left") }.buttonStyle(.plain)
                         Spacer()
                         Text(L10n.text("%d comments", comments.count)).foregroundStyle(.secondary)
-                    }.font(.subheadline).padding(.horizontal, 16).padding(.top, 12)
+                    }.font(.system(size: 17)).padding(.horizontal, 16).padding(.top, 12)
                 } else { header.padding(.horizontal, 20).padding(.top, 22) }
                 DanmakuDensity(bins: density, progress: duration > 0 ? now / duration : 0) { fraction in
                     following = true
@@ -839,7 +839,7 @@ struct DanmakuListView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.text("Danmaku")).font(.title2.weight(.bold))
-                Text(L10n.text("%d comments", comments.count)).font(.subheadline).foregroundStyle(.secondary)
+                Text(L10n.text("%d comments", comments.count)).font(.system(size: 17)).foregroundStyle(.secondary)
             }
             Spacer()
             Button(action: chosen) {
@@ -926,7 +926,7 @@ struct DanmakuListView: View {
                                 follow(proxy, animated: true)
                             } label: {
                                 Label(L10n.text("Back to Now"), systemImage: "arrow.down.to.line")
-                                    .font(.subheadline.weight(.semibold))
+                                    .font(.system(size: 17, weight: .semibold))
                                     .foregroundStyle(.black)
                                     .padding(.horizontal, 16).padding(.vertical, 10)
                                     .background(.white, in: Capsule())
@@ -949,7 +949,7 @@ struct DanmakuListView: View {
     private func row(_ comment: Danmaku, upcoming: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text(Self.clock(comment.time))
-                .font(.footnote.monospacedDigit().weight(.medium))
+                .font(.system(size: 15, weight: .medium)).monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 44, alignment: .leading)
                 .padding(.top, 2)
@@ -1064,7 +1064,7 @@ private struct DanmakuNowLine: View {
         WithPerceptionTracking {
             HStack(spacing: 10) {
                 Text(DanmakuListView.clock(time))
-                    .font(.caption.monospacedDigit().weight(.bold))
+                    .font(.system(size: 14, weight: .bold)).monospacedDigit()
                     .foregroundStyle(.black)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(Brand.cyan, in: Capsule())

@@ -19,9 +19,9 @@ struct CompactPlayerCastingPanel: View {
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 14) {
-                Text("播放到其他映匣设备").font(.system(size: 13, weight: .semibold))
+                Text("播放到其他映匣设备").font(.system(size: 15, weight: .semibold))
                 if browser.receivers.isEmpty {
-                    Text("暂未发现设备。在同一 Wi-Fi 的 Mac 或 Apple TV 上打开映匣，并允许本地网络访问。").font(.caption).foregroundStyle(.secondary)
+                    Text("暂未发现设备。在同一 Wi-Fi 的 Mac 或 Apple TV 上打开映匣，并允许本地网络访问。").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 ForEach(browser.receivers) { receiver in
                     WithPerceptionTracking {
@@ -31,26 +31,26 @@ struct CompactPlayerCastingPanel: View {
                                 Text(receiver.name).lineLimit(1)
                                 Spacer(minLength: 4)
                                 if sending == receiver.id { ProgressView() }
-                                else { Image(systemName: "chevron.right").font(.caption) }
+                                else { Image(systemName: "chevron.right").font(.system(size: 14)) }
                             }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain).disabled(sending != nil)
                     }
                 }
-                if let issue { Text(issue).font(.caption).foregroundStyle(.orange).accessibilityIdentifier("player.cast.error") }
+                if let issue { Text(issue).font(.system(size: 14)).foregroundStyle(.orange).accessibilityIdentifier("player.cast.error") }
                 Divider()
-                Label("AirPlay 视频投屏", systemImage: "rectangle.on.rectangle").font(.system(size: 13, weight: .semibold))
+                Label("AirPlay 视频投屏", systemImage: "rectangle.on.rectangle").font(.system(size: 15, weight: .semibold))
                 if connectedDisplay {
                     Label("已连接外接屏幕，正在输出播放画面", systemImage: "checkmark.circle.fill")
-                        .font(.caption).foregroundStyle(.green)
+                        .font(.system(size: 14)).foregroundStyle(.green)
                 } else {
-                    Text("从屏幕右上角向下滑，打开控制中心 → 屏幕镜像，选择电视或 Mac，然后回到映匣继续播放。").font(.caption).foregroundStyle(.secondary)
-                    Text("此处的系统音频设备选择器只切换声音；视频请使用「屏幕镜像」或上方的映匣设备。").font(.caption).foregroundStyle(.secondary)
+                    Text("从屏幕右上角向下滑，打开控制中心 → 屏幕镜像，选择电视或 Mac，然后回到映匣继续播放。").font(.system(size: 14)).foregroundStyle(.secondary)
+                    Text("此处的系统音频设备选择器只切换声音；视频请使用「屏幕镜像」或上方的映匣设备。").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 10) {
                     CastingAudioRoutePicker().frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("系统音频设备").font(.subheadline)
-                        Text("AirPlay 音箱、耳机或电视声音").font(.caption).foregroundStyle(.secondary)
+                        Text("AirPlay 音箱、耳机或电视声音").font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -212,14 +212,14 @@ struct PlayerAspectPanel: View {
         WithPerceptionTracking {
             if editing {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("自定义显示比例").font(.subheadline)
+                    Text("自定义显示比例").font(.system(size: 17, weight: .semibold))
                     HStack {
                         dimension("宽度", value: $width)
                         Text(":")
                         dimension("高度", value: $height)
                     }
-                    Text("例如 21:9。宽高会保存，下次可继续使用。").font(.caption).foregroundStyle(.secondary)
-                    if let issue { Text(issue).font(.caption).foregroundStyle(.orange) }
+                    Text("例如 21:9。宽高会保存，下次可继续使用。").font(.system(size: 14)).foregroundStyle(.secondary)
+                    if let issue { Text(issue).font(.system(size: 14)).foregroundStyle(.orange) }
                     HStack {
                         Button("取消") { editing = false; issue = nil }
                         Spacer()
@@ -250,7 +250,7 @@ struct PlayerAspectPanel: View {
     }
     private func dimension(_ label: String, value: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(.system(size: 14)).foregroundStyle(.secondary)
             TextField(label, text: value).keyboardType(.decimalPad).textFieldStyle(LocalGlassTextFieldStyle())
                 .accessibilityLabel(label)
         }
@@ -268,11 +268,11 @@ struct CompactPlayerPopup<Content: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 14, weight: .semibold))
-                    if let subtitle { Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                    Text(title).font(.system(size: 17, weight: .semibold))
+                    if let subtitle { Text(subtitle).font(.footnote).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 Spacer(minLength: 4)
-                Button(action: close) { Image(systemName: "xmark").font(.system(size: 14, weight: .semibold)).frame(width: 44, height: 44).contentShape(Rectangle()) }
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 16, weight: .semibold)).frame(width: 44, height: 44).contentShape(Rectangle()) }
                     .buttonStyle(.plain).accessibilityLabel("关闭面板").accessibilityIdentifier("player.popup.close")
             }.padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
             Divider().opacity(0.5)
@@ -285,7 +285,7 @@ struct CompactPlayerPopup<Content: View>: View {
         .localPlayerGlassSurface(cornerRadius: 22)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .tint(.accentColor)
-        .font(.system(size: 14))
+        .font(.system(size: 16))
         .environment(\.colorScheme, .dark)
         .textFieldStyle(LocalGlassTextFieldStyle())
         .accessibilityElement(children: .contain)
@@ -323,7 +323,7 @@ struct CompactPlayerTabs: View {
             HStack(spacing: 4) {
                 ForEach(names, id: \.self) { name in
                     Button { selected = name } label: {
-                        Text(name).font(.system(size: 12, weight: .medium)).padding(.horizontal, 12).frame(height: 44)
+                        Text(name).font(.system(size: 14, weight: .medium)).padding(.horizontal, 12).frame(height: 44)
                             .contentShape(Rectangle())
                             .background(selected == name ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 8))
                     }.buttonStyle(.plain).accessibilityAddTraits(selected == name ? [.isSelected] : [])
@@ -361,14 +361,14 @@ struct CompactEpisodeSkipPanel: View {
                 skipRow(opening: true)
                 skipRow(opening: false)
                 Text(session.remoteSkip.status.isEmpty ? "等待视频信息" : session.remoteSkip.status)
-                    .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("player.skip.remoteStatus")
+                    .font(.system(size: 14)).foregroundStyle(.secondary).accessibilityIdentifier("player.skip.remoteStatus")
                 ForEach(Array(session.remoteSkip.segments.enumerated()), id: \.offset) { _, segment in
                     Text((segment.kind == "opening" ? "片头 " : "片尾 ") + EpisodeSkipSettings.formatTime(segment.start) + "–" + EpisodeSkipSettings.formatTime(segment.end) + " · " + segment.source)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
                 }
-                if let issue { Text(issue).font(.caption).foregroundStyle(.orange) }
-                Text("手动记录优先，复位后采用章节或远程匹配；片尾按剩余时长保存到当前剧集系列。").font(.caption).foregroundStyle(.secondary)
-            }.font(.system(size: 12)).onAppear { session.remoteSkip.requestMatch() }
+                if let issue { Text(issue).font(.system(size: 14)).foregroundStyle(.orange) }
+                Text("手动记录优先，复位后采用章节或远程匹配；片尾按剩余时长保存到当前剧集系列。").font(.system(size: 14)).foregroundStyle(.secondary)
+            }.font(.system(size: 14)).onAppear { session.remoteSkip.requestMatch() }
         }
     }
     private func skipRow(opening: Bool) -> some View {
@@ -421,7 +421,7 @@ struct CompactSubtitleAddressPanel: View {
             TextField("https://example.com/subtitles.srt", text: $address)
                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 .textFieldStyle(LocalGlassTextFieldStyle()).accessibilityIdentifier("player.subtitle.address")
-            Text("支持 SRT、VTT、ASS 和 SSA 字幕地址。").font(.caption).foregroundStyle(.secondary)
+            Text("支持 SRT、VTT、ASS 和 SSA 字幕地址。").font(.system(size: 14)).foregroundStyle(.secondary)
             Button("添加字幕") { subtitles.add(address: address); back() }
                 .buttonStyle(.borderedProminent).disabled(!valid).accessibilityIdentifier("player.subtitle.address.add")
         }

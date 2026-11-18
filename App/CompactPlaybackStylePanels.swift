@@ -20,11 +20,11 @@ struct CompactSubtitleStylePanel: View {
                     if isASS {
                         Label(style.overrideAssStyle ? "正在使用统一字幕样式" : "正在保留 ASS/SSA 自带样式",
                               systemImage: style.overrideAssStyle ? "textformat" : "doc.richtext")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 14)).foregroundStyle(.secondary)
                             .accessibilityIdentifier("player.subtitle.assStyleStatus")
                     }
-                    if isASS && !style.overrideAssStyle { Text("保留 ASS/SSA 的字体、颜色、对齐、定位、移动和淡入淡出。高级卡拉 OK、绘图和复杂变换暂不支持。开启覆盖后应用所选样式。").font(.caption).foregroundStyle(.secondary) }
-                    if isBitmap { Text("当前为图片字幕，字体、字号和颜色不适用于图片内容。").font(.caption).foregroundStyle(.secondary) }
+                    if isASS && !style.overrideAssStyle { Text("保留 ASS/SSA 的字体、颜色、对齐、定位、移动和淡入淡出。高级卡拉 OK、绘图和复杂变换暂不支持。开启覆盖后应用所选样式。").font(.system(size: 14)).foregroundStyle(.secondary) }
+                    if isBitmap { Text("当前为图片字幕，字体、字号和颜色不适用于图片内容。").font(.system(size: 14)).foregroundStyle(.secondary) }
                     PlayerFontPicker(family: Binding(get: { style.font ?? "" }, set: { style.font = $0.isEmpty ? nil : $0 }))
                     PlaybackStyleRange(title: "字号", value: Binding(get: { style.size * 10 }, set: { style.size = $0 / 10 }), range: 12...96, step: 1, unit: " px")
                     PlaybackStyleColorPicker(title: "字幕颜色", value: Binding(get: { style.customColor ?? colorHex }, set: { style.customColor = $0 }))
@@ -38,8 +38,8 @@ struct CompactSubtitleStylePanel: View {
                 } else {
                     let external = subtitles.document != nil
                     let delay = external ? subtitles.timing.delay : engine.subtitleDelay
-                    Text("字幕时间").font(.headline)
-                    Text("步长").font(.caption).foregroundStyle(.secondary)
+                    Text("字幕时间").font(.system(size: 19, weight: .semibold))
+                    Text("步长").font(.system(size: 14)).foregroundStyle(.secondary)
                     HStack {
                         ForEach([0.1, 0.5, 1, 5], id: \.self) { step in
                             Button(step.formatted() + " 秒") { timingStep = step }
@@ -57,7 +57,7 @@ struct CompactSubtitleStylePanel: View {
                     }.buttonStyle(.bordered)
                     Button("重置字幕时间") { changeDelay(0, external: external) }.buttonStyle(.bordered).disabled(delay == 0)
                     PlaybackStyleRange(title: "延迟", value: Binding(get: { currentDelay }, set: { changeDelay($0, external: external) }), range: -60...60, step: 0.1, unit: " 秒")
-                    Text("正值延后显示，负值提前显示。").font(.caption).foregroundStyle(.secondary)
+                    Text("正值延后显示，负值提前显示。").font(.system(size: 14)).foregroundStyle(.secondary)
                     if external {
                         LocalGlassChoicePicker(title: "原始帧率", selection: Binding(get: { subtitles.timing.rate?.id ?? "" }, set: { id in
                             subtitles.setTiming(SubtitleTiming(delay: subtitles.timing.delay, scale: SubtitleTiming.rates.first { $0.id == id }?.scale ?? 1))
@@ -68,7 +68,7 @@ struct CompactSubtitleStylePanel: View {
                 if section != "时间" {
                     Button("恢复默认") { style = SubtitleStyle(); changeDelay(0, external: subtitles.document != nil) }.buttonStyle(.bordered)
                 }
-                Text("实时生效 · 自动保存").font(.caption).foregroundStyle(.secondary)
+                Text("实时生效 · 自动保存").font(.system(size: 14)).foregroundStyle(.secondary)
             }
             .appOnChange(of: style) { _, value in value.save() }
         }
@@ -113,23 +113,23 @@ struct CompactDanmakuStylePanel: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 14) {
                 if section == "花式弹幕" {
-                    Text("花式弹幕").font(.headline)
-                    Text("17 种效果 · 独立配比 · 即时保存").font(.caption).foregroundStyle(.secondary)
+                    Text("花式弹幕").font(.system(size: 19, weight: .semibold))
+                    Text("17 种效果 · 独立配比 · 即时保存").font(.system(size: 14)).foregroundStyle(.secondary)
                     Toggle("启用花式弹幕", isOn: $fancy.enabled)
                     PlaybackStyleRange(title: "总比例", value: $fancy.ratio, range: 0...100, unit: "%")
                     Toggle("显示装饰图标", isOn: $fancy.icons)
                     Text("约 \(Int(totalWeight > 0 ? fancy.ratio : 0))% 的普通弹幕使用花式，其余保持原样。徽章角色名 \(fancy.normalized.names.components(separatedBy: "\n").filter { !$0.isEmpty }.count) 个。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
                     HStack {
                         Button("全部启用") { fancy.kinds = FancyDanmakuPreferences.ids }
                         Button("全部关闭") { fancy.kinds = [] }
                         Button("角色名") { editNames.toggle() }
                     }.buttonStyle(.bordered)
                     if editNames {
-                        Text("徽章角色名（每行一个）").font(.subheadline)
+                        Text("徽章角色名（每行一个）").font(.system(size: 17))
                         TextEditor(text: $fancy.names).scrollContentBackground(.hidden)
                             .frame(minHeight: 100).padding(8).localGlassInputSurface()
-                        Text("最多 30 个，每个最多 16 字。").font(.caption).foregroundStyle(.secondary)
+                        Text("最多 30 个，每个最多 16 字。").font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                     ForEach(Array(NativeFancyDanmakuPainter.specs.enumerated()), id: \.element.id) { index, spec in
                         VStack(alignment: .leading, spacing: 10) {
@@ -137,7 +137,7 @@ struct CompactDanmakuStylePanel: View {
                                 fancy.kinds = FancyDanmakuPreferences.ids.filter { $0 == spec.id ? enabled : fancy.kinds.contains($0) }
                             }))
                             Text(fancy.kinds.contains(spec.id) && totalWeight > 0 ? "占花式 \(Int((fancy.weights[index] / totalWeight * 100).rounded()))%" : "未参与")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.system(size: 14)).foregroundStyle(.secondary)
                             FancyDanmakuPreview(variant: spec.id, icons: fancy.icons, label: fancy.normalized.names.components(separatedBy: "\n").first ?? "")
                             PlaybackStyleRange(title: "比例权重", value: Binding(get: { fancy.weights[index] }, set: { fancy.weights[index] = $0 }), range: 0...100, unit: "%")
                         }.padding(12).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
@@ -161,15 +161,15 @@ struct CompactDanmakuStylePanel: View {
                 } else if section == "时间" {
                     PlaybackStyleRange(title: "滚动速度", value: $speed, range: 0.25...3, step: 0.05, unit: "×")
                     PlaybackStyleRange(title: "延迟", value: $delay, range: -60...60, step: 0.1, unit: " 秒")
-                    Text("正值延后显示，负值提前显示。").font(.caption).foregroundStyle(.secondary)
+                    Text("正值延后显示，负值提前显示。").font(.system(size: 14)).foregroundStyle(.secondary)
                 } else {
                     PlaybackStyleRange(title: "显示区域", value: $areaPercent, range: 10...100, step: 5, unit: "%")
                     PlaybackStyleRange(title: "行间距", value: $spacing, range: 0...32, unit: " px")
                     PlaybackStyleRange(title: "最大滚动行数", value: Binding(get: { Double(rows) }, set: { rows = Int($0) }), range: 0...30, unit: " 行")
-                    Text("弹幕限制在画面上方所选区域；行数 0 为自动，实际行数同时受区域和字号限制。").font(.caption).foregroundStyle(.secondary)
+                    Text("弹幕限制在画面上方所选区域；行数 0 为自动，实际行数同时受区域和字号限制。").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 Button("恢复默认") { reset() }.buttonStyle(.bordered)
-                Text("实时生效 · 自动保存").font(.caption).foregroundStyle(.secondary)
+                Text("实时生效 · 自动保存").font(.system(size: 14)).foregroundStyle(.secondary)
             }.appOnChange(of: fancy) { _, value in value.save() }
                 .onAppear {
                     if UserDefaults.standard.object(forKey: "danmakuAreaPercent") == nil,
@@ -219,7 +219,7 @@ private struct PlaybackStyleRange: View {
                     .keyboardType(.numbersAndPunctuation).multilineTextAlignment(.trailing)
                     .textFieldStyle(LocalGlassTextFieldStyle()).frame(width: 88)
             }
-        }.font(.subheadline)
+        }.font(.system(size: 17))
     }
 }
 
@@ -232,7 +232,7 @@ private struct PlaybackStyleColorPicker: View {
                 guard let components = UIColor(color).cgColor.converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil)?.components, components.count >= 3 else { return }
                 value = String(format: "#%02X%02X%02X", Int((components[0] * 255).rounded()), Int((components[1] * 255).rounded()), Int((components[2] * 255).rounded()))
             }), supportsOpacity: false)
-            Text(value.uppercased()).font(.caption.monospaced()).foregroundStyle(.secondary)
+            Text(value.uppercased()).font(.system(size: 14, design: .monospaced)).foregroundStyle(.secondary)
         }
     }
     static func color(_ hex: String) -> Color {

@@ -1164,7 +1164,7 @@ struct MobilePlayerView: View {
             ForEach(Self.speeds, id: \.self) { value in
                 WithPerceptionTracking {
                     Button { speed = value; session.setSpeed(value); localPanel = nil; poke() } label: {
-                        Text(Self.speedLabel(value)).font(.system(size: 13, weight: .medium).monospacedDigit())
+                        Text(Self.speedLabel(value)).font(.system(size: 15, weight: .medium).monospacedDigit())
                             .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                             .background(speed == value ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
                     }.buttonStyle(.plain).accessibilityAddTraits(speed == value ? [.isSelected] : [])
@@ -1196,7 +1196,7 @@ struct MobilePlayerView: View {
     private var qualityPanel: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 12) {
-                if session.qualities.isEmpty { Text("当前媒体没有可选画质。").font(.caption).foregroundStyle(.secondary) }
+                if session.qualities.isEmpty { Text("当前媒体没有可选画质。").font(.system(size: 14)).foregroundStyle(.secondary) }
                 else {
                     selectionRow("自动选择", selected: session.quality == nil) { session.choose(quality: nil) }
                     ForEach(session.qualities) { quality in
@@ -1210,7 +1210,7 @@ struct MobilePlayerView: View {
     private var decoderChoices: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 12) {
-                Text("视频解码").font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                Text("视频解码").font(.system(size: 14)).foregroundStyle(.secondary).padding(.top, 4)
                 ForEach(["auto", "hardware", "software"], id: \.self) { decoder in
                     WithPerceptionTracking {
                         selectionRow(decoder == "auto" ? "自动硬解" : decoder == "hardware" ? "VideoToolbox 硬解" : "软件解码", selected: session.engine.decoder == decoder) {
@@ -1218,7 +1218,7 @@ struct MobilePlayerView: View {
                         }
                     }
                 }
-                Text("当前解码：" + session.engine.currentDecoder).font(.caption).foregroundStyle(.secondary)
+                Text("当前解码：" + session.engine.currentDecoder).font(.system(size: 14)).foregroundStyle(.secondary)
             }
         }
     }
@@ -1235,7 +1235,7 @@ struct MobilePlayerView: View {
                 Button { session.engine.setAudioDelay(session.engine.audioDelay - 0.1) } label: { Image(systemName: "minus").playerControlTarget() }.accessibilityLabel("声音提前 0.1 秒")
                 Button { session.engine.setAudioDelay(session.engine.audioDelay + 0.1) } label: { Image(systemName: "plus").playerControlTarget() }.accessibilityLabel("声音延后 0.1 秒")
                 Button { session.engine.setAudioDelay(0) } label: { Image(systemName: "arrow.counterclockwise").playerControlTarget() }.accessibilityLabel("重置声音时间")
-            }.font(.system(size: 12)).buttonStyle(.plain)
+            }.font(.system(size: 16)).buttonStyle(.plain)
         }
     }
 
@@ -1272,10 +1272,10 @@ struct MobilePlayerView: View {
                 track.kind == .subtitle && !session.externalSubtitles.entries.contains { $0.id == track.id }
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text(target.title).font(.subheadline.bold())
-                Text(subtitleSelectionLabel(current, requested: requested)).font(.caption).foregroundStyle(.secondary)
+                Text(target.title).font(.system(size: 17, weight: .bold))
+                Text(subtitleSelectionLabel(current, requested: requested)).font(.system(size: 14)).foregroundStyle(.secondary)
                 if target == .secondary && (session.aiSubtitles.generate || session.aiSubtitles.translate) {
-                    Text("AI 字幕优先显示；关闭 AI 字幕后显示所选副字幕轨道。").font(.caption).foregroundStyle(.secondary)
+                    Text("AI 字幕优先显示；关闭 AI 字幕后显示所选副字幕轨道。").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 selectionRow("关闭" + target.title, selected: requested == "no") {
                     selectSubtitleTrack(nil, target: target, automatic: false)
@@ -1294,7 +1294,7 @@ struct MobilePlayerView: View {
                     WithPerceptionTracking { externalSubtitleChoice(entry, target: target) }
                 }
                 if native.isEmpty && session.externalSubtitles.entries.isEmpty {
-                    Text("当前没有可选择的字幕").font(.caption).foregroundStyle(.secondary)
+                    Text("当前没有可选择的字幕").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -1319,7 +1319,7 @@ struct MobilePlayerView: View {
             }
         case .loading: ProgressView("外挂 · " + entry.title)
         case .failed(let reason):
-            Text(entry.title + "：" + reason).font(.caption).foregroundStyle(.orange)
+            Text(entry.title + "：" + reason).font(.system(size: 14)).foregroundStyle(.orange)
             if entry.subtitle != nil {
                 Button("重试并应用到" + target.title) {
                     session.externalSubtitles.importTarget = target; session.externalSubtitles.retry(entry.id)
@@ -1342,9 +1342,9 @@ struct MobilePlayerView: View {
                 Button("从网址添加到" + subtitleTarget.title) {
                     session.externalSubtitles.importTarget = subtitleTarget; localPanel = .subtitleAddress
                 }.buttonStyle(CompactPlayerControlStyle())
-                if let issue = session.externalSubtitles.importFailure { Text(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = session.externalSubtitles.importFailure { Text(issue).font(.system(size: 14)).foregroundStyle(.orange) }
                 Text("外挂字幕可分别放入主字幕或副字幕；同一轨道只占一个位置。在线下载成功后返回对应轨道列表。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
             }
         }
     }
@@ -1363,7 +1363,7 @@ struct MobilePlayerView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Toggle("显示弹幕", isOn: $showsDanmaku)
                 Toggle("自动匹配弹幕", isOn: automaticDanmaku)
-                Text(danmakuStatus).font(.caption).foregroundStyle(.secondary)
+                Text(danmakuStatus).font(.system(size: 14)).foregroundStyle(.secondary)
                 if session.catalogDanmaku.automaticState == "unavailable" {
                     Button("重新加载弹幕") { session.catalogDanmaku.retryAutomatic() }.buttonStyle(.bordered)
                 }
@@ -1456,7 +1456,7 @@ struct MobilePlayerView: View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 12) {
                 if !session.discTitles.isEmpty { discTitleChoices }
-                if session.engine.chapters.isEmpty { Text("当前媒体没有可用章节").font(.subheadline).foregroundStyle(.secondary) }
+                if session.engine.chapters.isEmpty { Text("当前媒体没有可用章节").font(.system(size: 17)).foregroundStyle(.secondary) }
                 ForEach(session.engine.chapters) { chapter in
                     WithPerceptionTracking {
                         selectionRow(chapterLabel(chapter), selected: currentChapterID == chapter.id) {
@@ -1514,7 +1514,7 @@ struct MobilePlayerView: View {
                         }
                     }
                 }
-                if options.isEmpty { Text("当前媒体没有可选择的" + (kind == .video ? "视频轨道" : kind == .audio ? "音轨" : "内嵌字幕")).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
+                if options.isEmpty { Text("当前媒体没有可选择的" + (kind == .video ? "视频轨道" : kind == .audio ? "音轨" : "内嵌字幕")).font(.system(size: 14)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
             }
         }
     }
@@ -1536,7 +1536,7 @@ struct MobilePlayerView: View {
     private func selectionRow(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack { Text(title); Spacer(); if selected { Image(systemName: "checkmark") } }
-                .font(.system(size: 14)).padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                .font(.system(size: 16)).padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
         }.buttonStyle(CompactPlayerControlStyle(selected: selected, inset: false))
             .accessibilityAddTraits(selected ? .isSelected : [])
             .disabled(session.loading)
