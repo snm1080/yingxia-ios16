@@ -317,7 +317,7 @@ private struct DiscoverPersonParallax: ViewModifier {
                                                value: geometry.frame(in: .named("discover.person.scroll")).minY)
                     }
                 }
-                .onPreferenceChange(DiscoverPersonHeaderPosition.self) { MainActor.assumeIsolated { position = $0 } }
+                .onPreferenceChange(DiscoverPersonHeaderPosition.self) { newPosition in MainActor.assumeIsolated { position = newPosition } }
                 .offset(y: min(0, -position * 0.16))
         }
     }
