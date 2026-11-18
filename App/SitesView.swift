@@ -3009,7 +3009,7 @@ struct VideoDetailView: View {
         Button { choosingDownloads = true } label: {
             Label(L10n.text("Download"), systemImage: "arrow.down.circle")
                 .labelStyle(DownloadLabelStyle(iconOnly: iconOnly))
-                .font(.headline).lineLimit(1).fixedSize()
+                .font(.system(size: 19, weight: .semibold)).lineLimit(1).fixedSize()
         }
         .controlButton().controlSize(.large).accessibilityLabel(L10n.text("Download"))
     }
@@ -3031,7 +3031,7 @@ struct VideoDetailView: View {
                 }
                 #endif
             }
-            .font(.headline).lineLimit(1).fixedSize()
+            .font(.system(size: 19, weight: .semibold)).lineLimit(1).fixedSize()
         }
         .controlButton().controlSize(.large)
         .accessibilityLabel(title).help(title)
@@ -3267,13 +3267,13 @@ struct VideoDetailView: View {
         let visible = LocalCatalogDetailRules.page(ordered, group: group, descending: reversesEpisodes).map { entries[$0.index] }
         return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("线路").font(.headline)
+                Text("线路").font(.system(size: 19, weight: .semibold))
                 mobileFlagPicker
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
-                    Text("剧集").font(.headline)
-                    Text("\(items.count) 集").font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    Text("剧集").font(.system(size: 19, weight: .semibold))
+                    Text("\(items.count) 集").font(.system(size: 13)).monospacedDigit().foregroundStyle(.secondary)
                     if count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 5) {
@@ -3283,7 +3283,7 @@ struct VideoDetailView: View {
                                         let end = min((index + 1) * LocalCatalogDetailRules.groupSize, entries.count)
                                         Button { mobileEpisodeGroupFlag = activeFlag; mobileEpisodeGroup = index } label: {
                                             Text(start == end ? "\(start)" : "\(start)-\(end)")
-                                                .font(.system(size: 11)).monospacedDigit().padding(.horizontal, 10).frame(minHeight: 44)
+                                                .font(.system(size: 13)).monospacedDigit().padding(.horizontal, 10).frame(minHeight: 44)
                                                 .foregroundStyle(index == group ? Brand.accent : Color.secondary)
                                                 .background(index == group ? Brand.accent.opacity(0.1) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
                                                 .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(index == group ? Brand.accent.opacity(0.45) : Color.primary.opacity(0.12), lineWidth: 0.5) }
@@ -3299,29 +3299,29 @@ struct VideoDetailView: View {
                 HStack(spacing: 4) {
                     if tmdb.phase == .looking {
                         ProgressView().controlSize(.mini)
-                        Text("正在获取剧集资料…").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("正在获取剧集资料…").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
                     } else if tmdb.phase == .failed {
-                        Button { Task { await tmdb.retry() } } label: { Label("重试剧集资料", systemImage: "arrow.clockwise").font(.system(size: 11)).frame(minHeight: 44) }
+                        Button { Task { await tmdb.retry() } } label: { Label("重试剧集资料", systemImage: "arrow.clockwise").font(.system(size: 13)).frame(minHeight: 44) }
                             .buttonStyle(.plain).accessibilityIdentifier("detail.episodeMetadata.retry")
                     }
                     Spacer(minLength: 0)
                     if items.count > 1 {
                         Button { reversesEpisodes.toggle() } label: {
                             Label(reversesEpisodes ? "倒序" : "正序", systemImage: reversesEpisodes ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 11)).padding(.horizontal, 8).frame(minHeight: 44)
+                                .font(.system(size: 13)).padding(.horizontal, 8).frame(minHeight: 44)
                         }.buttonStyle(.plain).accessibilityLabel(reversesEpisodes ? "切换为正序" : "切换为倒序")
                             .accessibilityIdentifier("episodes.reverse")
                     }
                     Button { mobileEpisodeList.toggle() } label: {
                         Label(mobileEpisodeList ? "缩略图" : "列表", systemImage: mobileEpisodeList ? "rectangle.stack" : "list.bullet")
-                            .font(.system(size: 11)).padding(.horizontal, 8).frame(minHeight: 44)
+                            .font(.system(size: 13)).padding(.horizontal, 8).frame(minHeight: 44)
                             .foregroundStyle(mobileEpisodeList ? Brand.accent : Color.primary)
                     }.buttonStyle(.plain).accessibilityLabel(mobileEpisodeList ? "显示剧集缩略图" : "显示默认剧集列表")
                         .accessibilityIdentifier("detail.episodes.layout")
                 }
             }
             if loadingEpisode != nil {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在解析播放地址…").font(.system(size: 12)).foregroundStyle(.secondary) }
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在解析播放地址…").font(.system(size: 14)).foregroundStyle(.secondary) }
                     .accessibilityElement(children: .combine)
             }
             if mobileEpisodeList {
@@ -3389,7 +3389,7 @@ struct VideoDetailView: View {
                         WithPerceptionTracking {
                             Button { selectedFlag = flag } label: {
                                 Text(flag.isEmpty ? "默认线路" : SourceLabel(flag).text)
-                                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    .font(.system(size: 17, weight: .semibold)).lineLimit(1)
                                     .padding(.horizontal, 15).frame(minHeight: 44)
                                     .foregroundStyle(flag == activeFlag ? Brand.onAccent : Color.primary)
                                     .background(flag == activeFlag ? Brand.accent : Color.primary.opacity(0.06), in: Capsule())

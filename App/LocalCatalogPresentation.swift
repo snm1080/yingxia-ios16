@@ -463,7 +463,7 @@ struct LocalCatalogSynopsisButton: View {
     var body: some View {
         Button(action: open) {
             HStack(alignment: .center, spacing: 12) {
-                Text(overview).font(.system(size: 14)).lineSpacing(5).lineLimit(3)
+                Text(overview).font(.system(size: 16)).lineSpacing(5).lineLimit(3)
                     .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right").font(.system(size: 16)).foregroundStyle(Brand.accent)
             }.foregroundStyle(Color.primary.opacity(0.78)).frame(minHeight: 44).contentShape(Rectangle())
