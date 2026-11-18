@@ -44,6 +44,7 @@ jobs:
             echo "No Xcode 16.x found; keeping the runner default"
           fi
           xcodebuild -version
+          xcodebuild -downloadPlatform iOS || true
           xcrun --sdk iphoneos --show-sdk-path
           df -h /
 
