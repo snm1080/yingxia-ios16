@@ -15,7 +15,7 @@ struct PlaybackHistoryView: View {
     @AppStorage("local.library.historyLayout") private var layout = "list"
     private var history: PlaybackHistory { store.playbackHistory }
     private var entries: [PlaybackHistoryEntry] {
-        store.visibleHistory.filter { query.isEmpty || $0.context.displayTitle.localizedCaseInsensitiveContains(query) || $0.context.sourceName.localizedCaseInsensitiveContains(query) }
+        mergedHistoryEntries(store.visibleHistory.filter { query.isEmpty || $0.context.displayTitle.localizedCaseInsensitiveContains(query) || $0.context.sourceName.localizedCaseInsensitiveContains(query) })
     }
 
     var body: some View {
@@ -114,12 +114,26 @@ struct PlaybackHistoryView: View {
                 Button(entry.completed ? "重新观看" : "继续观看", systemImage: "play.fill") { resume(entry) }
                 Button(role: .destructive) {
                     guard canInteract else { return }
-                    history.remove(entry.id)
+                    history.remove(historyEntryIDs(of: entry, in: store.visibleHistory))
                 } label: { Image(systemName: "xmark") }
                     .accessibilityLabel("移除 \(entry.context.displayTitle) 的观看记录")
             }.font(.subheadline).buttonStyle(.borderless)
         }.padding(14).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
     }
+}
+
+/// One row per title: episodes of the same show collapse onto the most recently
+/// watched one. Storage keeps every episode; only the list merges. Entries arrive
+/// newest-first, so the first of each title is its latest episode.
+func mergedHistoryEntries(_ entries: [PlaybackHistoryEntry]) -> [PlaybackHistoryEntry] {
+    var seen = Set<String>()
+    return entries.filter { seen.insert($0.context.id).inserted }
+}
+
+/// All stored episode ids of one title, so removing a merged row removes the
+/// whole title's history instead of only its latest episode.
+func historyEntryIDs(of entry: PlaybackHistoryEntry, in entries: [PlaybackHistoryEntry]) -> Set<String> {
+    Set(entries.filter { $0.context.id == entry.context.id }.map(\.id))
 }
 
 enum HistoryMetrics {
@@ -178,7 +192,7 @@ struct WatchingHistoryCard: View {
                             }
                             ArtworkBadgeButton(symbol: "xmark", label: L10n.text("Remove from history"), destructive: true) {
                                 guard canInteract else { return }
-                                store.playbackHistory.remove(entry.id)
+                                store.playbackHistory.remove(historyEntryIDs(of: entry, in: store.visibleHistory))
                             }
                         }.padding(8)
                     }
