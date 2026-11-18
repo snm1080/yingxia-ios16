@@ -6,8 +6,6 @@ name: build-ipa
 # and publishes the unsigned IPA to the fixed `latest` release.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       build_number:
