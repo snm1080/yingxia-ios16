@@ -322,20 +322,22 @@ struct MobilePlayerView: View {
             if let banner = session.mediaEnhancements.matchBanner, banner.isVisible(at: uptime),
                !pip.active, playingOn == nil, playerSize.width > 0, playerSize.height > 0 {
                 let picture = videoAspect.pictureFrame(in: playerSize, source: session.engine.presentationSize)
-                // The match line, and under it the loaded count on its own
-                // line: appended to the match line, the count was the first
-                // thing the tail truncation ate. The band grows to fit both
+                // The match, split at its seam: the title line, and under
+                // it the source line with the loaded count at its end. As
+                // one line the whole string truncated long titles away on
+                // a narrow portrait frame; the title line may still wrap
+                // when even it does not fit. The band grows to fit its
                 // lines and stays centred on the picture as one block, and
-                // every line the banner ever shows — match, count, no-match,
-                // failure — sits in the middle of the band.
+                // every line the banner ever shows — match, source,
+                // no-match, failure — sits in the middle of the band.
                 VStack(alignment: .center, spacing: 2) {
                     Text(banner.message)
                         .font(.system(size: PlayerCornerText.size(inline: inline)))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .multilineTextAlignment(.center)
                     if let detail = banner.detail {
                         Text(detail)
                             .font(.system(size: PlayerCornerText.size(inline: inline)))
+                            .multilineTextAlignment(.center)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }

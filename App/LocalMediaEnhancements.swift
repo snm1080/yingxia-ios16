@@ -76,24 +76,35 @@ func danmakuFailureDetail(_ error: Error) -> String {
     private func showMatchBanner(_ message: String, detail: String? = nil, kind: PlayerNotice.Kind = .success) {
         matchBanner = PlayerNotice(message: message, kind: kind, detail: detail)
     }
-    /// The banner's one line, assembled from whatever the match actually
-    /// carries: "匹配到弹幕：{剧名} ({年份})【{类型}】from {来源}【{标识}】第 {集数} 集".
-    /// Aggregate titles arrive already decorated ("大炎双雄(2026)【短剧】from
-    /// hongguo") and are split back into their parts; a plain title falls back
-    /// to the raw record's year/type and then the playing context's year. Any
-    /// part the match does not carry is simply left out.
-    private func matchBannerLine(title: String, year: String?, category: String?, platform: String?,
-                                 sourceName: String?, sourceIdentifier: String?, episodeNumber: Int?) -> String {
-        var line = "匹配到弹幕：\(title)"
-        if let year, !year.isEmpty { line += " (\(year))" }
-        if let category, !category.isEmpty { line += "【\(category)】" }
-        if let platform, !platform.isEmpty { line += " from \(platform)" }
-        else if let sourceName, !sourceName.isEmpty { line += " from \(sourceName)" }
-        if let sourceIdentifier, !sourceIdentifier.isEmpty { line += "【\(sourceIdentifier)】" }
-        if let episodeNumber { line += " 第 \(episodeNumber) 集" }
-        return line
+    /// The banner's two lines, split at the seam a narrow portrait frame
+    /// needs: "匹配到弹幕：{剧名} ({年份})【{类型}】" on the first line and
+    /// "from {来源}【{标识}】第 {集数} 集" on the second — as one line the
+    /// whole string truncated long titles away. Aggregate titles arrive
+    /// already decorated ("大炎双雄(2026)【短剧】from hongguo") and are split
+    /// back into their parts; a plain title falls back to the raw record's
+    /// year/type and then the playing context's year. Any part the match
+    /// does not carry is simply left out, and a second line with nothing
+    /// in it is omitted whole.
+    private func matchBannerLines(title: String, year: String?, category: String?, platform: String?,
+                                  sourceName: String?, sourceIdentifier: String?, episodeNumber: Int?) -> (headline: String, detail: String?) {
+        var headline = "匹配到弹幕：\(title)"
+        if let year, !year.isEmpty { headline += " (\(year))" }
+        if let category, !category.isEmpty { headline += "【\(category)】" }
+        var detail = ""
+        if let platform, !platform.isEmpty { detail += "from \(platform)" }
+        else if let sourceName, !sourceName.isEmpty { detail += "from \(sourceName)" }
+        if let sourceIdentifier, !sourceIdentifier.isEmpty { detail += "【\(sourceIdentifier)】" }
+        if let episodeNumber { detail += detail.isEmpty ? "第 \(episodeNumber) 集" : " 第 \(episodeNumber) 集" }
+        return (headline, detail.isEmpty ? nil : detail)
     }
-    private func matchBannerLine(result: NativeDanmakuCatalogResult, episodeNumber: Int?) -> String {
+    /// The second line with the loaded count riding at its end; the count
+    /// stands alone on the line when the match carried nothing else to put
+    /// there, and the line stays absent for a zero count with no segments.
+    private func bannerDetail(_ detail: String?, count: Int) -> String? {
+        guard count > 0 else { return detail }
+        return detail.map { $0 + " · 已加载 \(count) 条弹幕" } ?? "已加载 \(count) 条弹幕"
+    }
+    private func matchBannerLines(result: NativeDanmakuCatalogResult, episodeNumber: Int?) -> (headline: String, detail: String?) {
         var title = result.title, year: String?, category: String?, platform: String?
         let pattern = #"^(.+?)\((\d{4})\)【([^】]+)】from\s+(\S+)$"#
         if let expression = try? NSRegularExpression(pattern: pattern),
@@ -119,21 +130,21 @@ func danmakuFailureDetail(_ error: Error) -> String {
         if UUID(uuidString: result.source.id) == nil, !result.source.id.isEmpty { identifier = result.source.id }
         else if platform != nil { identifier = result.source.name }
         else { identifier = nil }
-        return matchBannerLine(title: title, year: year, category: category, platform: platform,
-                               sourceName: result.source.name, sourceIdentifier: identifier, episodeNumber: episodeNumber)
+        return matchBannerLines(title: title, year: year, category: category, platform: platform,
+                                sourceName: result.source.name, sourceIdentifier: identifier, episodeNumber: episodeNumber)
     }
-    /// The line for loads that carry no catalog result (the playing source's
+    /// The lines for loads that carry no catalog result (the playing source's
     /// own feed, the builtin feed, pushed comments): the playing work's name
     /// and episode, nothing else is honestly available.
-    private func contextMatchBannerLine() -> String? {
+    private func contextMatchBannerLines() -> (headline: String, detail: String?)? {
         guard let context = channel?.historyContext ?? catalog.context else { return nil }
-        return matchBannerLine(title: context.videoName, year: context.year, category: nil, platform: nil,
-                               sourceName: nil, sourceIdentifier: nil,
-                               episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
+        return matchBannerLines(title: context.videoName, year: context.year, category: nil, platform: nil,
+                                sourceName: nil, sourceIdentifier: nil,
+                                episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
     }
     private func announceContextMatch(count: Int) {
-        guard let line = contextMatchBannerLine() else { return }
-        showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
+        guard let lines = contextMatchBannerLines() else { return }
+        showMatchBanner(lines.headline, detail: bannerDetail(lines.detail, count: count),
                         kind: count > 0 ? .success : .information)
     }
     func sourceLoaded(count: Int) {
@@ -262,9 +273,9 @@ func danmakuFailureDetail(_ error: Error) -> String {
         setStatus("正在自动匹配订阅弹幕", onScreen: false)
         var failed = false
         var unauthorized = false
-        // The banner line of the first episode that matched but had no
+        // The banner lines of the first episode that matched but had no
         // comments, kept so the final banner can still name what was matched.
-        var matchedLine: String?
+        var matchedLines: (headline: String, detail: String?)?
         // Set when a source matched this episode and its comment load
         // succeeded but returned zero comments: the episode exists, it
         // simply has no danmaku. That is a different fact from "no match"
@@ -303,7 +314,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
         let service = NativeDanmakuCatalog(context: context)
         switch await matchRememberedShow(service: service, context: context, generation: active) {
         case .loaded: return
-        case .matchedEmpty(let line): matchedEmpty = true; answered = true; matchedLine = line
+        case .matchedEmpty(let headline, let detail): matchedEmpty = true; answered = true; matchedLines = (headline, detail)
         case .missed: break
         }
         for source in await service.sources() {
@@ -327,14 +338,15 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
                         if count > 0 {
                             setStatus("已自动匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
-                            showMatchBanner(matchBannerLine(result: result, episodeNumber: number), detail: "已加载 \(count) 条弹幕")
+                            let lines = matchBannerLines(result: result, episodeNumber: number)
+                            showMatchBanner(lines.headline, detail: bannerDetail(lines.detail, count: count))
                             return
                         }
                         // Matched and loaded, but zero comments on this
                         // source. Keep sweeping - another source may have
                         // some - and remember the fact for the final message.
                         matchedEmpty = true
-                        if matchedLine == nil { matchedLine = matchBannerLine(result: result, episodeNumber: number) }
+                        if matchedLines == nil { matchedLines = matchBannerLines(result: result, episodeNumber: number) }
                     } catch {
                         if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                         failed = true
@@ -373,7 +385,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             showMatchBanner("弹幕加载失败", kind: .warning)
         } else if matchedEmpty {
             setStatus("本集没有弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
-            if let matchedLine { showMatchBanner(matchedLine, kind: .information) }
+            if let matchedLines { showMatchBanner(matchedLines.headline, detail: matchedLines.detail, kind: .information) }
         } else {
             setStatus("没有匹配到本集弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
             showMatchBanner("没有匹配到本集弹幕", kind: .information)
@@ -394,8 +406,8 @@ func danmakuFailureDetail(_ error: Error) -> String {
             let count = try await prepare(parameters, manual: true, source: result.source)
             // A hand-picked load shares the picture with the automatic flow,
             // so its outcome takes the same single banner.
-            let line = matchBannerLine(result: result, episodeNumber: CatalogDanmakuMatcher.episodeNumber(episode.title))
-            showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
+            let lines = matchBannerLines(result: result, episodeNumber: CatalogDanmakuMatcher.episodeNumber(episode.title))
+            showMatchBanner(lines.headline, detail: bannerDetail(lines.detail, count: count),
                             kind: count > 0 ? .success : .information)
         } catch {
             if scope == generation, catalog.selection.ticket == ticket {
@@ -424,10 +436,10 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // from the record's title and the source it came from.
         if let context = channel?.historyContext ?? catalog.context {
             let identifier: String? = UUID(uuidString: source.id) == nil && !source.id.isEmpty ? source.id : nil
-            let line = matchBannerLine(title: rememberedTitle ?? context.videoName, year: context.year, category: nil,
-                                       platform: nil, sourceName: source.name, sourceIdentifier: identifier,
-                                       episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
-            showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
+            let lines = matchBannerLines(title: rememberedTitle ?? context.videoName, year: context.year, category: nil,
+                                         platform: nil, sourceName: source.name, sourceIdentifier: identifier,
+                                         episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
+            showMatchBanner(lines.headline, detail: bannerDetail(lines.detail, count: count),
                             kind: count > 0 ? .success : .information)
         }
     }
@@ -542,7 +554,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
               let title = record["animeTitle"], !title.isEmpty else { return nil }
         return ShowDanmakuMemory(sourceID: sourceID, animeTitle: title, animeID: record["animeID"] ?? "")
     }
-    private enum RememberedShowOutcome { case loaded, matchedEmpty(String), missed }
+    private enum RememberedShowOutcome { case loaded, matchedEmpty(headline: String, detail: String?), missed }
     /// The remembered pairing for this show, tried before the full source sweep:
     /// search only the remembered source, take the remembered anime, and match
     /// this episode by number. Any miss falls through to the normal matching.
@@ -573,10 +585,12 @@ func danmakuFailureDetail(_ error: Error) -> String {
             guard current() else { return .missed }
             if count > 0 {
                 setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
-                showMatchBanner(matchBannerLine(result: result, episodeNumber: number), detail: "已加载 \(count) 条弹幕")
+                let lines = matchBannerLines(result: result, episodeNumber: number)
+                showMatchBanner(lines.headline, detail: bannerDetail(lines.detail, count: count))
                 return .loaded
             }
-            return .matchedEmpty(matchBannerLine(result: result, episodeNumber: number))
+            let lines = matchBannerLines(result: result, episodeNumber: number)
+            return .matchedEmpty(headline: lines.headline, detail: lines.detail)
         } catch {
             // A stale memory must never block the normal matching below, but the
             // failure itself is worth one diagnostics line before falling through.

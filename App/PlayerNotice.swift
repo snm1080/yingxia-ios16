@@ -6,9 +6,9 @@ struct PlayerNotice: Identifiable, Equatable, Sendable {
     enum Kind: String, Sendable { case information, success, warning }
     let id: UUID
     let message: String
-    /// A second line under the message, for a notice whose headline is a full
-    /// sentence of its own: the danmaku match banner's loaded count rides
-    /// here instead of being appended to a line that then truncates it away.
+    /// A second line under the message: the danmaku match banner's source
+    /// line ("from … 第 N 集", with the loaded count at its end) rides here,
+    /// split from the title line instead of truncating away behind it.
     let detail: String?
     let kind: Kind
     let expiresAt: Double
