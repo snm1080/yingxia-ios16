@@ -650,8 +650,12 @@ enum DanmakuText {
                       verticalAlignment: VerticalAlignment = .typographic, preferences: Preferences = Preferences()) -> CGImage? {
         let font = font(size, family: family, preferences: preferences)
         let mode = usePreferences ? preferences.mode : "source"
-        let color = mode == "white" ? 0xffffff : mode == "random" ? PlayerStyleColor.randomColor(text: text) : color
-        let gradient = gradient ?? (mode == "gradient" ? preferences.gradient : nil)
+        // Automatic gradient (WebHTV's recipe, in PlayerStyleColor): the two
+        // stops come from the text itself, and a nil result is that mode's
+        // forced-white comment, drawn as a plain white fill.
+        let autoGradient = mode == "gradientAuto" ? PlayerStyleColor.autoGradientColors(text: text) : nil
+        let color = mode == "white" || (mode == "gradientAuto" && autoGradient == nil) ? 0xffffff : mode == "random" ? PlayerStyleColor.randomColor(text: text) : color
+        let gradient = gradient ?? (mode == "gradient" ? preferences.gradient : autoGradient)
         let red = CGFloat(color >> 16 & 0xFF) / 255, green = CGFloat(color >> 8 & 0xFF) / 255, blue = CGFloat(color & 0xFF) / 255
         let dark = 0.299 * red + 0.587 * green + 0.114 * blue < 0.25
         let fill = line(text, [.init(kCTFontAttributeName as String): font, .init(kCTForegroundColorAttributeName as String): CGColor(srgbRed: red, green: green, blue: blue, alpha: 1)])

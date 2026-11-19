@@ -153,7 +153,8 @@ struct CompactDanmakuStylePanel: View {
                     PlaybackStyleRange(title: "透明度", value: Binding(get: { (1 - model.opacity) * 100 }, set: { model.opacity = 1 - $0 / 100 }), range: 0...100, unit: "%")
                     LocalGlassChoicePicker(title: "弹幕颜色", selection: $colorMode,
                                            options: [.init("source", "自带色"), .init("white", "白色"),
-                                                     .init("random", "随机"), .init("gradient", "渐变")])
+                                                     .init("random", "随机"), .init("gradient", "渐变"),
+                                                     .init("gradientAuto", "自动渐变")])
                     if colorMode == "gradient" {
                         PlaybackStyleColorPicker(title: "渐变起始颜色", value: $gradientStart)
                         PlaybackStyleColorPicker(title: "渐变结束颜色", value: $gradientEnd)
@@ -181,6 +182,11 @@ struct CompactDanmakuStylePanel: View {
     private var fontWeight: Font.Weight { [.ultraLight, .thin, .light, .regular, .medium, .semibold, .bold, .heavy, .black][min(8, max(0, weight / 100 - 1))] }
     private var previewColor: AnyShapeStyle {
         if colorMode == "gradient" { return AnyShapeStyle(LinearGradient(colors: [PlaybackStyleColorPicker.color(gradientStart), PlaybackStyleColorPicker.color(gradientEnd)], startPoint: .leading, endPoint: .trailing)) }
+        // The preview line shows its own automatic gradient, computed from
+        // the preview text exactly as a comment's would be.
+        if colorMode == "gradientAuto", let stops = PlayerStyleColor.autoGradientColors(text: "弹幕效果预览") {
+            return AnyShapeStyle(LinearGradient(colors: stops.map { PlaybackStyleColorPicker.color($0) }, startPoint: .leading, endPoint: .trailing))
+        }
         return AnyShapeStyle(colorMode == "random" ? Color.pink : Color.white)
     }
     private func reset() {

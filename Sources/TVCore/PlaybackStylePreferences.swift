@@ -101,9 +101,42 @@ public enum PlayerStyleColor {
         return (Double(value >> 16 & 255) / 255, Double(value >> 8 & 255) / 255, Double(value & 255) / 255)
     }
     public static func randomColor(text: String) -> UInt32 {
-        var hash: UInt32 = 2166136261
-        for byte in text.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+        let hash = stableHash(text)
         // Pastel colors remain readable against moving video, and remain stable across redraws.
         return (128 + (hash & 127)) << 16 | (128 + (hash >> 8 & 127)) << 8 | (128 + (hash >> 16 & 127))
+    }
+    /// The FNV-1a hash every text-derived colour here shares, so a comment
+    /// keeps its colour across redraws and across colour modes.
+    public static func stableHash(_ text: String) -> UInt32 {
+        var hash: UInt32 = 2166136261
+        for byte in text.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+        return hash
+    }
+    /// WebHTV's automatic gradient, as its danmaku colour mode computes it:
+    /// the text hash walks the golden angle (137.508°) to a hue, paired with
+    /// the hue 117° further on, at fixed saturation 0.55 and value 1.0; a
+    /// text whose hash is a multiple of 5 (about one in five) stays plain
+    /// white instead. Returns the two "#RRGGBB" stops, nil for a white text.
+    public static func autoGradientColors(text: String) -> [String]? {
+        let hash = stableHash(text)
+        guard hash % 5 != 0 else { return nil }
+        let hue = (Double(hash) * 137.508).truncatingRemainder(dividingBy: 360)
+        return [hexColor(hue: hue), hexColor(hue: hue + 117)]
+    }
+    private static func hexColor(hue: Double) -> String {
+        let hue = hue.truncatingRemainder(dividingBy: 360)
+        let chroma = 0.55 // value 1.0 × saturation 0.55
+        let x = chroma * (1 - abs((hue / 60).truncatingRemainder(dividingBy: 2) - 1))
+        let m = 1.0 - chroma
+        let (r, g, b): (Double, Double, Double)
+        switch hue {
+        case ..<60: (r, g, b) = (chroma, x, 0)
+        case ..<120: (r, g, b) = (x, chroma, 0)
+        case ..<180: (r, g, b) = (0, chroma, x)
+        case ..<240: (r, g, b) = (0, x, chroma)
+        case ..<300: (r, g, b) = (x, 0, chroma)
+        default: (r, g, b) = (chroma, 0, x)
+        }
+        return String(format: "#%02X%02X%02X", Int(((r + m) * 255).rounded()), Int(((g + m) * 255).rounded()), Int(((b + m) * 255).rounded()))
     }
 }
