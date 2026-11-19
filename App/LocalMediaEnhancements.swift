@@ -182,6 +182,11 @@ func danmakuFailureDetail(_ error: Error) -> String {
         setStatus("正在自动匹配订阅弹幕")
         var failed = false
         var unauthorized = false
+        // Set when a source matched this episode and its comment load
+        // succeeded but returned zero comments: the episode exists, it
+        // simply has no danmaku. That is a different fact from "no match"
+        // and from a fetch failure, and the final message keeps them apart.
+        var matchedEmpty = false
         if LocalDanmakuPreferences.builtinEnabled(), let pushed = await CatPawDanmaku.comments(for: context), !pushed.comments.isEmpty {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             let normalized: JSONValue = .array(pushed.comments.map { comment in
@@ -201,7 +206,11 @@ func danmakuFailureDetail(_ error: Error) -> String {
             }
         }
         let service = NativeDanmakuCatalog(context: context)
-        if await matchRememberedShow(service: service, context: context, generation: active) { return }
+        switch await matchRememberedShow(service: service, context: context, generation: active) {
+        case .loaded: return
+        case .matchedEmpty: matchedEmpty = true
+        case .missed: break
+        }
         for source in await service.sources() {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             do {
@@ -221,6 +230,10 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         let count = try await prepare(parameters, manual: false, source: source)
                         guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
                         if count > 0 { setStatus("已自动匹配弹幕 · \(count) 条", kind: .success); return }
+                        // Matched and loaded, but zero comments on this
+                        // source. Keep sweeping - another source may have
+                        // some - and remember the fact for the final message.
+                        matchedEmpty = true
                     } catch {
                         if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                         failed = true
@@ -240,6 +253,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // every step with 401; calling that a generic fetch failure sends the
         // viewer hunting in the wrong place, so name the actual problem.
         setStatus(unauthorized ? "弹幕 API 未授权（401）：请检查 API 地址是否带 token" :
+                  matchedEmpty && !failed ? "本集没有弹幕，可在弹幕面板选择来源" :
                   failed ? "弹幕获取失败，可在弹幕面板重试" : "没有匹配到本集弹幕，可在弹幕面板选择来源",
                   kind: failed ? .warning : .information)
     }
@@ -384,38 +398,43 @@ func danmakuFailureDetail(_ error: Error) -> String {
               let title = record["animeTitle"], !title.isEmpty else { return nil }
         return ShowDanmakuMemory(sourceID: sourceID, animeTitle: title, animeID: record["animeID"] ?? "")
     }
+    private enum RememberedShowOutcome { case loaded, matchedEmpty, missed }
     /// The remembered pairing for this show, tried before the full source sweep:
     /// search only the remembered source, take the remembered anime, and match
     /// this episode by number. Any miss falls through to the normal matching.
-    private func matchRememberedShow(service: NativeDanmakuCatalog, context: PlaybackHistoryContext, generation active: UUID) async -> Bool {
-        guard let memory = showMemory(for: context) else { return false }
+    /// A pairing that matches and loads but returns zero comments reports
+    /// `.matchedEmpty` instead of a plain miss, so the caller's final message
+    /// can say the episode has no danmaku rather than that nothing matched.
+    private func matchRememberedShow(service: NativeDanmakuCatalog, context: PlaybackHistoryContext, generation active: UUID) async -> RememberedShowOutcome {
+        guard let memory = showMemory(for: context) else { return .missed }
         guard let source = await service.sources().first(where: { $0.id == memory.sourceID }),
-              NativeDanmakuCatalog.isEnabled(source) else { return false }
+              NativeDanmakuCatalog.isEnabled(source) else { return .missed }
         func current() -> Bool { active == generation && !Task.isCancelled && catalog.enabled && !catalog.selection.hasExplicitChoice }
         do {
             let results = try await service.search(context.videoName, source: source)
-            guard current() else { return false }
+            guard current() else { return .missed }
             let remembered = results.first { result in
                 (!memory.animeID.isEmpty && result.animeID == memory.animeID) ||
                 CatalogDanmakuMatcher.normalized(result.title) == CatalogDanmakuMatcher.normalized(memory.animeTitle)
             }
-            guard let result = remembered, let number = CatalogDanmakuMatcher.episodeNumber(context.episodeName) else { return false }
+            guard let result = remembered, let number = CatalogDanmakuMatcher.episodeNumber(context.episodeName) else { return .missed }
             let episodes = try await service.episodes(result)
-            guard current() else { return false }
+            guard current() else { return .missed }
             let matched = episodes.filter { CatalogDanmakuMatcher.episodeNumber($0.title) == number }
-            guard matched.count == 1, let episode = matched.first else { return false }
+            guard matched.count == 1, let episode = matched.first else { return .missed }
             let parameters = try await service.prepareParameters(episode, result: result)
-            guard current() else { return false }
+            guard current() else { return .missed }
             catalog.sourceSelected()
             let count = try await prepare(parameters, manual: false, source: source)
-            guard current() else { return false }
-            if count > 0 { setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success); return true }
+            guard current() else { return .missed }
+            if count > 0 { setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success); return .loaded }
+            return .matchedEmpty
         } catch {
             // A stale memory must never block the normal matching below, but the
             // failure itself is worth one diagnostics line before falling through.
             noteCatalogFailure(error, source: source, step: "remembered")
         }
-        return false
+        return .missed
     }
 
     func importFile(_ url: URL) async throws {
