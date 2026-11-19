@@ -160,7 +160,11 @@ struct LocalDanmakuCatalogPanel: View {
     /// A danmaku server that refuses authorization (LogVar and other self-hosted
     /// APIs gate on a token carried in the address path) otherwise surfaces as a
     /// bare "HTTP 401" that reads like a server fault. Say what to fix instead.
-    private static func displayError(_ error: Error) -> String {
+    /// Pure error-to-message mapping; nonisolated so the search task group's
+    /// non-isolated closures can call it too (a View's members otherwise
+    /// inherit MainActor isolation in Swift 6, which made that one call site
+    /// an actor hop requiring await).
+    private nonisolated static func displayError(_ error: Error) -> String {
         if case TVError.http(let code) = error, code == 401 || code == 403 {
             return "服务器返回 \(code) 未授权：请检查弹幕 API 地址是否带 token（自建服务如 LogVar 应填 https://地址:端口/token）"
         }
