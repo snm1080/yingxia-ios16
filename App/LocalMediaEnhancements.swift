@@ -13,6 +13,26 @@ func danmakuFailureDetail(_ error: Error) -> String {
     return "\(failure.domain):\(failure.code)"
 }
 
+/// The errors a load can end with when it was not answered but replaced:
+/// the Swift task was cancelled, the loopback request was cancelled under
+/// it, or the Node service answered that the playing media or the danmaku
+/// selection had already changed - its text crosses the bridge inside
+/// TVError.unsupported (a stack string, so the phrases are matched as
+/// substrings). A superseded load is not a failure: wherever the automatic
+/// flow would otherwise record one, it ends silently instead, exactly the
+/// way a CancellationError does.
+func danmakuIsSuperseded(_ error: Error) -> Bool {
+    if error is CancellationError { return true }
+    if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+    let bridged = error as NSError
+    if bridged.domain == NSURLErrorDomain, bridged.code == NSURLErrorCancelled { return true }
+    if case TVError.unsupported(let message) = error {
+        return ["播放媒体已改变", "播放媒体或弹幕选择已改变", "弹幕操作已取消", "操作已取消",
+                "This operation was aborted"].contains { message.contains($0) }
+    }
+    return false
+}
+
 @MainActor @Perceptible final class NativeMediaEnhancements {
     private(set) var comments: [Danmaku] = []
     private(set) var revision = UUID()
@@ -20,10 +40,11 @@ func danmakuFailureDetail(_ error: Error) -> String {
     private(set) var sourceRevision = UUID()
     private(set) var status = ""
     private(set) var notice: PlayerNotice?
-    /// The automatic flow's one on-screen word: a single centre banner in the
-    /// MiraPlay manner, published only when a load reaches its outcome. The
-    /// panel keeps reading `status` exactly as before; progress states and the
-    /// panel's detailed wordings never reach the picture.
+    /// The automatic flow's one on-screen word: a single capsule at the
+    /// bottom of the picture, published only when a load reaches its
+    /// outcome. The panel keeps reading `status` exactly as before;
+    /// progress states and the panel's detailed wordings never reach
+    /// the picture.
     private(set) var matchBanner: PlayerNotice?
     private(set) var isLive = false
     private(set) var sessionID = ""
@@ -176,44 +197,64 @@ func danmakuFailureDetail(_ error: Error) -> String {
         let active = generation
         loading = Task { [weak self] in
             guard let self else { return }
+            // Set when this flow turns out to have been replaced rather
+            // than answered; the end of the task leaves it one diagnostics
+            // line instead of the failure it used to be mistaken for.
+            var superseded = false
             do {
+                // Rapid switching used to start a full load for every
+                // episode it passed through, and each abandoned fetch kept
+                // the single Node session busy long after the switch -
+                // crowding the landing episode's own load into a genuine
+                // timeout that then read as a fetch failure. So the flow
+                // first waits out a short settle window: a begin that is
+                // itself replaced inside it ends here, before it has asked
+                // the service for anything at all.
+                try await Task.sleep(nanoseconds: 400_000_000)
+                guard active == self.generation else { throw CancellationError() }
                 _ = try await MobileMediaServices.call("session.set", self.sessionDefinition())
-                guard active == self.generation else { return }
+                guard active == self.generation else { throw CancellationError() }
                 try await LocalMediaServiceSettings.apply()
-                guard active == self.generation else { return }
+                guard active == self.generation else { throw CancellationError() }
                 self.ready = true
                 guard self.catalog.enabled else { return }
                 if let saved = self.rememberedFeed(), let source = self.selectedCatalogSource {
                     do { try await self.prepareRemembered(saved, source: source) }
                     catch {
-                        // The remembered feed is the one path whose failure used to
-                        // leave no trace anywhere; record it before the outer catch
-                        // turns it into the generic unavailable message.
-                        guard active == self.generation, !Task.isCancelled else { return }
-                        self.noteCatalogFailure(error, source: source, step: "rememberedFeed")
-                        // One transient failure on the remembered feed must not be
-                        // the end of danmaku for this episode: fall back to the
-                        // automatic sweep, the same way a stale per-show memory
-                        // falls through in matchRememberedShow. This runs at most
-                        // once - the sweep never re-enters the remembered feed.
-                        self.setStatus("记住的弹幕来源加载失败，正在改走自动匹配", kind: .warning, onScreen: false)
-                        await self.matchCatalogAutomatically()
-                        // Keep the two halves of the story distinguishable when the
-                        // sweep also comes up empty; a success speaks for itself.
-                        // The banner is the sweep's own outcome and stands as-is.
-                        if self.status == "没有匹配到本集弹幕，可在弹幕面板选择来源" {
-                            self.setStatus("记住的来源加载失败，自动匹配也没有找到本集弹幕，可在弹幕面板选择来源", kind: .warning, onScreen: false)
-                        } else if self.status.hasPrefix("弹幕获取失败") || self.status.hasPrefix("弹幕 API 未授权") {
-                            self.setStatus("记住的来源加载失败；" + self.status, kind: .warning, onScreen: false)
+                        if active != self.generation || Task.isCancelled || danmakuIsSuperseded(error) {
+                            superseded = true
+                        } else {
+                            // The remembered feed is the one path whose failure used to
+                            // leave no trace anywhere; record it before the outer catch
+                            // turns it into the generic unavailable message.
+                            self.noteCatalogFailure(error, source: source, step: "rememberedFeed")
+                            // One transient failure on the remembered feed must not be
+                            // the end of danmaku for this episode: fall back to the
+                            // automatic sweep, the same way a stale per-show memory
+                            // falls through in matchRememberedShow. This runs at most
+                            // once - the sweep never re-enters the remembered feed.
+                            self.setStatus("记住的弹幕来源加载失败，正在改走自动匹配", kind: .warning, onScreen: false)
+                            await self.matchCatalogAutomatically()
+                            // Keep the two halves of the story distinguishable when the
+                            // sweep also comes up empty; a success speaks for itself.
+                            // The banner is the sweep's own outcome and stands as-is.
+                            if self.status == "没有匹配到本集弹幕，可在弹幕面板选择来源" {
+                                self.setStatus("记住的来源加载失败，自动匹配也没有找到本集弹幕，可在弹幕面板选择来源", kind: .warning, onScreen: false)
+                            } else if self.status.hasPrefix("弹幕获取失败") || self.status.hasPrefix("弹幕 API 未授权") {
+                                self.setStatus("记住的来源加载失败；" + self.status, kind: .warning, onScreen: false)
+                            }
                         }
                     }
                 } else if self.descriptor != nil, LocalDanmakuPreferences.builtinEnabled() { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
             } catch {
-                if active == self.generation, !Task.isCancelled {
+                if active == self.generation, !Task.isCancelled, !danmakuIsSuperseded(error) {
                     self.setStatus("弹幕服务暂不可用，可在弹幕面板重试", kind: .warning, onScreen: false)
                     self.showMatchBanner("弹幕加载失败", kind: .warning)
-                }
+                } else { superseded = true }
+            }
+            if superseded || active != self.generation || Task.isCancelled {
+                Diagnostics.shared.record(.info, "danmaku.api", "step=auto outcome=superseded")
             }
         }
     }
@@ -253,7 +294,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 if nextBuiltin, self.descriptor != nil { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled, !danmakuIsSuperseded(error) {
                     self.setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: false)
                     self.showMatchBanner("弹幕加载失败", kind: .warning)
                 }
@@ -304,7 +345,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 announceContextMatch(count: count)
                 return
             } catch {
-                if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
+                if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice || danmakuIsSuperseded(error) { return }
                 failed = true
                 // The pushed comments were in hand and failed to load:
                 // that is a load error, whatever the sweep finds later.
@@ -348,7 +389,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         matchedEmpty = true
                         if matchedLines == nil { matchedLines = matchBannerLines(result: result, episodeNumber: number) }
                     } catch {
-                        if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
+                        if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice || danmakuIsSuperseded(error) { return }
                         failed = true
                         // The match was in hand; a step on the way to its
                         // comments failed for real. That keeps the final
@@ -360,7 +401,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                     }
                 }
             } catch {
-                if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
+                if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice || danmakuIsSuperseded(error) { return }
                 failed = true
                 noteCatalogFailure(error, source: source, step: "search")
                 if case TVError.http(let code) = error, code == 401 || code == 403 { unauthorized = true }
@@ -414,7 +455,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 catalog.selection = previous
                 pendingCatalogSelection = nil
             }
-            if !(error is CancellationError) { showMatchBanner("弹幕加载失败", kind: .warning) }
+            if !danmakuIsSuperseded(error) { showMatchBanner("弹幕加载失败", kind: .warning) }
             throw error
         }
     }
@@ -592,6 +633,10 @@ func danmakuFailureDetail(_ error: Error) -> String {
             let lines = matchBannerLines(result: result, episodeNumber: number)
             return .matchedEmpty(headline: lines.headline, detail: lines.detail)
         } catch {
+            // A superseded attempt is not a failure of the memory: fall
+            // through as a plain miss without the failure line, and let
+            // the caller's own guards stop the sweep.
+            if danmakuIsSuperseded(error) { return .missed }
             // A stale memory must never block the normal matching below, but the
             // failure itself is worth one diagnostics line before falling through.
             noteCatalogFailure(error, source: source, step: "remembered")
@@ -661,7 +706,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 if manual { catalog.selection.select(.cleared) }
                 else { catalog.selection = previousSelection }
                 selectedCatalogSource = nil; usesBuiltinSource = false; pendingCatalogSelection = nil
-                if !(error is CancellationError) { setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: manual && source == nil) }
+                if !danmakuIsSuperseded(error) { setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: manual && source == nil) }
             }
             throw error
         }

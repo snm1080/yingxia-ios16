@@ -44,7 +44,16 @@ async function fetchDanmakuBuffer(url, options) {
     try { return await fetchBuffer(url, options); }
     catch (error) {
       if (retries >= danmakuFetchBackoffsMs.length || !danmakuFetchIsTransient(error, options.signal)) throw error;
-      await new Promise(resolve => setTimeout(resolve, danmakuFetchBackoffsMs[retries++]));
+      // The backoff honours the caller's cancellation too: a fetch the
+      // viewer has already switched away from ends with its original
+      // error instead of sleeping out the wait and firing one more
+      // request nobody is waiting for.
+      await new Promise(resolve => {
+        if (options.signal?.aborted) return resolve();
+        const timer = setTimeout(resolve, danmakuFetchBackoffsMs[retries++]);
+        options.signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+      if (options.signal?.aborted) throw error;
     }
   }
 }

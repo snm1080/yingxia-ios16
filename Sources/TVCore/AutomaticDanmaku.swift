@@ -61,7 +61,9 @@ public struct AutomaticDanmakuResult: Codable, Sendable {
 /// URL errors such as timeouts, dropped connections, DNS and offline, plus
 /// HTTP 5xx - with about 1 s then 3 s of backoff. A deterministic refusal
 /// (HTTP 4xx, including the 429 rate limit), a cancellation, or an app-level
-/// error is thrown at once.
+/// error is thrown at once. A cancelled request is never retried: once the
+/// calling task is cancelled the run ends as a cancellation, whatever the
+/// in-flight attempt happened to fail with.
 public enum DanmakuRetry {
     private static let backoffNanoseconds: [UInt64] = [1_000_000_000, 3_000_000_000]
 
@@ -70,6 +72,7 @@ public enum DanmakuRetry {
         while true {
             do { return try await operation() }
             catch {
+                if Task.isCancelled { throw CancellationError() }
                 guard retries < backoffNanoseconds.count, isTransient(error) else { throw error }
                 try await Task.sleep(nanoseconds: backoffNanoseconds[retries])
                 retries += 1
