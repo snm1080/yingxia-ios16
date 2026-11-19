@@ -361,22 +361,29 @@ struct LocalAppNavigation: View {
         let buttons = dockButtons
         let metrics = LocalDockLayout.metrics(availableWidth: availableWidth, buttonCount: buttons.count)
         return HStack(spacing: metrics.buttonSpacing) {
-            ForEach(buttons) { button in WithPerceptionTracking { dockButtonView(button, width: metrics.buttonWidth) } }
+            ForEach(buttons) { button in WithPerceptionTracking { dockButtonView(button, width: metrics.buttonWidth, selectionWidth: metrics.selectionWidth) } }
         }
         .padding(.horizontal, metrics.capsulePadding).padding(.vertical, LocalDockLayout.groupPadding)
         .localGlassSurface(cornerRadius: LocalDockLayout.dockHeight / 2)
         .frame(maxWidth: .infinity, alignment: .center).frame(height: LocalDockLayout.dockHeight)
     }
 
-    @ViewBuilder private func dockButtonView(_ button: LocalDockButton, width: CGFloat) -> some View {
+    @ViewBuilder private func dockButtonView(_ button: LocalDockButton, width: CGFloat, selectionWidth: CGFloat) -> some View {
         switch button {
-        case .search: searchButton(width: width)
-        case .push: pushButton(width: width)
-        default: dockButton(button.section, width: width)
+        case .search: searchButton(width: width, selectionWidth: selectionWidth)
+        case .push: pushButton(width: width, selectionWidth: selectionWidth)
+        default: dockButton(button.section, width: width, selectionWidth: selectionWidth)
         }
     }
 
-    private func dockButton(_ entry: AppSection, width: CGFloat) -> some View {
+    /// The selected highlight: a capsule as tall as the button and wider than
+    /// it is tall (at the natural button width it used to read as a circle).
+    private func selectionBackground(_ color: Color, width: CGFloat) -> some View {
+        Capsule().fill(color.opacity(0.16))
+            .frame(width: width, height: LocalDockLayout.controlHeight)
+    }
+
+    private func dockButton(_ entry: AppSection, width: CGFloat, selectionWidth: CGFloat) -> some View {
         let selected = current == entry || entry == .home && (current == .sites || current == .python)
         let color = dockColor(entry)
         return Button {
@@ -388,7 +395,7 @@ struct LocalAppNavigation: View {
             .font(.system(size: 28, weight: .semibold))
             .frame(width: width, height: LocalDockLayout.controlHeight)
             .foregroundStyle(selected ? color : .primary)
-            .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
+            .background { if selected { selectionBackground(color, width: selectionWidth) } }
             .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(entry.title)
             .accessibilityAddTraits(selected ? .isSelected : [])
@@ -406,7 +413,7 @@ struct LocalAppNavigation: View {
         }
     }
 
-    private func searchButton(width: CGFloat) -> some View {
+    private func searchButton(width: CGFloat, selectionWidth: CGFloat) -> some View {
         let selected = current == .search
         let color = dockColor(.search)
         return Button {
@@ -415,13 +422,13 @@ struct LocalAppNavigation: View {
             Image(systemName: "magnifyingglass").font(.system(size: 28, weight: .semibold))
                 .frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
-                .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
+                .background { if selected { selectionBackground(color, width: selectionWidth) } }
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("搜索").accessibilityIdentifier("local.search")
             .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private func pushButton(width: CGFloat) -> some View {
+    private func pushButton(width: CGFloat, selectionWidth: CGFloat) -> some View {
         let selected = current == .push
         let color = dockColor(.push)
         return Button {
@@ -430,7 +437,7 @@ struct LocalAppNavigation: View {
             Image(systemName: selected ? "paperplane.fill" : "paperplane")
                 .font(.system(size: 28, weight: .semibold)).frame(width: width, height: LocalDockLayout.controlHeight)
                 .foregroundStyle(selected ? color : .primary)
-                .background(selected ? color.opacity(0.16) : .clear, in: Capsule())
+                .background { if selected { selectionBackground(color, width: selectionWidth) } }
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("推送").accessibilityIdentifier("local.push")
             .accessibilityAddTraits(selected ? .isSelected : [])

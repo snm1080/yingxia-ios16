@@ -20,6 +20,17 @@ public enum LocalDockLayout {
         /// group padding until the capsule spreads; then it grows to half the
         /// gap, so the buttons rest on even centres across the whole capsule.
         public let capsulePadding: CGFloat
+        /// Width of the selected button's highlight capsule. The highlight is
+        /// as tall as the button (controlHeight) with fully round ends; at the
+        /// natural button width (<= 56) against that 60pt height it read as a
+        /// circle, so the capsule reaches into the gap toward the neighbours
+        /// and stays a few points short of the next button's centre pitch.
+        public let selectionWidth: CGFloat
+    }
+
+    private static func selectionWidth(buttonWidth: CGFloat, buttonSpacing: CGFloat) -> CGFloat {
+        let pitch = buttonWidth + buttonSpacing
+        return max(buttonWidth, min(pitch - 6, buttonWidth + buttonSpacing * 0.65))
     }
 
     /// The centre-to-centre pitch the capsule aims for once it may spread
@@ -42,7 +53,8 @@ public enum LocalDockLayout {
         let width = (availableWidth - 2 * groupPadding - buttonSpacing * CGFloat(count - 1)) / CGFloat(count)
         let buttonWidth = max(36, min(56, width))
         let natural = Metrics(buttonWidth: buttonWidth, buttonSpacing: buttonSpacing,
-                              groupSpacing: groupSpacing, capsulePadding: groupPadding)
+                              groupSpacing: groupSpacing, capsulePadding: groupPadding,
+                              selectionWidth: selectionWidth(buttonWidth: buttonWidth, buttonSpacing: buttonSpacing))
         guard !compact, count > 1 else { return natural }
         // Spread the buttons evenly across a wider capsule, MiraPlay-style: the
         // capsule grows with the button count toward the pitch above, capped at
@@ -57,7 +69,8 @@ public enum LocalDockLayout {
         let pitch = target / CGFloat(count)
         let spacing = pitch - buttonWidth
         return Metrics(buttonWidth: buttonWidth, buttonSpacing: spacing,
-                       groupSpacing: groupSpacing, capsulePadding: spacing / 2)
+                       groupSpacing: groupSpacing, capsulePadding: spacing / 2,
+                       selectionWidth: selectionWidth(buttonWidth: buttonWidth, buttonSpacing: spacing))
     }
 
     private static func naturalWidth(buttonWidth: CGFloat, spacing: CGFloat, count: Int) -> CGFloat {
