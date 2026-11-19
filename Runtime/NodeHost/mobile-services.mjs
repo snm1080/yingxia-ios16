@@ -315,7 +315,20 @@ export class MobileServices {
             onResponse: response => { contentType = response.headers.get('content-type') || ''; } });
           text = decodeDanmaku(bytes, contentType);
         }
-        const comments = parseDanmaku(text);
+        let comments;
+        try {
+          comments = parseDanmaku(text);
+        } catch (error) {
+          // parseDanmaku throws DANMAKU_EMPTY for a well-formed document
+          // that simply contains no comments. At this call site that is a
+          // legitimate answer - "this episode has no danmaku" - not a
+          // fetch failure, so let it through as an empty list and return
+          // count 0 below. The parser itself keeps throwing: its other
+          // caller (cache/file loading) treats an empty document as
+          // unusable there. Genuine format errors still throw.
+          if (error?.code !== 'DANMAKU_EMPTY') throw error;
+          comments = [];
+        }
         signal?.throwIfAborted(); if (this.session !== session || revision !== this.danmakuRevision) throw new Error('播放媒体或弹幕选择已改变');
         await fs.mkdir(this.directory, { recursive: true });
         const file = path.join(this.directory, 'danmaku-' + randomUUID() + '.index');
