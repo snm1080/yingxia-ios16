@@ -187,6 +187,14 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // simply has no danmaku. That is a different fact from "no match"
         // and from a fetch failure, and the final message keeps them apart.
         var matchedEmpty = false
+        // The final message is classified from evidence, not from a single
+        // accumulated error flag: `answered` records that at least one
+        // source completed a step - an answer of "nothing found" is still
+        // an answer - and `loadFailed` that a matched episode's load step
+        // (or the builtin feed's prepare) hit a real error. One source's
+        // failure must not relabel every other source's successful answer.
+        var answered = false
+        var loadFailed = false
         if LocalDanmakuPreferences.builtinEnabled(), let pushed = await CatPawDanmaku.comments(for: context), !pushed.comments.isEmpty {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             let normalized: JSONValue = .array(pushed.comments.map { comment in
@@ -203,18 +211,22 @@ func danmakuFailureDetail(_ error: Error) -> String {
             } catch {
                 if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                 failed = true
+                // The pushed comments were in hand and failed to load:
+                // that is a load error, whatever the sweep finds later.
+                loadFailed = true
             }
         }
         let service = NativeDanmakuCatalog(context: context)
         switch await matchRememberedShow(service: service, context: context, generation: active) {
         case .loaded: return
-        case .matchedEmpty: matchedEmpty = true
+        case .matchedEmpty: matchedEmpty = true; answered = true
         case .missed: break
         }
         for source in await service.sources() {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             do {
                 let results = try await service.search(context.videoName, source: source)
+                answered = true
                 guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
                 let matches = NativeDanmakuCatalogResult.automaticCandidates(in: results, context: context)
                 for result in matches {
@@ -237,6 +249,11 @@ func danmakuFailureDetail(_ error: Error) -> String {
                     } catch {
                         if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                         failed = true
+                        // The match was in hand; a step on the way to its
+                        // comments failed for real. That keeps the final
+                        // message in fetch-failure territory even if other
+                        // sources answered cleanly with nothing.
+                        loadFailed = true
                         noteCatalogFailure(error, source: source, step: "prepare")
                         if case TVError.http(let code) = error, code == 401 || code == 403 { unauthorized = true }
                     }
@@ -252,10 +269,20 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // A self-hosted API that gates on a token in its address path answers
         // every step with 401; calling that a generic fetch failure sends the
         // viewer hunting in the wrong place, so name the actual problem.
-        setStatus(unauthorized ? "弹幕 API 未授权（401）：请检查 API 地址是否带 token" :
-                  matchedEmpty && !failed ? "本集没有弹幕，可在弹幕面板选择来源" :
-                  failed ? "弹幕获取失败，可在弹幕面板重试" : "没有匹配到本集弹幕，可在弹幕面板选择来源",
-                  kind: failed ? .warning : .information)
+        // Below that, "fetch failed" is reserved for the cases where it is
+        // literally true: a matched episode whose load step errored, or
+        // every source erroring without a single successful answer. A
+        // source that answered "nothing found" settles the outcome as a
+        // miss, and a matched episode with zero comments is its own answer.
+        if unauthorized {
+            setStatus("弹幕 API 未授权（401）：请检查 API 地址是否带 token", kind: .warning)
+        } else if loadFailed || (failed && !answered) {
+            setStatus("弹幕获取失败，可在弹幕面板重试", kind: .warning)
+        } else if matchedEmpty {
+            setStatus("本集没有弹幕，可在弹幕面板选择来源", kind: .information)
+        } else {
+            setStatus("没有匹配到本集弹幕，可在弹幕面板选择来源", kind: .information)
+        }
     }
     func prepareCatalog(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) async throws {
         let scope = generation, previous = catalog.selection
