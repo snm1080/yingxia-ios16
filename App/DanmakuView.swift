@@ -563,18 +563,28 @@ final class DanmakuEngine: @unchecked Sendable {
         let verticalScale = size.height / 720
         fontSize = 22 * textScale * stageScale
         let spacing = max(-28, min(32, preferences?.spacing ?? 7))
-        let decorated = comments.contains { $0.effect.map { $0.kind != "positioned" && $0.kind != "bas" } == true }
-        let extraPitch = preferences?.fancyEnabled == true ? 0.7 : decorated ? 0.42 : 0
-        // Negative spacing tightens lanes below one line height; the pitch keeps a
-        // floor of 25% of the text size. DanmakuLayout divides the usable height
+        // The lane pitch is the text size plus the user's spacing, nothing else.
+        // The fancy-tile allowance (x1.7 with fancy on, x1.42 when the comments
+        // carry effects) used to be added to EVERY lane's pitch, so at the user's
+        // settings (text size 25, fancy on) the pitch started at 42.5 stage units
+        // and even the slider's -28 minimum could only pull it to 14.5 — two
+        // rounds of widening the slider (builds 8 and 10) never reached the
+        // floor, and on device the rows still measured ~80 pt apart. Fancy tiles
+        // keep their own painter and heights; they no longer tax the shared
+        // lanes. The 25% floor stays: DanmakuLayout divides the usable height
         // by the lane height, and even the worst case (smallest text, tallest
         // screen, full area) keeps that at ~5.7 pt and the lane count ~250.
-        // At spacing >= 0 the pitch is exactly what it was before.
-        let stagePitch = max(22 * textScale * 0.25, 22 * textScale * (1 + extraPitch) + spacing)
+        let stagePitch = max(22 * textScale * 0.25, 22 * textScale + spacing)
         // Lua: floor((areaHeight - 8 + lineSpacing) / pitch).
         let usableHeight = max(1, size.height * areaShare(area) - (8 - spacing) * verticalScale)
         layout = DanmakuLayout(width: size.width, height: usableHeight, laneHeight: stagePitch * verticalScale, scrollArea: 1,
             scrollDuration: 8 / max(0.25, min(3, configuredSpeed)), maxRows: configuredRows)
+        // The inputs behind every layout restart, so a diagnostics capture shows
+        // the size and spacing the engine actually ran with (build 11 diagnosis:
+        // the point-size surface the code assumes predicts a ~21 pt pitch at
+        // spacing -28, while the device rendered ~80 pt rows).
+        Diagnostics.shared.record(.info, "danmaku.layout",
+            "size=\(Int(size.width))x\(Int(size.height)) spacing=\(spacing) textScale=\(textScale) stagePitch=\(stagePitch) laneHeight=\(stagePitch * verticalScale) lanes=\(layout?.scrollLanes ?? 0)")
         active = []
         reconstructionTime = time
         var effectLow = 0, effectHigh = positioned.count
