@@ -73,8 +73,8 @@ func danmakuFailureDetail(_ error: Error) -> String {
         status = message
         if onScreen { notice = message.isEmpty ? nil : PlayerNotice(message: message, kind: kind) }
     }
-    private func showMatchBanner(_ message: String, detail: String? = nil, centered: Bool = false, kind: PlayerNotice.Kind = .success) {
-        matchBanner = PlayerNotice(message: message, kind: kind, detail: detail, centered: centered)
+    private func showMatchBanner(_ message: String, detail: String? = nil, kind: PlayerNotice.Kind = .success) {
+        matchBanner = PlayerNotice(message: message, kind: kind, detail: detail)
     }
     /// The banner's one line, assembled from whatever the match actually
     /// carries: "匹配到弹幕：{剧名} ({年份})【{类型}】from {来源}【{标识}】第 {集数} 集".
@@ -201,7 +201,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             } catch {
                 if active == self.generation, !Task.isCancelled {
                     self.setStatus("弹幕服务暂不可用，可在弹幕面板重试", kind: .warning, onScreen: false)
-                    self.showMatchBanner("弹幕加载失败", centered: true, kind: .warning)
+                    self.showMatchBanner("弹幕加载失败", kind: .warning)
                 }
             }
         }
@@ -244,7 +244,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             } catch {
                 if !Task.isCancelled {
                     self.setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: false)
-                    self.showMatchBanner("弹幕加载失败", centered: true, kind: .warning)
+                    self.showMatchBanner("弹幕加载失败", kind: .warning)
                 }
             }
         }
@@ -367,16 +367,16 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // banner: the failure word, the matched line, or the miss word.
         if unauthorized {
             setStatus("弹幕 API 未授权（401）：请检查 API 地址是否带 token", kind: .warning, onScreen: false)
-            showMatchBanner("弹幕加载失败", centered: true, kind: .warning)
+            showMatchBanner("弹幕加载失败", kind: .warning)
         } else if loadFailed || (failed && !answered) {
             setStatus("弹幕获取失败，可在弹幕面板重试", kind: .warning, onScreen: false)
-            showMatchBanner("弹幕加载失败", centered: true, kind: .warning)
+            showMatchBanner("弹幕加载失败", kind: .warning)
         } else if matchedEmpty {
             setStatus("本集没有弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
             if let matchedLine { showMatchBanner(matchedLine, kind: .information) }
         } else {
             setStatus("没有匹配到本集弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
-            showMatchBanner("没有匹配到本集弹幕", centered: true, kind: .information)
+            showMatchBanner("没有匹配到本集弹幕", kind: .information)
         }
     }
     func prepareCatalog(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) async throws {
@@ -402,7 +402,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 catalog.selection = previous
                 pendingCatalogSelection = nil
             }
-            if !(error is CancellationError) { showMatchBanner("弹幕加载失败", centered: true, kind: .warning) }
+            if !(error is CancellationError) { showMatchBanner("弹幕加载失败", kind: .warning) }
             throw error
         }
     }
