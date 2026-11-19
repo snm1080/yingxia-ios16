@@ -55,11 +55,52 @@ public struct AutomaticDanmakuResult: Codable, Sendable {
     }
 }
 
+/// The one transient-failure policy for danmaku requests, shared by every
+/// transport below so the steps cannot drift apart: an operation runs up to
+/// three times when the failure looks like weather rather than an answer -
+/// URL errors such as timeouts, dropped connections, DNS and offline, plus
+/// HTTP 5xx - with about 1 s then 3 s of backoff. A deterministic refusal
+/// (HTTP 4xx, including the 429 rate limit), a cancellation, or an app-level
+/// error is thrown at once.
+public enum DanmakuRetry {
+    private static let backoffNanoseconds: [UInt64] = [1_000_000_000, 3_000_000_000]
+
+    public static func run<T>(_ operation: () async throws -> T) async throws -> T {
+        var retries = 0
+        while true {
+            do { return try await operation() }
+            catch {
+                guard retries < backoffNanoseconds.count, isTransient(error) else { throw error }
+                try await Task.sleep(nanoseconds: backoffNanoseconds[retries])
+                retries += 1
+            }
+        }
+    }
+
+    static func isTransient(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if case TVError.http(let code) = error { return (500..<600).contains(code) }
+        let code: Int
+        if let urlError = error as? URLError { code = urlError.code.rawValue }
+        else {
+            let bridged = error as NSError
+            guard bridged.domain == NSURLErrorDomain else { return false }
+            code = bridged.code
+        }
+        return [NSURLErrorTimedOut, NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+                NSURLErrorNetworkConnectionLost, NSURLErrorDNSLookupFailed,
+                NSURLErrorNotConnectedToInternet, NSURLErrorResourceUnavailable].contains(code)
+    }
+}
+
 /// Bounded, cancellable requests are injectable for deterministic protocol and cache acceptance.
 public struct DanmakuHTTP: Sendable {
     public var send: @Sendable (URLRequest) async throws -> Data
     public init(send: @escaping @Sendable (URLRequest) async throws -> Data = Self.live) { self.send = send }
     public static func live(_ request: URLRequest) async throws -> Data {
+        try await DanmakuRetry.run { try await fetch(request) }
+    }
+    private static func fetch(_ request: URLRequest) async throws -> Data {
         let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: request.value(forHTTPHeaderField: "X-AppId") == nil ? nil : DandanplayRedirectPolicy.shared)
         guard let response = response as? HTTPURLResponse else { throw TVError.invalidConfiguration }
         guard (200..<300).contains(response.statusCode) else { throw TVError.http(response.statusCode) }

@@ -229,20 +229,31 @@ public struct CatalogDanmakuClient: Sendable {
             try Self.checkLimit(data)
             return data
         }
-        let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: request.value(forHTTPHeaderField: "X-AppId") == nil ? nil : DandanplayRedirectPolicy.shared)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
+        // No injected transport: this direct fetch is the one request path that
+        // bypasses DanmakuHTTP.live, so it takes the same shared retry here.
+        // The status is thrown as TVError.http inside the retry - the shared
+        // policy needs the real code to tell a transient 5xx from a refusal -
+        // and mapped to this client's public errors only once it is final.
+        let data: Data
+        do {
+            data = try await DanmakuRetry.run {
+                let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: request.value(forHTTPHeaderField: "X-AppId") == nil ? nil : DandanplayRedirectPolicy.shared)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard (200..<300).contains(status) else { throw TVError.http(status) }
+                if response.expectedContentLength > CatalogDanmakuParser.maximumBytes { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
+                var data = Data()
+                for try await byte in bytes {
+                    if data.count >= CatalogDanmakuParser.maximumBytes { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
+                    data.append(byte)
+                }
+                try Task.checkCancellation()
+                return data
+            }
+        } catch TVError.http(let status) {
             if status == 429 { throw DandanplayLimitReached() }
             if status == 401 || status == 403 { throw TVError.unsupported(L10n.text("This danmaku server requires authorization. Choose a compatible public or self-hosted server.")) }
             throw TVError.unsupported(L10n.text("The server returned HTTP %lld.", status))
         }
-        if response.expectedContentLength > CatalogDanmakuParser.maximumBytes { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
-        var data = Data()
-        for try await byte in bytes {
-            if data.count >= CatalogDanmakuParser.maximumBytes { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
-            data.append(byte)
-        }
-        try Task.checkCancellation()
         try Self.checkLimit(data)
         return data
     }
