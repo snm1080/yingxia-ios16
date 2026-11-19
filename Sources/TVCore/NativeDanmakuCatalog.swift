@@ -310,10 +310,51 @@ public struct NativeDanmakuCatalog: Sendable {
         }
         guard let address = source.address, let animeID = result.animeID else { return [] }
         // The catalog client validates numeric IDs from the API response.
-        let episodes = try await CatalogDanmakuClient(address: address, transport: http).episodes(CatalogDanmakuAnime(id: animeID, title: result.title, type: ""))
-            .map { NativeDanmakuCatalogEpisode(id: $0.id, title: $0.title, url: nil) }
-        try validate(source)
-        return episodes
+        do {
+            let episodes = try await CatalogDanmakuClient(address: address, transport: http).episodes(CatalogDanmakuAnime(id: animeID, title: result.title, type: ""))
+                .map { NativeDanmakuCatalogEpisode(id: $0.id, title: $0.title, url: nil) }
+            try validate(source)
+            return episodes
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            // The same episode list also travels embedded in the
+            // search/episodes answer the direct search reads. The two are
+            // separate server documents: one being rejected for this anime
+            // (an oversize or malformed bangumi answer) must not end the
+            // episode while the other still answers, so ask once more the
+            // direct way before giving the original error back.
+            if let episodes = try? await directEpisodes(of: result, source: source, address: address), !episodes.isEmpty {
+                try validate(source)
+                return episodes
+            }
+            try Task.checkCancellation()
+            throw error
+        }
+    }
+    /// The matched anime's episodes as the search/episodes endpoint embeds
+    /// them - the document `search` reads first, asked for the one title.
+    private func directEpisodes(of result: NativeDanmakuCatalogResult, source: NativeDanmakuCatalogSource, address: String) async throws -> [NativeDanmakuCatalogEpisode]? {
+        let server = try CatalogDanmakuClient(address: address).server
+        var components = URLComponents(url: server.appendingPathComponent("api/v2/search/episodes"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [.init(name: "anime", value: result.title)]
+        var request = URLRequest(url: components.url!, timeoutInterval: 22)
+        source.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+        let data = try await http.send(request)
+        try Task.checkCancellation()
+        guard let root = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let animes = root.object?["animes"]?.array ?? root.object?["data"]?.object?["animes"]?.array else { return nil }
+        let wanted = CatalogDanmakuMatcher.normalized(result.title)
+        for anime in animes {
+            guard let title = anime.object?["animeTitle"]?.string ?? anime.object?["title"]?.string else { continue }
+            let id = anime.object?["animeId"]?.string ?? anime.object?["bangumiId"]?.string
+            guard id == result.animeID || CatalogDanmakuMatcher.normalized(title) == wanted else { continue }
+            let episodes = (anime.object?["episodes"]?.array ?? []).compactMap { value -> NativeDanmakuCatalogEpisode? in
+                guard let id = value.object?["episodeId"]?.string else { return nil }
+                return NativeDanmakuCatalogEpisode(id: id, title: value.object?["episodeTitle"]?.string ?? value.object?["title"]?.string ?? "第 \(id) 集", url: nil)
+            }
+            if !episodes.isEmpty { return episodes }
+        }
+        return nil
     }
     public func prepareParameters(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) async throws -> [String: JSONValue] {
         try validate(result.source)

@@ -7,10 +7,17 @@ import TVCore
 /// matched before any NSError bridging: bridged, TVError.http(401) and
 /// TVError.http(503) share one domain and an enum ordinal, so the status code -
 /// the one fact that separates "fix the address" from "wait and retry" - is lost.
+/// Everything else records its full description, with the bridged domain:code
+/// behind it: the ordinal alone ("TVError:1") names the enum case but says
+/// nothing about what the service answered, and one screenshot of the
+/// diagnostics page has to be enough to tell the two apart.
 func danmakuFailureDetail(_ error: Error) -> String {
     if case TVError.http(let code) = error { return "http:\(code)" }
     let failure = error as NSError
-    return "\(failure.domain):\(failure.code)"
+    let description = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    let oneLine = description.replacingOccurrences(of: "\n", with: " ")
+    let clipped = oneLine.count > 160 ? String(oneLine.prefix(160)) + "…" : oneLine
+    return "\(clipped) [\(failure.domain):\(failure.code)]"
 }
 
 /// The errors a load can end with when it was not answered but replaced:

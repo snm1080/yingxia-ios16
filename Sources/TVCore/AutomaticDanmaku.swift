@@ -105,12 +105,18 @@ public struct DanmakuHTTP: Sendable {
     }
     private static func fetch(_ request: URLRequest) async throws -> Data {
         let (bytes, response) = try await URLSession.shared.bytes(for: request, delegate: request.value(forHTTPHeaderField: "X-AppId") == nil ? nil : DandanplayRedirectPolicy.shared)
-        guard let response = response as? HTTPURLResponse else { throw TVError.invalidConfiguration }
+        // A rejected answer is described, not numbered: these guards used to
+        // throw TVError.invalidConfiguration, which reaches the diagnostics
+        // page as the bare ordinal "TVError:1" - a whole rapid-switch session
+        // failed at the catalog prepare step with nothing on record but
+        // that. The oversize wording matches the catalog client's own
+        // direct path (CatalogDanmaku), which never used the ordinal here.
+        guard let response = response as? HTTPURLResponse else { throw TVError.unsupported(L10n.text("The danmaku service returned an invalid response.")) }
         guard (200..<300).contains(response.statusCode) else { throw TVError.http(response.statusCode) }
-        guard response.expectedContentLength <= CatalogDanmakuParser.maximumBytes else { throw TVError.invalidConfiguration }
+        guard response.expectedContentLength <= CatalogDanmakuParser.maximumBytes else { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
         var data = Data()
         for try await byte in bytes {
-            guard data.count < CatalogDanmakuParser.maximumBytes else { throw TVError.invalidConfiguration }
+            guard data.count < CatalogDanmakuParser.maximumBytes else { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
             data.append(byte)
         }
         try Task.checkCancellation(); return data
@@ -121,7 +127,8 @@ public struct DanmakuHTTP: Sendable {
         if let referer { request.setValue(referer, forHTTPHeaderField: "Referer") }
         if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let data = try await send(request)
-        guard data.count <= CatalogDanmakuParser.maximumBytes, let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw TVError.invalidConfiguration }
+        guard data.count <= CatalogDanmakuParser.maximumBytes else { throw TVError.unsupported(L10n.text("The danmaku file is too large.")) }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw TVError.unsupported(L10n.text("The danmaku service returned an invalid response.")) }
         return root
     }
 }
