@@ -40,7 +40,7 @@ struct LocalDanmakuAPISettings: View {
                     .accessibilityIdentifier("settings.danmaku.api.add")
             }
             if !model.message.isEmpty { Text(model.message).font(.caption).foregroundStyle(.secondary) }
-            Text("自动匹配只使用已启用的 API，按列表顺序尝试。支持 Dandanplay 兼容的搜索、分集与弹幕协议。")
+            Text("自动匹配只使用已启用的 API，按列表顺序尝试。支持 Dandanplay 兼容的搜索、分集与弹幕协议。自建服务（如 LogVar）需要 token 时，请填写带 token 的完整地址，例如 https://example.com:88/你的token，否则服务器会返回 401 未授权。")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

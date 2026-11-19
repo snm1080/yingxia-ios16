@@ -138,6 +138,12 @@ import TVCore
             } catch { if !Task.isCancelled { self.setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning) } }
         }
     }
+    /// One diagnostics line per failed catalog step, so a screenshot of
+    /// 设置 → 关于 → 诊断 shows which source and step failed and how.
+    private func noteCatalogFailure(_ error: Error, source: NativeDanmakuCatalogSource, step: String) {
+        let failure = error as NSError
+        Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=\(step) failed=\(failure.domain):\(failure.code)")
+    }
     private func matchCatalogAutomatically() async {
         guard catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
         guard catalog.automatic else { setStatus("自动匹配弹幕已关闭"); return }
@@ -145,6 +151,7 @@ import TVCore
         let active = generation
         setStatus("正在自动匹配订阅弹幕")
         var failed = false
+        var unauthorized = false
         if LocalDanmakuPreferences.builtinEnabled(), let pushed = await CatPawDanmaku.comments(for: context), !pushed.comments.isEmpty {
             guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
             let normalized: JSONValue = .array(pushed.comments.map { comment in
@@ -187,15 +194,23 @@ import TVCore
                     } catch {
                         if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                         failed = true
+                        noteCatalogFailure(error, source: source, step: "prepare")
+                        if case TVError.http(let code) = error, code == 401 || code == 403 { unauthorized = true }
                     }
                 }
             } catch {
                 if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                 failed = true
+                noteCatalogFailure(error, source: source, step: "search")
+                if case TVError.http(let code) = error, code == 401 || code == 403 { unauthorized = true }
             }
         }
         guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
-        setStatus(failed ? "弹幕获取失败，可在弹幕面板重试" : "没有匹配到本集弹幕，可在弹幕面板选择来源",
+        // A self-hosted API that gates on a token in its address path answers
+        // every step with 401; calling that a generic fetch failure sends the
+        // viewer hunting in the wrong place, so name the actual problem.
+        setStatus(unauthorized ? "弹幕 API 未授权（401）：请检查 API 地址是否带 token" :
+                  failed ? "弹幕获取失败，可在弹幕面板重试" : "没有匹配到本集弹幕，可在弹幕面板选择来源",
                   kind: failed ? .warning : .information)
     }
     func prepareCatalog(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) async throws {
@@ -365,7 +380,11 @@ import TVCore
             let count = try await prepare(parameters, manual: false, source: source)
             guard current() else { return false }
             if count > 0 { setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success); return true }
-        } catch { /* A stale memory must never block the normal matching below. */ }
+        } catch {
+            // A stale memory must never block the normal matching below, but the
+            // failure itself is worth one diagnostics line before falling through.
+            noteCatalogFailure(error, source: source, step: "remembered")
+        }
         return false
     }
 

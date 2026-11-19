@@ -157,13 +157,22 @@ struct LocalDanmakuCatalogPanel: View {
     }
     private func cancel() { generation = UUID(); work?.cancel(); work = nil; busy = false }
     private func clearResults() { results = []; chosen = nil; episodes = []; episodeQuery = ""; page = 0 }
+    /// A danmaku server that refuses authorization (LogVar and other self-hosted
+    /// APIs gate on a token carried in the address path) otherwise surfaces as a
+    /// bare "HTTP 401" that reads like a server fault. Say what to fix instead.
+    private static func displayError(_ error: Error) -> String {
+        if case TVError.http(let code) = error, code == 401 || code == 403 {
+            return "服务器返回 \(code) 未授权：请检查弹幕 API 地址是否带 token（自建服务如 LogVar 应填 https://地址:端口/token）"
+        }
+        return error.localizedDescription
+    }
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
         guard !busy else { return }
         let active = UUID(); generation = active; busy = true; status = ""
         work = Task {
             defer { if generation == active { busy = false; work = nil } }
             do { try await action() }
-            catch { if generation == active && !Task.isCancelled { status = error.localizedDescription } }
+            catch { if generation == active && !Task.isCancelled { status = displayError(error) } }
         }
     }
     private func refreshSources() {
@@ -187,7 +196,7 @@ struct LocalDanmakuCatalogPanel: View {
         do {
             try NativeDanmakuCatalog.setEnabled(enabled, source: source)
             reloadSourcePreferences()
-        } catch { status = error.localizedDescription }
+        } catch { status = displayError(error) }
     }
     private func search() {
         let selected = enabledSources
@@ -201,7 +210,11 @@ struct LocalDanmakuCatalogPanel: View {
                 for (index, source) in selected.enumerated() {
                     group.addTask {
                         do { return (index, try await catalog.search(query, source: source), nil) }
-                        catch { return (index, [], source.name + "：" + error.localizedDescription) }
+                        catch {
+                            let failure = error as NSError
+                            Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=search failed=\(failure.domain):\(failure.code)")
+                            return (index, [], source.name + "：" + displayError(error))
+                        }
                     }
                 }
                 var answers: [(Int, [NativeDanmakuCatalogResult], String?)] = []
