@@ -73,8 +73,8 @@ func danmakuFailureDetail(_ error: Error) -> String {
         status = message
         if onScreen { notice = message.isEmpty ? nil : PlayerNotice(message: message, kind: kind) }
     }
-    private func showMatchBanner(_ message: String, kind: PlayerNotice.Kind = .success) {
-        matchBanner = PlayerNotice(message: message, kind: kind)
+    private func showMatchBanner(_ message: String, detail: String? = nil, kind: PlayerNotice.Kind = .success) {
+        matchBanner = PlayerNotice(message: message, kind: kind, detail: detail)
     }
     /// The banner's one line, assembled from whatever the match actually
     /// carries: "匹配到弹幕：{剧名} ({年份})【{类型}】from {来源}【{标识}】第 {集数} 集".
@@ -133,7 +133,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
     }
     private func announceContextMatch(count: Int) {
         guard let line = contextMatchBannerLine() else { return }
-        showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+        showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
                         kind: count > 0 ? .success : .information)
     }
     func sourceLoaded(count: Int) {
@@ -327,7 +327,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
                         if count > 0 {
                             setStatus("已自动匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
-                            showMatchBanner(matchBannerLine(result: result, episodeNumber: number) + " · 已加载 \(count) 条弹幕")
+                            showMatchBanner(matchBannerLine(result: result, episodeNumber: number), detail: "已加载 \(count) 条弹幕")
                             return
                         }
                         // Matched and loaded, but zero comments on this
@@ -395,7 +395,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             // A hand-picked load shares the picture with the automatic flow,
             // so its outcome takes the same single banner.
             let line = matchBannerLine(result: result, episodeNumber: CatalogDanmakuMatcher.episodeNumber(episode.title))
-            showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+            showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
                             kind: count > 0 ? .success : .information)
         } catch {
             if scope == generation, catalog.selection.ticket == ticket {
@@ -427,7 +427,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             let line = matchBannerLine(title: rememberedTitle ?? context.videoName, year: context.year, category: nil,
                                        platform: nil, sourceName: source.name, sourceIdentifier: identifier,
                                        episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
-            showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+            showMatchBanner(line, detail: count > 0 ? "已加载 \(count) 条弹幕" : nil,
                             kind: count > 0 ? .success : .information)
         }
     }
@@ -573,7 +573,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             guard current() else { return .missed }
             if count > 0 {
                 setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
-                showMatchBanner(matchBannerLine(result: result, episodeNumber: number) + " · 已加载 \(count) 条弹幕")
+                showMatchBanner(matchBannerLine(result: result, episodeNumber: number), detail: "已加载 \(count) 条弹幕")
                 return .loaded
             }
             return .matchedEmpty(matchBannerLine(result: result, episodeNumber: number))

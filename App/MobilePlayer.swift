@@ -322,18 +322,30 @@ struct MobilePlayerView: View {
             if let banner = session.mediaEnhancements.matchBanner, banner.isVisible(at: uptime),
                !pip.active, playingOn == nil, playerSize.width > 0, playerSize.height > 0 {
                 let picture = videoAspect.pictureFrame(in: playerSize, source: session.engine.presentationSize)
-                Text(banner.message)
-                    .font(.system(size: PlayerCornerText.size(inline: inline)))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .frame(width: picture.width, alignment: .leading)
-                    .background(Color.black.opacity(0.55))
-                    .position(x: picture.midX, y: picture.midY)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("player.danmakuMatchBanner")
+                // The match line, and under it the loaded count on its own
+                // line: appended to the match line, the count was the first
+                // thing the tail truncation ate. The band grows to fit both
+                // lines and stays centred on the picture as one block.
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(banner.message)
+                        .font(.system(size: PlayerCornerText.size(inline: inline)))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let detail = banner.detail {
+                        Text(detail)
+                            .font(.system(size: PlayerCornerText.size(inline: inline)))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .frame(width: picture.width, alignment: .leading)
+                .background(Color.black.opacity(0.55))
+                .position(x: picture.midX, y: picture.midY)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("player.danmakuMatchBanner")
             }
         }
     }
@@ -1150,8 +1162,7 @@ struct MobilePlayerView: View {
     }
 
     private var panelButtons: some View {
-        let firstPanel = availablePanels.first
-        return HStack(spacing: 3) {
+        HStack(spacing: 3) {
             ForEach(availablePanels) { panel in
                 Button { togglePanel(panel) } label: {
                     HStack(spacing: 4) {
@@ -1159,15 +1170,19 @@ struct MobilePlayerView: View {
                         if playerSize.width >= 760 { Text(panel.title).font(.system(size: 15)) }
                     }
                     .padding(.horizontal, playerSize.width >= 760 ? 7 : 0)
-                    // The first panel's symbol view carries a wide transparent
-                    // leading bearing (~25pt before its ink), so even at the
-                    // shared 3pt frame spacing its ink started ~58pt after
-                    // the speed label's ink, against ~27pt on the label's
-                    // other side. Pulling the first label in by 23pt of
-                    // leading padding (labeled layout only) matches the two
-                    // visible gaps; what overflows the button's frame is
-                    // transparent bearing, so neither hit target changes.
-                    .padding(.leading, panel == firstPanel && playerSize.width >= 760 ? -23 : 0)
+                    // No compensation at the junction: the visible gap is
+                    // already the transport row's own. The speed label's ink
+                    // ends (48 - ~27) / 2 ≈ 10pt inside its frame; the first
+                    // panel's ink starts 3pt of frame spacing + 7pt of label
+                    // padding + the symbol's ~2pt leading bearing beyond the
+                    // speed frame's edge, ≈23pt ink to ink — the gap on the speed label's
+                    // other side, and the icon's centre lands on the
+                    // transport row's 51pt pitch. Build 13 pulled the first
+                    // label in by 23pt against a ~25pt bearing measured off
+                    // a screenshot; the bearing is really ~2pt, so the pull
+                    // closed the gap to zero (and pushed the icon's ink
+                    // outside the button's hit frame). Uniform construction
+                    // needs no number tuned to a picture.
                     .playerControlTarget(48)
                 }.buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == panel)).accessibilityLabel(panel.title)
                     .accessibilityIdentifier("player.panel." + panel.rawValue)

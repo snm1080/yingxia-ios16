@@ -1217,6 +1217,50 @@ import TVCore
         }
     }
 
+    /// Resolves the playing episode from its source again, for the error
+    /// page's Try Again. The address an episode was resolved to can die
+    /// while the app is suspended — a bundle's local proxy loses its
+    /// listening ports to iOS and the signed stream behind it expires — and
+    /// preparing that same address again (all the session's own recovery
+    /// and a plain restart ever do) fails identically forever. Choosing the
+    /// episode in the list, or re-entering it from the history, works
+    /// because it resolves the episode afresh; this is that same call for
+    /// the episode already playing, and it keeps the place the history
+    /// last recorded for it. False when the channel has no catalogue
+    /// behind it (a file, a download, a direct address); the caller then
+    /// falls back to restarting the channel as it is.
+    @discardableResult func reresolvePlayingEpisode(from channel: Channel, failed: ((String) -> Void)? = nil) -> Bool {
+        guard playing == channel, let catalog = catalog(for: channel),
+              let context = channel.historyContext, let episode = context.episode(in: catalog.video.episodes) else { return false }
+        cancelEpisodeSelection()
+        let request = episodeRequest
+        let sourceStarted = Date()
+        Diagnostics.shared.record(.info, "player.startup", "entry=reresolve request=\(request) stage=resolve-begin")
+        resolvingEpisode = episode; episodeError = nil
+        episodeTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.episodeRequest == request { self.resolvingEpisode = nil; self.episodeTask = nil } }
+            do {
+                let resolved = try await catalog.client.playback(episode)
+                guard !Task.isCancelled, self.episodeRequest == request, self.playing == channel else { return }
+                Diagnostics.shared.record(.info, "player.startup", "entry=reresolve request=\(request) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted))")
+                let saved = self.visibleHistory.first { $0.context.id == context.id && $0.context.episodeID == context.episodeID && $0.context.episodeFlag == context.episodeFlag }
+                var next = self.catalogChannel(resolved, video: catalog.video, episode: episode, client: catalog.client,
+                                               resumePosition: saved?.resumePosition(for: episode))
+                // A fresh request id makes the replay unmistakable even when
+                // the source hands back the very address it gave before.
+                next.playbackRequestID = UUID()
+                self.playing = next
+            } catch {
+                guard !Task.isCancelled, self.episodeRequest == request, self.playing == channel else { return }
+                Diagnostics.shared.failure("catalog", "reresolve \(catalog.client.reportContext) flag=\(episode.flag)", error)
+                self.episodeError = error.localizedDescription
+                failed?(error.localizedDescription)
+            }
+        }
+        return true
+    }
+
     func cancelEpisodeSelection() {
         episodeRequest = UUID()
         episodeTask?.cancel(); episodeTask = nil; resolvingEpisode = nil

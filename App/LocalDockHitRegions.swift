@@ -78,6 +78,20 @@ extension View {
     /// Their frames are whole capsules, so the hit shape is rounded like the glass.
     func localDockHitRegions(frames: [CGRect]) -> some View {
         contentShape(.interaction, LocalDockTouchShape(frames: frames, rounded: true))
+            .background {
+                // The content shape alone does not absorb: it steers hit
+                // testing for interactions the dock itself owns, and in the
+                // gaps between buttons the dock owns none — the glass plate
+                // is told to ignore touches, so there is nothing drawn for a
+                // tap to land on and it falls through to the posters below
+                // (in the spread layout those gaps are ~45pt wide, half the
+                // capsule). A hair of drawn surface in exactly the capsule's
+                // shape, behind the buttons, gives every point inside the
+                // capsule a landing place: on a button the button takes it,
+                // anywhere else the tap is spent on the dock.
+                LocalDockTouchShape(frames: frames, rounded: true)
+                    .fill(Color.white.opacity(0.001))
+            }
     }
 
     /// Mark only painted controls; inter-capsule spacers and outer shadows pass touches through.
