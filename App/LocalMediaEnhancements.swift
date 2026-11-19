@@ -3,6 +3,16 @@ import Perception
 import AVFoundation
 import TVCore
 
+/// The failure half of a `danmaku.api` diagnostics line. An HTTP refusal must be
+/// matched before any NSError bridging: bridged, TVError.http(401) and
+/// TVError.http(503) share one domain and an enum ordinal, so the status code -
+/// the one fact that separates "fix the address" from "wait and retry" - is lost.
+func danmakuFailureDetail(_ error: Error) -> String {
+    if case TVError.http(let code) = error { return "http:\(code)" }
+    let failure = error as NSError
+    return "\(failure.domain):\(failure.code)"
+}
+
 @MainActor @Perceptible final class NativeMediaEnhancements {
     private(set) var comments: [Danmaku] = []
     private(set) var revision = UUID()
@@ -94,7 +104,16 @@ import TVCore
                 self.ready = true
                 guard self.catalog.enabled else { return }
                 if let saved = self.rememberedFeed(), let source = self.selectedCatalogSource {
-                    try await self.prepareRemembered(saved, source: source)
+                    do { try await self.prepareRemembered(saved, source: source) }
+                    catch {
+                        // The remembered feed is the one path whose failure used to
+                        // leave no trace anywhere; record it before the outer catch
+                        // turns it into the generic unavailable message.
+                        if active == self.generation, !Task.isCancelled {
+                            self.noteCatalogFailure(error, source: source, step: "rememberedFeed")
+                        }
+                        throw error
+                    }
                 } else if self.descriptor != nil, LocalDanmakuPreferences.builtinEnabled() { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
             } catch { if active == self.generation, !Task.isCancelled { self.setStatus("弹幕服务暂不可用，可在弹幕面板重试", kind: .warning) } }
@@ -141,8 +160,7 @@ import TVCore
     /// One diagnostics line per failed catalog step, so a screenshot of
     /// 设置 → 关于 → 诊断 shows which source and step failed and how.
     private func noteCatalogFailure(_ error: Error, source: NativeDanmakuCatalogSource, step: String) {
-        let failure = error as NSError
-        Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=\(step) failed=\(failure.domain):\(failure.code)")
+        Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=\(step) failed=\(danmakuFailureDetail(error))")
     }
     private func matchCatalogAutomatically() async {
         guard catalog.enabled, !catalog.selection.hasExplicitChoice else { return }

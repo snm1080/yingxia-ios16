@@ -211,8 +211,7 @@ struct LocalDanmakuCatalogPanel: View {
                     group.addTask {
                         do { return (index, try await catalog.search(query, source: source), nil) }
                         catch {
-                            let failure = error as NSError
-                            Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=search failed=\(failure.domain):\(failure.code)")
+                            Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=search failed=\(danmakuFailureDetail(error))")
                             return (index, [], source.name + "：" + displayError(error))
                         }
                     }
@@ -229,13 +228,23 @@ struct LocalDanmakuCatalogPanel: View {
     }
     private func choose(_ result: NativeDanmakuCatalogResult) {
         run {
-            let values = try await NativeDanmakuCatalog(context: model.context).episodes(result)
-            try Task.checkCancellation(); episodes = values; chosen = result; page = 0; episodeQuery = ""
+            do {
+                let values = try await NativeDanmakuCatalog(context: model.context).episodes(result)
+                try Task.checkCancellation(); episodes = values; chosen = result; page = 0; episodeQuery = ""
+            } catch {
+                Diagnostics.shared.record(.info, "danmaku.api", "source=\(result.source.name) step=episodes failed=\(danmakuFailureDetail(error))")
+                throw error
+            }
         }
     }
     private func load(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) {
         run {
-            try await enhancements.prepareCatalog(episode, result: result)
+            do {
+                try await enhancements.prepareCatalog(episode, result: result)
+            } catch {
+                Diagnostics.shared.record(.info, "danmaku.api", "source=\(result.source.name) step=load failed=\(danmakuFailureDetail(error))")
+                throw error
+            }
             try Task.checkCancellation()
             enhancements.remember(result: result, episode: episode)
             status = "已加载 " + episode.title
