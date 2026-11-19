@@ -45,6 +45,8 @@ import TVCore
     var audioChoice: CMPersistentTrackID? { engine.tracks.first { $0.kind == .audio && $0.selected }.flatMap { Int32($0.id) } }
     private(set) var activeChannelID: String?
     @PerceptionIgnored private var activeObserver: NSObjectProtocol?
+    @PerceptionIgnored private var lockObserver: NSObjectProtocol?
+    @PerceptionIgnored private var lockPaused = false
     @PerceptionIgnored private var videoCacheObserver: NSObjectProtocol?
     @PerceptionIgnored private var cachePreparation: Task<Void, Never>?
     @PerceptionIgnored private var cachePreparationID = UUID()
@@ -178,6 +180,9 @@ import TVCore
         }
         activeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in self?.recoverAfterForeground() }
+        }
+        lockObserver = NotificationCenter.default.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.handleDeviceLock() }
         }
         videoCacheObserver = NotificationCenter.default.addObserver(forName: MobileMediaServices.videoCacheChanged,
             object: nil, queue: .main) { [weak self] notification in
@@ -623,7 +628,7 @@ import TVCore
         sourceDanmakuLoading?.cancel(); sourceDanmakuLoading = nil; sourceDanmakuLoaded = false
         if playing != nil { ErrorReports.shared.stoppedPlaying() }
         playing = nil; sourceChannel = nil; activeChannelID = nil; historyContext = nil; pendingResume = nil
-        requestedResumePosition = nil; restoredPosition = nil; restoringPosition = false; keepPausedAfterRestore = false
+        requestedResumePosition = nil; restoredPosition = nil; restoringPosition = false; keepPausedAfterRestore = false; lockPaused = false
         skipScope = nil; skipPass = EpisodeSkipPass(); skipSettings = EpisodeSkipSettings()
         editingSkip = false; resumeAfterEditing = false; seekingSegment = false
         transfer = Transfer(); steps = []; switchNotice = nil; orientationPolicy = PlaybackOrientationPolicy()
@@ -631,11 +636,34 @@ import TVCore
         onPlaybackEnded = nil; onUnplayableFile = nil; upcomingEpisode = nil; onAdvance = nil; playsOn = { false }
         clearBoost(); healthyPrefetchSince = nil; upcomingAttempted = false; advancing = false
     }
+    /// The device is locking (protected data going away). Video pauses and does
+    /// not resume by itself when the device unlocks — the user presses play
+    /// (upstream build03 behaviour). A video caught buffering or mid-scrub also
+    /// drops its pending resume, so nothing queued can restart it later.
+    /// Audio-only playback is not paused: music and audiobooks run in their own
+    /// player, and this session's picture-off listening (video track "no")
+    /// keeps playing too.
+    private func handleDeviceLock() {
+        guard engine.mediaID != nil, engine.selections.video != "no" else { return }
+        lockPaused = true
+        if buffering || engine.seeking {
+            pendingResume = nil
+            keepPausedAfterRestore = true
+        }
+        if !paused { engine.pause() }
+    }
     private func recoverAfterForeground() {
         guard let prepared = currentPrepared, engine.mediaID != nil else { return }
         // The cache, HLS proxy and disc reader intentionally use loopback URLs.
         // Returning from PiP changes the surface; it does not invalidate any of those readers.
         engine.resumeAfterForeground()
+        if lockPaused {
+            // Locked while playing: whatever the core did in the background,
+            // the video stays paused until the user presses play.
+            lockPaused = false
+            engine.pause()
+            return
+        }
         guard !paused else { return }
         if prepared.disc?.isAvailable == false || error != nil { _ = recoverPlayback() }
     }

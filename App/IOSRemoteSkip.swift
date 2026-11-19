@@ -32,12 +32,14 @@ import TVCore
         let duration: Double
         let chapters: [RemoteEpisodeSkipChapter]
     }
-    private func setStatus(_ message: String, kind: PlayerNotice.Kind = .information) {
-        guard status != message else { return }
+    /// Status text lives in the intro/outro panel only (CompactEpisodeSkipPanel
+    /// shows `status`). The picture's notices are reserved for the result of an
+    /// actual skip, emitted by complete() — matching, connection and fallback
+    /// states never pop over the video (upstream build03 behaviour). The local
+    /// segments are always merged in tick(), so a failed or unavailable remote
+    /// lookup still skips with the local times and never blocks playback.
+    private func setStatus(_ message: String) {
         status = message
-        if kind == .information, notice?.kind == .success,
-           notice?.isVisible(at: ProcessInfo.processInfo.systemUptime) == true { return }
-        notice = message.isEmpty ? nil : PlayerNotice(message: message, kind: kind)
     }
 
     func begin(channel: Channel, isLive: Bool) {
@@ -80,10 +82,7 @@ import TVCore
             do {
                 guard let identity = try await self.identity(context) else {
                     guard active == self.generation, !Task.isCancelled else { return }
-                    // Sam: this one message must not pop over the player. Keep it as
-                    // the skip panel's status text only, with no PlayerNotice.
-                    self.status = "作品或季集不明确，可手动记录片头片尾"
-                    if self.notice?.message == "正在匹配片头片尾" { self.notice = nil }
+                    self.setStatus("作品或季集不明确，可手动记录片头片尾")
                     self.attempts = 2; return
                 }
                 guard active == self.generation, !Task.isCancelled else { return }
@@ -105,11 +104,11 @@ import TVCore
                 self.setStatus(self.remote.isEmpty ? (message.isEmpty ? "没有匹配的远程片段，已保留本地时间" : message) : "已匹配片头片尾 · " + Array(Set(self.remote.map(\.source))).sorted().joined(separator: " / "))
                 if result.object?["retryable"] == .bool(true) {
                     self.retryAt = Date().addingTimeInterval(15)
-                    self.setStatus(self.attempts < 2 ? "部分在线信息暂不可用，稍后重试；已保留可用时间" : "在线匹配暂不可用，已保留可用时间", kind: .warning)
+                    self.setStatus(self.attempts < 2 ? "部分在线信息暂不可用，稍后重试；已保留可用时间" : "在线匹配暂不可用，已保留可用时间")
                 } else { self.attempts = 2 }
             } catch {
                 guard active == self.generation, !Task.isCancelled else { return }
-                self.setStatus("在线匹配暂不可用，已保留本地时间", kind: .warning)
+                self.setStatus("在线匹配暂不可用，已保留本地时间")
                 self.retryAt = Date().addingTimeInterval(15)
             }
         }
