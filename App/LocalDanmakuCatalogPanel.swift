@@ -172,7 +172,7 @@ struct LocalDanmakuCatalogPanel: View {
         work = Task {
             defer { if generation == active { busy = false; work = nil } }
             do { try await action() }
-            catch { if generation == active && !Task.isCancelled { status = displayError(error) } }
+            catch { if generation == active && !Task.isCancelled { status = Self.displayError(error) } }
         }
     }
     private func refreshSources() {
@@ -196,7 +196,7 @@ struct LocalDanmakuCatalogPanel: View {
         do {
             try NativeDanmakuCatalog.setEnabled(enabled, source: source)
             reloadSourcePreferences()
-        } catch { status = displayError(error) }
+        } catch { status = Self.displayError(error) }
     }
     private func search() {
         let selected = enabledSources
@@ -212,7 +212,7 @@ struct LocalDanmakuCatalogPanel: View {
                         do { return (index, try await catalog.search(query, source: source), nil) }
                         catch {
                             Diagnostics.shared.record(.info, "danmaku.api", "source=\(source.name) step=search failed=\(danmakuFailureDetail(error))")
-                            return (index, [], source.name + "：" + displayError(error))
+                            return (index, [], source.name + "：" + Self.displayError(error))
                         }
                     }
                 }
