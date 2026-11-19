@@ -273,9 +273,9 @@ struct MobilePlayerView: View {
                 let _ = noticeExpiryRevision
                 let uptime = ProcessInfo.processInfo.systemUptime
                 let stackNotices = [session.mediaEnhancements.notice, session.remoteSkip.notice].compactMap { $0 }
-                // The danmaku match banner renders on its own in the middle of
-                // the picture; it only joins this list so its expiry wakes the
-                // same refresh the bottom notices use.
+                // The danmaku match banner renders on its own at the bottom
+                // of the picture; it only joins this list so its expiry wakes
+                // the same refresh the bottom notices use.
                 let allNotices = stackNotices + [session.mediaEnhancements.matchBanner].compactMap { $0 }
                 let notices = stackNotices.filter { $0.isVisible(at: uptime) }
                 let nextExpiry = scenePhase == .active && !pip.active && playingOn == nil
@@ -311,25 +311,24 @@ struct MobilePlayerView: View {
         }
     }
 
-    /// The danmaku match word, MiraPlay-style: one translucent black band
-    /// across the picture's own width at its vertical centre, white text of
-    /// the player's corner size, gone again in a few seconds. It belongs to
-    /// the bare picture - the controls neither wake it nor move it.
+    /// The danmaku match word: one translucent black capsule hugging its
+    /// text at the bottom of the picture, white text of the player's corner
+    /// size, gone again in a few seconds. It floats above the bottom
+    /// controls while they show and keeps a resting gap above the edge
+    /// while they hide - the controls neither wake it nor move it.
     private var danmakuMatchBanner: some View {
         WithPerceptionTracking {
             let _ = noticeExpiryRevision
             let uptime = ProcessInfo.processInfo.systemUptime
             if let banner = session.mediaEnhancements.matchBanner, banner.isVisible(at: uptime),
                !pip.active, playingOn == nil, playerSize.width > 0, playerSize.height > 0 {
-                let picture = videoAspect.pictureFrame(in: playerSize, source: session.engine.presentationSize)
                 // The match, split at its seam: the title line, and under
                 // it the source line with the loaded count at its end. As
                 // one line the whole string truncated long titles away on
                 // a narrow portrait frame; the title line may still wrap
-                // when even it does not fit. The band grows to fit its
-                // lines and stays centred on the picture as one block, and
-                // every line the banner ever shows — match, source,
-                // no-match, failure — sits in the middle of the band.
+                // when even it does not fit. The capsule grows to fit its
+                // lines, and every line the banner ever shows — match,
+                // source, no-match, failure — sits centred within it.
                 VStack(alignment: .center, spacing: 2) {
                     Text(banner.message)
                         .font(.system(size: PlayerCornerText.size(inline: inline)))
@@ -343,15 +342,26 @@ struct MobilePlayerView: View {
                     }
                 }
                 .foregroundStyle(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .frame(maxWidth: max(0, playerSize.width - 32))
+                .background(Color.black.opacity(0.55), in: Capsule())
                 .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .frame(width: picture.width, alignment: .center)
-                .background(Color.black.opacity(0.55))
-                .position(x: picture.midX, y: picture.midY)
+                .padding(.bottom, danmakuBannerBottomInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("player.danmakuMatchBanner")
             }
         }
+    }
+
+    /// The match capsule's distance from the bottom edge: the bottom
+    /// notices' own inset — clear of the transport while the controls
+    /// show, a resting gap above the edge while they hide — plus the
+    /// height of any notice stack currently sharing the bottom, so the
+    /// capsule and the notices never overlap.
+    private var danmakuBannerBottomInset: CGFloat {
+        noticeBottomInset + (noticeStackHeight > 0 ? noticeStackHeight + 6 : 0)
     }
 
     private var noticeBottomInset: CGFloat {
