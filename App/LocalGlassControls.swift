@@ -129,7 +129,10 @@ struct LocalGlassChoicePicker<Value: Hashable>: View {
                                 }
                             }
                         }
-                        .frame(height: min(220, CGFloat(max(1, visibleOptions.count)) * 48))
+                        // Cap fits six rows (6 * 48) so short lists — e.g. the
+                        // five danmaku colour modes — expand fully visible and
+                        // tappable; longer lists keep scrolling under the cap.
+                        .frame(height: min(288, CGFloat(max(1, visibleOptions.count)) * 48))
                         .scrollDismissesKeyboard(.interactively)
                     }
                     .padding(6).localGlassInputSurface()
