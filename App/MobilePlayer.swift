@@ -1102,12 +1102,9 @@ struct MobilePlayerView: View {
             Button { next?.go(); poke() } label: { Image(systemName: "forward.end.fill").playerControlTarget(48) }
                 .disabled(next == nil || next?.busy == true).accessibilityLabel("下一集")
                 .accessibilityIdentifier("player.next")
-            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 17, weight: .semibold)).playerControlTarget(48) }
+            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 19, weight: .semibold)).playerControlTarget(48) }
                 .accessibilityLabel("倍速")
                 .accessibilityIdentifier("player.panel.speed").disabled(session.isLive)
-            Button { togglePanel(.volume) } label: {
-                Image(systemName: session.engine.muted ? "speaker.slash.fill" : "speaker.wave.2.fill").playerControlTarget(48)
-            }.accessibilityLabel("音量").accessibilityIdentifier("player.panel.volume")
         }.buttonStyle(PlayerToolbarButtonStyle())
     }
 
@@ -1127,7 +1124,7 @@ struct MobilePlayerView: View {
     }
 
     private var availablePanels: [LocalPlayerPanel] {
-        var panels: [LocalPlayerPanel] = [.episodes, .quality, .video, .audio, .subtitle, .danmaku]
+        var panels: [LocalPlayerPanel] = [.episodes, .quality, .video, .audio, .danmaku, .subtitle]
         if !session.engine.chapters.isEmpty || !session.discTitles.isEmpty { panels.append(.chapters) }
         if channel.skipScope != nil && !session.isLive { panels.append(.skip) }
         return panels
