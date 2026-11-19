@@ -1021,8 +1021,14 @@ struct MobilePlayerView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     transportButtons
-                    Spacer(minLength: 12)
                     panelButtons
+                    // The slack belongs after the panels, not between the two
+                    // groups: the panel row now starts one HStack spacing (10pt)
+                    // after the transport group instead of spacing + spacer +
+                    // spacing (32pt), and the spacer only keeps the fullscreen
+                    // toggle pinned to the right edge when the bar is wider
+                    // than its content.
+                    Spacer(minLength: 12)
                     if let toggleFullScreen {
                         Button(action: toggleFullScreen) {
                             Image(systemName: layout == .pageFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").playerControlTarget(48)
