@@ -316,6 +316,14 @@ struct MobilePlayerView: View {
     /// size, gone again in a few seconds. It floats above the bottom
     /// controls while they show and keeps a resting gap above the edge
     /// while they hide - the controls neither wake it nor move it.
+    ///
+    /// The width rule, exactly: the capsule is as wide as its widest line
+    /// plus 20 pt of padding on each side, and no wider than the player
+    /// width less 32 pt; at that cap the title line wraps and the source
+    /// line truncates instead. The cap has to sit OUTSIDE the background -
+    /// a maxWidth frame is flexible and expands to the proposed width, so
+    /// with the capsule painted on the frame (build 18) the band spanned
+    /// the whole picture frame no matter how short its text was.
     private var danmakuMatchBanner: some View {
         WithPerceptionTracking {
             let _ = noticeExpiryRevision
@@ -344,9 +352,8 @@ struct MobilePlayerView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .frame(maxWidth: max(0, playerSize.width - 32))
                 .background(Color.black.opacity(0.55), in: Capsule())
-                .padding(.horizontal, 16)
+                .frame(maxWidth: max(0, playerSize.width - 32), alignment: .center)
                 .padding(.bottom, danmakuBannerBottomInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .allowsHitTesting(false)
