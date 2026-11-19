@@ -325,8 +325,11 @@ struct MobilePlayerView: View {
                 // The match line, and under it the loaded count on its own
                 // line: appended to the match line, the count was the first
                 // thing the tail truncation ate. The band grows to fit both
-                // lines and stays centred on the picture as one block.
-                VStack(alignment: .leading, spacing: 2) {
+                // lines and stays centred on the picture as one block. The
+                // two bare outcome words (no match, load failed) sit in the
+                // middle of the band instead; a match line keeps its
+                // leading edge, count included.
+                VStack(alignment: banner.centered ? .center : .leading, spacing: 2) {
                     Text(banner.message)
                         .font(.system(size: PlayerCornerText.size(inline: inline)))
                         .lineLimit(1)
@@ -341,7 +344,7 @@ struct MobilePlayerView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
-                .frame(width: picture.width, alignment: .leading)
+                .frame(width: picture.width, alignment: banner.centered ? .center : .leading)
                 .background(Color.black.opacity(0.55))
                 .position(x: picture.midX, y: picture.midY)
                 .allowsHitTesting(false)
