@@ -25,6 +25,30 @@ const defaults = {
   ai: { enabled: false, endpoint: '', protocol: 'chat', model: '', apiKey: '', targetLanguage: 'zh-CN', transcriptionEndpoint: '', transcriptionModel: 'whisper-1', transcriptionApiKey: '', transcriptionProtocol: 'transcription', transcriptionUseTranslation: false },
 };
 
+/// The danmaku comment fetch mirrors the Swift transports' shared policy
+/// (DanmakuRetry in TVCore): up to two retries, about 1 s then 3 s apart,
+/// when the failure is transient - a network error, a timeout, an
+/// interrupted download, or HTTP 5xx. A deterministic refusal (4xx,
+/// oversize, redirect problems) or a caller cancellation throws at once.
+/// Only the danmaku.prepare call site wraps fetchBuffer this way; the
+/// helper's global semantics are unchanged for every other consumer.
+const danmakuFetchBackoffsMs = [1000, 3000];
+function danmakuFetchIsTransient(error, signal) {
+  if (signal?.aborted) return false;
+  if (typeof error?.httpStatus === 'number') return error.httpStatus >= 500 && error.httpStatus < 600;
+  return ['NETWORK_ERROR', 'REQUEST_ABORTED', 'DOWNLOAD_INTERRUPTED'].includes(error?.code);
+}
+async function fetchDanmakuBuffer(url, options) {
+  let retries = 0;
+  for (;;) {
+    try { return await fetchBuffer(url, options); }
+    catch (error) {
+      if (retries >= danmakuFetchBackoffsMs.length || !danmakuFetchIsTransient(error, options.signal)) throw error;
+      await new Promise(resolve => setTimeout(resolve, danmakuFetchBackoffsMs[retries++]));
+    }
+  }
+}
+
 /// Shared portable business logic runs inside the already embedded Node, never a desktop child process.
 export class MobileServices {
   constructor(directory, baseURL) {
@@ -287,7 +311,7 @@ export class MobileServices {
         } else {
           if (!/^https?:\/\//i.test(params.url || '')) throw new Error('弹幕地址无效');
           let contentType = '';
-          const bytes = await fetchBuffer(params.url, { signal, maxBytes: 32 * 1024 ** 2, timeoutMs: 45000, headers: params.headers || {},
+          const bytes = await fetchDanmakuBuffer(params.url, { signal, maxBytes: 32 * 1024 ** 2, timeoutMs: 45000, headers: params.headers || {},
             onResponse: response => { contentType = response.headers.get('content-type') || ''; } });
           text = decodeDanmaku(bytes, contentType);
         }
