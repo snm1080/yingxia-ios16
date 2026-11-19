@@ -294,11 +294,15 @@ struct CompactPlayerPopup<Content: View>: View {
 
 /// Both player rows use the same unplated symbols, hit targets and selected feedback.
 struct PlayerToolbarButtonStyle: ButtonStyle {
+    /// The size every bottom-bar glyph renders at through this style. A text
+    /// readout in the same bar (the speed label) takes this size too, so the
+    /// word and the symbols beside it read as one row.
+    static let glyphSize: CGFloat = 24
     var selected = false
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 24, weight: .medium))
+            .font(.system(size: Self.glyphSize, weight: .medium))
             .frame(minWidth: 44, minHeight: 44)
             .foregroundStyle(.white.opacity(enabled ? 0.96 : 0.3))
             .background(selected ? Color.accentColor.opacity(0.2) : Color.white.opacity(configuration.isPressed ? 0.12 : 0),

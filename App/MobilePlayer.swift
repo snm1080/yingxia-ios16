@@ -1102,7 +1102,7 @@ struct MobilePlayerView: View {
             Button { next?.go(); poke() } label: { Image(systemName: "forward.end.fill").playerControlTarget(48) }
                 .disabled(next == nil || next?.busy == true).accessibilityLabel("下一集")
                 .accessibilityIdentifier("player.next")
-            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: 19, weight: .semibold)).playerControlTarget(48) }
+            Button { togglePanel(.speed) } label: { Text(Self.speedLabel(speed)).font(.system(size: PlayerToolbarButtonStyle.glyphSize, weight: .semibold)).playerControlTarget(48) }
                 .accessibilityLabel("倍速")
                 .accessibilityIdentifier("player.panel.speed").disabled(session.isLive)
         }.buttonStyle(PlayerToolbarButtonStyle())
