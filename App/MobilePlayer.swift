@@ -1020,14 +1020,17 @@ struct MobilePlayerView: View {
         GeometryReader { viewport in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    transportButtons
-                    panelButtons
-                    // The slack belongs after the panels, not between the two
-                    // groups: the panel row now starts one HStack spacing (10pt)
-                    // after the transport group instead of spacing + spacer +
-                    // spacing (32pt), and the spacer only keeps the fullscreen
-                    // toggle pinned to the right edge when the bar is wider
-                    // than its content.
+                    // The two button groups form one row at their own 3pt
+                    // frame spacing; the outer 10pt spacing only separates
+                    // the row from the spacer and the fullscreen toggle. The
+                    // slack belongs after the panels, not between the groups,
+                    // and the spacer only keeps the fullscreen toggle pinned
+                    // to the right edge when the bar is wider than its
+                    // content.
+                    HStack(spacing: 3) {
+                        transportButtons
+                        panelButtons
+                    }
                     Spacer(minLength: 12)
                     if let toggleFullScreen {
                         Button(action: toggleFullScreen) {
@@ -1115,14 +1118,25 @@ struct MobilePlayerView: View {
     }
 
     private var panelButtons: some View {
-        HStack(spacing: 3) {
+        let firstPanel = availablePanels.first
+        return HStack(spacing: 3) {
             ForEach(availablePanels) { panel in
                 Button { togglePanel(panel) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: panel.symbol).font(.system(size: 24))
                         if playerSize.width >= 760 { Text(panel.title).font(.system(size: 15)) }
                     }
-                    .padding(.horizontal, playerSize.width >= 760 ? 7 : 0).playerControlTarget(48)
+                    .padding(.horizontal, playerSize.width >= 760 ? 7 : 0)
+                    // The first panel's symbol view carries a wide transparent
+                    // leading bearing (~25pt before its ink), so even at the
+                    // shared 3pt frame spacing its ink started ~58pt after
+                    // the speed label's ink, against ~27pt on the label's
+                    // other side. Pulling the first label in by 23pt of
+                    // leading padding (labeled layout only) matches the two
+                    // visible gaps; what overflows the button's frame is
+                    // transparent bearing, so neither hit target changes.
+                    .padding(.leading, panel == firstPanel && playerSize.width >= 760 ? -23 : 0)
+                    .playerControlTarget(48)
                 }.buttonStyle(PlayerToolbarButtonStyle(selected: localPanel == panel)).accessibilityLabel(panel.title)
                     .accessibilityIdentifier("player.panel." + panel.rawValue)
             }
