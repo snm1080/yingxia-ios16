@@ -20,6 +20,11 @@ func danmakuFailureDetail(_ error: Error) -> String {
     private(set) var sourceRevision = UUID()
     private(set) var status = ""
     private(set) var notice: PlayerNotice?
+    /// The automatic flow's one on-screen word: a single centre banner in the
+    /// MiraPlay manner, published only when a load reaches its outcome. The
+    /// panel keeps reading `status` exactly as before; progress states and the
+    /// panel's detailed wordings never reach the picture.
+    private(set) var matchBanner: PlayerNotice?
     private(set) var isLive = false
     private(set) var sessionID = ""
     private(set) var timelineVersion = 0
@@ -63,15 +68,79 @@ func danmakuFailureDetail(_ error: Error) -> String {
         catalog.nativeImport = { [weak self] url in try await self?.importFile(url) }
         catalog.nativeAutomatic = { [weak self] in self?.settingsChanged() }
     }
-    private func setStatus(_ message: String, kind: PlayerNotice.Kind = .information) {
+    private func setStatus(_ message: String, kind: PlayerNotice.Kind = .information, onScreen: Bool = true) {
         guard status != message || notice == nil else { return }
         status = message
-        notice = message.isEmpty ? nil : PlayerNotice(message: message, kind: kind)
+        if onScreen { notice = message.isEmpty ? nil : PlayerNotice(message: message, kind: kind) }
+    }
+    private func showMatchBanner(_ message: String, kind: PlayerNotice.Kind = .success) {
+        matchBanner = PlayerNotice(message: message, kind: kind)
+    }
+    /// The banner's one line, assembled from whatever the match actually
+    /// carries: "匹配到弹幕：{剧名} ({年份})【{类型}】from {来源}【{标识}】第 {集数} 集".
+    /// Aggregate titles arrive already decorated ("大炎双雄(2026)【短剧】from
+    /// hongguo") and are split back into their parts; a plain title falls back
+    /// to the raw record's year/type and then the playing context's year. Any
+    /// part the match does not carry is simply left out.
+    private func matchBannerLine(title: String, year: String?, category: String?, platform: String?,
+                                 sourceName: String?, sourceIdentifier: String?, episodeNumber: Int?) -> String {
+        var line = "匹配到弹幕：\(title)"
+        if let year, !year.isEmpty { line += " (\(year))" }
+        if let category, !category.isEmpty { line += "【\(category)】" }
+        if let platform, !platform.isEmpty { line += " from \(platform)" }
+        else if let sourceName, !sourceName.isEmpty { line += " from \(sourceName)" }
+        if let sourceIdentifier, !sourceIdentifier.isEmpty { line += "【\(sourceIdentifier)】" }
+        if let episodeNumber { line += " 第 \(episodeNumber) 集" }
+        return line
+    }
+    private func matchBannerLine(result: NativeDanmakuCatalogResult, episodeNumber: Int?) -> String {
+        var title = result.title, year: String?, category: String?, platform: String?
+        let pattern = #"^(.+?)\((\d{4})\)【([^】]+)】from\s+(\S+)$"#
+        if let expression = try? NSRegularExpression(pattern: pattern),
+           let match = expression.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) {
+            let text = title as NSString
+            title = text.substring(with: match.range(at: 1)); year = text.substring(with: match.range(at: 2))
+            category = text.substring(with: match.range(at: 3)); platform = text.substring(with: match.range(at: 4))
+        }
+        if year == nil {
+            let raw = result.raw.object
+            if let value = raw?["year"]?.string ?? raw?["year"]?.int.map({ String($0) }), !value.isEmpty { year = value }
+            else if let start = raw?["startDate"]?.string, start.count >= 4, start.prefix(4).allSatisfy(\.isNumber) { year = String(start.prefix(4)) }
+            else { year = catalog.context?.year }
+        }
+        if category == nil {
+            let raw = result.raw.object
+            category = raw?["typeDescription"]?.string ?? raw?["type"]?.string
+        }
+        // A custom API's id is a UUID - an internal key, not a name worth
+        // printing. A short non-UUID id is a real identifier; aggregate
+        // results fall back to the source's name, the way MiraPlay repeats it.
+        let identifier: String?
+        if UUID(uuidString: result.source.id) == nil, !result.source.id.isEmpty { identifier = result.source.id }
+        else if platform != nil { identifier = result.source.name }
+        else { identifier = nil }
+        return matchBannerLine(title: title, year: year, category: category, platform: platform,
+                               sourceName: result.source.name, sourceIdentifier: identifier, episodeNumber: episodeNumber)
+    }
+    /// The line for loads that carry no catalog result (the playing source's
+    /// own feed, the builtin feed, pushed comments): the playing work's name
+    /// and episode, nothing else is honestly available.
+    private func contextMatchBannerLine() -> String? {
+        guard let context = channel?.historyContext ?? catalog.context else { return nil }
+        return matchBannerLine(title: context.videoName, year: context.year, category: nil, platform: nil,
+                               sourceName: nil, sourceIdentifier: nil,
+                               episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
+    }
+    private func announceContextMatch(count: Int) {
+        guard let line = contextMatchBannerLine() else { return }
+        showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+                        kind: count > 0 ? .success : .information)
     }
     func sourceLoaded(count: Int) {
         guard !catalog.selection.hasExplicitChoice else { return }
         setStatus(count > 0 ? "已加载订阅弹幕 · \(count) 条" : "订阅没有返回弹幕",
-                  kind: count > 0 ? .success : .information)
+                  kind: count > 0 ? .success : .information, onScreen: false)
+        announceContextMatch(count: count)
     }
     var serviceParams: [String: JSONValue] {
         ["sessionId": .string(sessionID), "mediaVersion": .number(0), "timelineVersion": .number(Double(timelineVersion))]
@@ -92,7 +161,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 baseURL: base.absoluteString, headers: channel.headers)
             if let descriptor { MediaDanmakuRegistry.register(descriptor, for: channel.url) }
         }
-        setStatus(catalog.enabled ? "正在准备弹幕" : "弹幕已关闭")
+        setStatus(catalog.enabled ? "正在准备弹幕" : "弹幕已关闭", onScreen: false)
         let active = generation
         loading = Task { [weak self] in
             guard let self else { return }
@@ -116,19 +185,25 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         // automatic sweep, the same way a stale per-show memory
                         // falls through in matchRememberedShow. This runs at most
                         // once - the sweep never re-enters the remembered feed.
-                        self.setStatus("记住的弹幕来源加载失败，正在改走自动匹配", kind: .warning)
+                        self.setStatus("记住的弹幕来源加载失败，正在改走自动匹配", kind: .warning, onScreen: false)
                         await self.matchCatalogAutomatically()
                         // Keep the two halves of the story distinguishable when the
                         // sweep also comes up empty; a success speaks for itself.
+                        // The banner is the sweep's own outcome and stands as-is.
                         if self.status == "没有匹配到本集弹幕，可在弹幕面板选择来源" {
-                            self.setStatus("记住的来源加载失败，自动匹配也没有找到本集弹幕，可在弹幕面板选择来源", kind: .warning)
+                            self.setStatus("记住的来源加载失败，自动匹配也没有找到本集弹幕，可在弹幕面板选择来源", kind: .warning, onScreen: false)
                         } else if self.status.hasPrefix("弹幕获取失败") || self.status.hasPrefix("弹幕 API 未授权") {
-                            self.setStatus("记住的来源加载失败；" + self.status, kind: .warning)
+                            self.setStatus("记住的来源加载失败；" + self.status, kind: .warning, onScreen: false)
                         }
                     }
                 } else if self.descriptor != nil, LocalDanmakuPreferences.builtinEnabled() { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
-            } catch { if active == self.generation, !Task.isCancelled { self.setStatus("弹幕服务暂不可用，可在弹幕面板重试", kind: .warning) } }
+            } catch {
+                if active == self.generation, !Task.isCancelled {
+                    self.setStatus("弹幕服务暂不可用，可在弹幕面板重试", kind: .warning, onScreen: false)
+                    self.showMatchBanner("弹幕加载失败", kind: .warning)
+                }
+            }
         }
     }
     private func settingsChanged() {
@@ -166,7 +241,12 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 }
                 if nextBuiltin, self.descriptor != nil { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
-            } catch { if !Task.isCancelled { self.setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning) } }
+            } catch {
+                if !Task.isCancelled {
+                    self.setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: false)
+                    self.showMatchBanner("弹幕加载失败", kind: .warning)
+                }
+            }
         }
     }
     /// One diagnostics line per failed catalog step, so a screenshot of
@@ -176,12 +256,15 @@ func danmakuFailureDetail(_ error: Error) -> String {
     }
     private func matchCatalogAutomatically() async {
         guard catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
-        guard catalog.automatic else { setStatus("自动匹配弹幕已关闭"); return }
-        guard let context = catalog.context else { setStatus("当前媒体没有可匹配的弹幕信息"); return }
+        guard catalog.automatic else { setStatus("自动匹配弹幕已关闭", onScreen: false); return }
+        guard let context = catalog.context else { setStatus("当前媒体没有可匹配的弹幕信息", onScreen: false); return }
         let active = generation
-        setStatus("正在自动匹配订阅弹幕")
+        setStatus("正在自动匹配订阅弹幕", onScreen: false)
         var failed = false
         var unauthorized = false
+        // The banner line of the first episode that matched but had no
+        // comments, kept so the final banner can still name what was matched.
+        var matchedLine: String?
         // Set when a source matched this episode and its comment load
         // succeeded but returned zero comments: the episode exists, it
         // simply has no danmaku. That is a different fact from "no match"
@@ -206,7 +289,8 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 catalog.sourceSelected(); usesBuiltinSource = true
                 let count = try await prepare(["text": .string(text)], manual: false)
                 guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
-                if count > 0 { setStatus("订阅已自动推送弹幕 · \(count) 条", kind: .success) }
+                if count > 0 { setStatus("订阅已自动推送弹幕 · \(count) 条", kind: .success, onScreen: false) }
+                announceContextMatch(count: count)
                 return
             } catch {
                 if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
@@ -219,7 +303,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
         let service = NativeDanmakuCatalog(context: context)
         switch await matchRememberedShow(service: service, context: context, generation: active) {
         case .loaded: return
-        case .matchedEmpty: matchedEmpty = true; answered = true
+        case .matchedEmpty(let line): matchedEmpty = true; answered = true; matchedLine = line
         case .missed: break
         }
         for source in await service.sources() {
@@ -241,11 +325,16 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         catalog.sourceSelected()
                         let count = try await prepare(parameters, manual: false, source: source)
                         guard active == generation, !Task.isCancelled, catalog.enabled, !catalog.selection.hasExplicitChoice else { return }
-                        if count > 0 { setStatus("已自动匹配弹幕 · \(count) 条", kind: .success); return }
+                        if count > 0 {
+                            setStatus("已自动匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
+                            showMatchBanner(matchBannerLine(result: result, episodeNumber: number) + " · 已加载 \(count) 条弹幕")
+                            return
+                        }
                         // Matched and loaded, but zero comments on this
                         // source. Keep sweeping - another source may have
                         // some - and remember the fact for the final message.
                         matchedEmpty = true
+                        if matchedLine == nil { matchedLine = matchBannerLine(result: result, episodeNumber: number) }
                     } catch {
                         if active != generation || Task.isCancelled || catalog.selection.hasExplicitChoice { return }
                         failed = true
@@ -274,14 +363,20 @@ func danmakuFailureDetail(_ error: Error) -> String {
         // every source erroring without a single successful answer. A
         // source that answered "nothing found" settles the outcome as a
         // miss, and a matched episode with zero comments is its own answer.
+        // The panel keeps the detailed wording below; the picture gets one
+        // banner: the failure word, the matched line, or the miss word.
         if unauthorized {
-            setStatus("弹幕 API 未授权（401）：请检查 API 地址是否带 token", kind: .warning)
+            setStatus("弹幕 API 未授权（401）：请检查 API 地址是否带 token", kind: .warning, onScreen: false)
+            showMatchBanner("弹幕加载失败", kind: .warning)
         } else if loadFailed || (failed && !answered) {
-            setStatus("弹幕获取失败，可在弹幕面板重试", kind: .warning)
+            setStatus("弹幕获取失败，可在弹幕面板重试", kind: .warning, onScreen: false)
+            showMatchBanner("弹幕加载失败", kind: .warning)
         } else if matchedEmpty {
-            setStatus("本集没有弹幕，可在弹幕面板选择来源", kind: .information)
+            setStatus("本集没有弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
+            if let matchedLine { showMatchBanner(matchedLine, kind: .information) }
         } else {
-            setStatus("没有匹配到本集弹幕，可在弹幕面板选择来源", kind: .information)
+            setStatus("没有匹配到本集弹幕，可在弹幕面板选择来源", kind: .information, onScreen: false)
+            showMatchBanner("没有匹配到本集弹幕", kind: .information)
         }
     }
     func prepareCatalog(_ episode: NativeDanmakuCatalogEpisode, result: NativeDanmakuCatalogResult) async throws {
@@ -296,12 +391,18 @@ func danmakuFailureDetail(_ error: Error) -> String {
             let parameters = try await NativeDanmakuCatalog(context: catalog.context).prepareParameters(episode, result: result)
             guard scope == generation, catalog.selection.ticket == ticket, ready, catalog.enabled,
                   !Task.isCancelled, NativeDanmakuCatalog.isEnabled(result.source) else { throw CancellationError() }
-            try await prepare(parameters, manual: true, source: result.source)
+            let count = try await prepare(parameters, manual: true, source: result.source)
+            // A hand-picked load shares the picture with the automatic flow,
+            // so its outcome takes the same single banner.
+            let line = matchBannerLine(result: result, episodeNumber: CatalogDanmakuMatcher.episodeNumber(episode.title))
+            showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+                            kind: count > 0 ? .success : .information)
         } catch {
             if scope == generation, catalog.selection.ticket == ticket {
                 catalog.selection = previous
                 pendingCatalogSelection = nil
             }
+            if !(error is CancellationError) { showMatchBanner("弹幕加载失败", kind: .warning) }
             throw error
         }
     }
@@ -309,21 +410,35 @@ func danmakuFailureDetail(_ error: Error) -> String {
         let ticket = catalog.selection.ticket, scope = generation
         guard ready, catalog.enabled, !Task.isCancelled, !catalog.selection.hasExplicitChoice,
               NativeDanmakuCatalog.isEnabled(source) else { throw CancellationError() }
+        let count: Int
         if let address = URL(string: url), address.host == "api.dandanplay.net" {
             let values = try await CatalogDanmakuClient().comments(CatalogDanmakuEpisode(id: address.lastPathComponent, title: "已选择分集"))
             guard scope == generation, catalog.selection.ticket == ticket, ready, catalog.enabled,
                   !Task.isCancelled, NativeDanmakuCatalog.isEnabled(source) else { throw CancellationError() }
             let normalized: JSONValue = .array(values.map { value -> JSONValue in .object(["time": .number(value.time), "mode": .number(Double(value.mode.rawValue)), "color": .number(Double(value.color)), "text": .string(value.text)]) })
-            try await prepare(["text": .string(String(data: try JSONEncoder().encode(normalized), encoding: .utf8)!)], manual: true, source: source)
+            count = try await prepare(["text": .string(String(data: try JSONEncoder().encode(normalized), encoding: .utf8)!)], manual: true, source: source)
         } else {
-            try await prepare(["url": .string(url)], manual: true, source: source)
+            count = try await prepare(["url": .string(url)], manual: true, source: source)
+        }
+        // The remembered feed is a match like any other: name it in the banner
+        // from the record's title and the source it came from.
+        if let context = channel?.historyContext ?? catalog.context {
+            let identifier: String? = UUID(uuidString: source.id) == nil && !source.id.isEmpty ? source.id : nil
+            let line = matchBannerLine(title: rememberedTitle ?? context.videoName, year: context.year, category: nil,
+                                       platform: nil, sourceName: source.name, sourceIdentifier: identifier,
+                                       episodeNumber: CatalogDanmakuMatcher.episodeNumber(context.episodeName))
+            showMatchBanner(count > 0 ? line + " · 已加载 \(count) 条弹幕" : line,
+                            kind: count > 0 ? .success : .information)
         }
     }
+    /// The anime title stored with the remembered feed, for the match banner.
+    @PerceptionIgnored private var rememberedTitle: String?
     private func rememberedFeed() -> String? {
         guard let channel else { return nil }
         let key = "danmaku.manual." + (channel.historyContext?.id ?? channel.id) + "|" + (channel.historyContext?.episodeID ?? channel.id)
         guard let data = UserDefaults.standard.data(forKey: key), let record = try? JSONDecoder().decode([String: String].self, from: data),
               let address = record["api"], !address.isEmpty, let episode = record["episode"], let server = try? CatalogDanmakuClient(address: address).server else { return nil }
+        rememberedTitle = record["title"]
         // Restore only a currently configured custom API. Runtime aggregate addresses
         // expire with their bundle's port and must be obtained again by source matching.
         guard record["builtin"] != "1", let api = NativeDanmakuAPIStore.enabled().first(where: {
@@ -350,6 +465,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
         usesBuiltinSource = false; selectedCatalogSource = nil; pendingCatalogSelection = nil; builtinEnabled = LocalDanmakuPreferences.builtinEnabled()
         lastWindow = -1000; lastPosition = -1; timelineVersion = 0
         lastTimelineRevision = -1; lastSampleWall = 0; liveSequence = 0; rawLiveComments = []; status = ""; notice = nil
+        matchBanner = nil; rememberedTitle = nil
         sessionID = ""; player = nil; channel = nil
         #if os(iOS)
         engine = nil
@@ -388,11 +504,12 @@ func danmakuFailureDetail(_ error: Error) -> String {
             // Bilibili protobuf stays on the established native segmented loader.
             if DanmakuSource.bilibiliCID(feed) != nil {
                 if let channel { DanmakuSource.register(channel.url, feed: feed, duration: nil) }
-                setStatus("正在加载订阅弹幕")
+                setStatus("正在加载订阅弹幕", onScreen: false)
                 await catalog.nativeSourceReload?()
                 return
             }
-            try await prepare(["url": .string(feed), "headers": .object(descriptor.headers.mapValues(JSONValue.string))], manual: false)
+            let count = try await prepare(["url": .string(feed), "headers": .object(descriptor.headers.mapValues(JSONValue.string))], manual: false)
+            announceContextMatch(count: count)
         }
     }
     func prepareFeed(_ address: String, headers: [String: String] = [:]) async throws {
@@ -425,7 +542,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
               let title = record["animeTitle"], !title.isEmpty else { return nil }
         return ShowDanmakuMemory(sourceID: sourceID, animeTitle: title, animeID: record["animeID"] ?? "")
     }
-    private enum RememberedShowOutcome { case loaded, matchedEmpty, missed }
+    private enum RememberedShowOutcome { case loaded, matchedEmpty(String), missed }
     /// The remembered pairing for this show, tried before the full source sweep:
     /// search only the remembered source, take the remembered anime, and match
     /// this episode by number. Any miss falls through to the normal matching.
@@ -454,8 +571,12 @@ func danmakuFailureDetail(_ error: Error) -> String {
             catalog.sourceSelected()
             let count = try await prepare(parameters, manual: false, source: source)
             guard current() else { return .missed }
-            if count > 0 { setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success); return .loaded }
-            return .matchedEmpty
+            if count > 0 {
+                setStatus("已按上次来源匹配弹幕 · \(count) 条", kind: .success, onScreen: false)
+                showMatchBanner(matchBannerLine(result: result, episodeNumber: number) + " · 已加载 \(count) 条弹幕")
+                return .loaded
+            }
+            return .matchedEmpty(matchBannerLine(result: result, episodeNumber: number))
         } catch {
             // A stale memory must never block the normal matching below, but the
             // failure itself is worth one diagnostics line before falling through.
@@ -499,7 +620,12 @@ func danmakuFailureDetail(_ error: Error) -> String {
             selectedCatalogSource = nil; usesBuiltinSource = false
             comments = []; rawLiveComments = []; indexed = false; nativeManual = false
             revision = UUID(); sourceRevision = UUID()
-            setStatus(manual ? "正在加载所选弹幕" : "正在加载订阅弹幕")
+            // Progress never reaches the picture any more. The outcome of a
+            // catalogued load is announced by its caller as the one banner;
+            // only the direct paths that carry no match to name (a typed
+            // address, an imported file) keep their closing toast below.
+            let legacyScreen = manual && source == nil
+            setStatus(manual ? "正在加载所选弹幕" : "正在加载订阅弹幕", onScreen: false)
             _ = try await MobileMediaServices.call("live.stop", params)
             guard current() else { throw CancellationError() }
             isLive = false
@@ -512,7 +638,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
             committed = true
             let count = prepared.object?["count"]?.int ?? 0
             setStatus(count > 0 ? (manual ? "已选择弹幕" : "已加载订阅弹幕") + " · \(count) 条" : "所选来源没有返回弹幕",
-                      kind: count > 0 ? .success : .information)
+                      kind: count > 0 ? .success : .information, onScreen: legacyScreen)
             await tick()
             guard current() else { throw CancellationError() }
             return count
@@ -521,7 +647,7 @@ func danmakuFailureDetail(_ error: Error) -> String {
                 if manual { catalog.selection.select(.cleared) }
                 else { catalog.selection = previousSelection }
                 selectedCatalogSource = nil; usesBuiltinSource = false; pendingCatalogSelection = nil
-                if !(error is CancellationError) { setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning) }
+                if !(error is CancellationError) { setStatus("弹幕加载失败，可在弹幕面板重试", kind: .warning, onScreen: manual && source == nil) }
             }
             throw error
         }

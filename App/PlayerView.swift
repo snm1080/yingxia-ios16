@@ -22,6 +22,10 @@ struct PlaybackView: View {
     @State private var session = PlaybackSession()
     #endif
     @State private var showsChrome = true
+    /// An episode switch that began with the controls hidden keeps them hidden:
+    /// the switch's own loading window must not light them up either. Cleared
+    /// when that load finishes or the viewer asks for the controls.
+    @State private var switchKeepsChromeHidden = false
     @State private var hideTask: Task<Void, Never>?
     #if os(iOS)
     /// A watch page starts playing by itself, so its controls wait for a tap.
@@ -51,7 +55,7 @@ struct PlaybackView: View {
         #if os(iOS)
         if playerLayout == .inline, quietStart { return session.error != nil }
         #endif
-        return showsChrome || session.error != nil || session.loading
+        return showsChrome || session.error != nil || (session.loading && !switchKeepsChromeHidden)
     }
 
     var body: some View {
@@ -134,7 +138,18 @@ struct PlaybackView: View {
                 ExternalDisplay.shared.attach(session.engine)
                 #endif
             }
-            .appOnChange(of: channel) { _, channel in startCatalogPlayback(session, channel: channel, store: store); showOnStart() }
+            .appOnChange(of: channel) { _, channel in
+                // A switch is not a fresh start: the controls keep the visibility
+                // they had. If they were hidden, the switch neither wakes them
+                // (no showOnStart) nor lets its loading window show them; if they
+                // were up, the start behaves exactly as it always has.
+                switchKeepsChromeHidden = !showsChrome && session.error == nil
+                startCatalogPlayback(session, channel: channel, store: store)
+                if switchKeepsChromeHidden { hideTask?.cancel() } else { showOnStart() }
+            }
+            .appOnChange(of: session.loading) { _, loading in
+                if !loading { switchKeepsChromeHidden = false }
+            }
             #if os(iOS)
             .appOnChange(of: session.showsPicture || session.error != nil, initial: true) { _, started in watch?.started(started) }
             .onAppear { watch?.opened(session) }
@@ -292,6 +307,7 @@ struct PlaybackView: View {
         #if os(iOS)
         quietStart = false
         #endif
+        switchKeepsChromeHidden = false
         showsChrome = true
         scheduleHide()
     }

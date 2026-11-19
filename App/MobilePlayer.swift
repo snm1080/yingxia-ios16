@@ -123,6 +123,7 @@ struct MobilePlayerView: View {
                     controls.opacity(chromeVisible && !locked ? 1 : 0)
                         .allowsHitTesting(chromeVisible && !locked)
                     playbackNotices
+                    danmakuMatchBanner
                     localPopup
                         .opacity(chromeVisible && !locked ? 1 : 0)
                         .allowsHitTesting(chromeVisible && !locked && localPanel != nil)
@@ -271,8 +272,12 @@ struct MobilePlayerView: View {
         WithPerceptionTracking {
                 let _ = noticeExpiryRevision
                 let uptime = ProcessInfo.processInfo.systemUptime
-                let allNotices = [session.mediaEnhancements.notice, session.remoteSkip.notice].compactMap { $0 }
-                let notices = allNotices.filter { $0.isVisible(at: uptime) }
+                let stackNotices = [session.mediaEnhancements.notice, session.remoteSkip.notice].compactMap { $0 }
+                // The danmaku match banner renders on its own in the middle of
+                // the picture; it only joins this list so its expiry wakes the
+                // same refresh the bottom notices use.
+                let allNotices = stackNotices + [session.mediaEnhancements.matchBanner].compactMap { $0 }
+                let notices = stackNotices.filter { $0.isVisible(at: uptime) }
                 let nextExpiry = scenePhase == .active && !pip.active && playingOn == nil
                     ? PlayerNotice.nextExpiry(allNotices, at: uptime) : nil
                 VStack(spacing: 6) {
@@ -303,6 +308,33 @@ struct MobilePlayerView: View {
                     guard !Task.isCancelled else { return }
                     noticeExpiryRevision &+= 1
                 }
+        }
+    }
+
+    /// The danmaku match word, MiraPlay-style: one translucent black band
+    /// across the picture's own width at its vertical centre, white text of
+    /// the player's corner size, gone again in a few seconds. It belongs to
+    /// the bare picture - the controls neither wake it nor move it.
+    private var danmakuMatchBanner: some View {
+        WithPerceptionTracking {
+            let _ = noticeExpiryRevision
+            let uptime = ProcessInfo.processInfo.systemUptime
+            if let banner = session.mediaEnhancements.matchBanner, banner.isVisible(at: uptime),
+               !pip.active, playingOn == nil, playerSize.width > 0, playerSize.height > 0 {
+                let picture = videoAspect.pictureFrame(in: playerSize, source: session.engine.presentationSize)
+                Text(banner.message)
+                    .font(.system(size: PlayerCornerText.size(inline: inline)))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .frame(width: picture.width, alignment: .leading)
+                    .background(Color.black.opacity(0.55))
+                    .position(x: picture.midX, y: picture.midY)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("player.danmakuMatchBanner")
+            }
         }
     }
 
