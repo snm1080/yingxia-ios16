@@ -109,10 +109,22 @@ func danmakuFailureDetail(_ error: Error) -> String {
                         // The remembered feed is the one path whose failure used to
                         // leave no trace anywhere; record it before the outer catch
                         // turns it into the generic unavailable message.
-                        if active == self.generation, !Task.isCancelled {
-                            self.noteCatalogFailure(error, source: source, step: "rememberedFeed")
+                        guard active == self.generation, !Task.isCancelled else { return }
+                        self.noteCatalogFailure(error, source: source, step: "rememberedFeed")
+                        // One transient failure on the remembered feed must not be
+                        // the end of danmaku for this episode: fall back to the
+                        // automatic sweep, the same way a stale per-show memory
+                        // falls through in matchRememberedShow. This runs at most
+                        // once - the sweep never re-enters the remembered feed.
+                        self.setStatus("记住的弹幕来源加载失败，正在改走自动匹配", kind: .warning)
+                        await self.matchCatalogAutomatically()
+                        // Keep the two halves of the story distinguishable when the
+                        // sweep also comes up empty; a success speaks for itself.
+                        if self.status == "没有匹配到本集弹幕，可在弹幕面板选择来源" {
+                            self.setStatus("记住的来源加载失败，自动匹配也没有找到本集弹幕，可在弹幕面板选择来源", kind: .warning)
+                        } else if self.status.hasPrefix("弹幕获取失败") || self.status.hasPrefix("弹幕 API 未授权") {
+                            self.setStatus("记住的来源加载失败；" + self.status, kind: .warning)
                         }
-                        throw error
                     }
                 } else if self.descriptor != nil, LocalDanmakuPreferences.builtinEnabled() { try await self.useSource() }
                 else { await self.matchCatalogAutomatically() }
