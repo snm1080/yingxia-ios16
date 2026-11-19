@@ -258,7 +258,7 @@ struct MobilePlayerView: View {
     private var playbackOSDOverlay: some View {
         WithPerceptionTracking {
                 if showsOSD && session.error == nil && session.showsPicture && !pip.active && playingOn == nil {
-                    PlayerOSD(session: session, title: osdTitle, hidesTopLeft: showsPlaybackInfo, fontSize: inline ? 13 : 17)
+                    PlayerOSD(session: session, title: osdTitle, hidesTopLeft: showsPlaybackInfo, fontSize: PlayerCornerText.size(inline: inline))
                         .padding(inline ? 10 : 14)
                         .opacity(chromeVisible ? 0 : 1)
                         .animation(.appSmooth(duration: 0.25), value: chromeVisible)
@@ -861,7 +861,7 @@ struct MobilePlayerView: View {
                         .accessibilityIdentifier("player.title")
                     if let episode = channel.historyContext?.episodeName, !episode.isEmpty,
                        episode != channel.historyContext?.videoName {
-                        Text(episode).font(.system(size: inline ? 10 : 16, weight: .medium))
+                        Text(episode).font(.system(size: PlayerCornerText.size(inline: inline), weight: .medium))
                             .foregroundStyle(.white.opacity(0.8)).lineLimit(1)
                             .accessibilityIdentifier("player.episodeTitle")
                     }
@@ -876,7 +876,7 @@ struct MobilePlayerView: View {
                                     Image(systemName: battery.symbol)
                                     Text(battery.percent)
                                 }
-                            }.font(.caption2.monospacedDigit()).lineLimit(1)
+                            }.font(.system(size: PlayerCornerText.size(inline: inline)).monospacedDigit()).lineLimit(1)
                         }
                     }
                 }
@@ -1012,7 +1012,7 @@ struct MobilePlayerView: View {
             }
         } else if session.hasTimeline {
             // Dragging holds the controls up itself (`hold`); a tap gesture here would compete with the scrubber's drag.
-            SeekBar(clock: clock, moving: chromeVisible && !locked && !session.paused && !pip.active && scenePhase == .active, hold: hold, sought: sought) { EmptyView() }
+            SeekBar(clock: clock, textSize: PlayerCornerText.size(inline: inline), moving: chromeVisible && !locked && !session.paused && !pip.active && scenePhase == .active, hold: hold, sought: sought) { EmptyView() }
         }
     }
 
@@ -1691,6 +1691,8 @@ private struct SeekBar<Accessory: View>: View {
     /// The time row leaves room for accessible episode-button targets.
     static var timeRow: CGFloat { 44 }
     let clock: PlayerClock
+    /// The corner text size, shared with the OSD (see PlayerCornerText).
+    let textSize: CGFloat
     /// Playing with the controls showing: the bar follows the player every frame.
     let moving: Bool
     let hold: (Bool) -> Void
@@ -1777,7 +1779,7 @@ private struct SeekBar<Accessory: View>: View {
             .animation(.appSpring(duration: 0.3, bounce: 0.3), value: held)
             Text(Self.format(duration)).frame(minWidth: 40, alignment: .trailing).accessibilityHidden(true)
         }
-        .font(.system(size: 11, weight: .medium).monospacedDigit())
+        .font(.system(size: textSize, weight: .medium).monospacedDigit())
         .animation(.easeOut(duration: 0.12), value: held && clock.preview != nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L10n.text("Playback Position"))
@@ -2470,6 +2472,14 @@ private enum LocalPlayerPanel: String, Identifiable {
             center.playbackState = .stopped
         }
     }
+}
+
+/// The one text size for the player's corner texts: the OSD's four corners set it
+/// (17 pt full screen, 13 pt inline), and the control bar's episode line, top-right
+/// status cluster and seek-bar time labels use the same size, so the corners cannot
+/// drift apart again. The control bar's title keeps its own larger size.
+private enum PlayerCornerText {
+    static func size(inline: Bool) -> CGFloat { inline ? 13 : 17 }
 }
 
 /// The heads-up display itself: the values split across the four corners, WebHTV-style, rebuilt
