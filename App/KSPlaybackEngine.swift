@@ -202,6 +202,7 @@ struct KSPlaybackChapter: Identifiable, Equatable {
     @PerceptionIgnored private var wantsPlaying = false
     @PerceptionIgnored private var failedVideo = false
     @PerceptionIgnored private var decoderDiagnosticCount = 0
+    @PerceptionIgnored private var decoderStartLogged = false
     @PerceptionIgnored private var pictureWatchdog = PlaybackPictureWatchdog()
     @PerceptionIgnored private var startupStages = Set<String>()
     @PerceptionIgnored private var nextPlaybackInfoSample = 0.0
@@ -349,7 +350,7 @@ struct KSPlaybackChapter: Identifiable, Equatable {
         core?.delegate = nil; core?.playbackCommand = nil; core?.seekCommand = nil
         core?.pipController?.stopPictureInPicture(); observedPiP = nil
         core?.shutdown(); core?.view?.removeFromSuperview(); core = nil; options = nil
-        failedVideo = false; decoderDiagnosticCount = 0; pictureWatchdog = PlaybackPictureWatchdog(); startupStages = []
+        failedVideo = false; decoderDiagnosticCount = 0; decoderStartLogged = false; pictureWatchdog = PlaybackPictureWatchdog(); startupStages = []
         nextPlaybackInfoSample = 0
         videoBitDepth = nil
         mediaID = nil; position = 0; duration = 0; bufferedPosition = 0
@@ -569,6 +570,17 @@ struct KSPlaybackChapter: Identifiable, Equatable {
             bitrate = Double((player.dynamicInfo?.audioBitrate ?? 0) + (player.dynamicInfo?.videoBitrate ?? 0))
             frameRate = Self.finite(player.dynamicInfo?.displayFPS ?? 0)
             refreshPlaybackInfo()
+        }
+        // One line per open naming the decoder that actually started, with the
+        // stream's shape, so a single Diag screenshot settles whether a title
+        // is hardware- or software-decoded.
+        if !decoderStartLogged, currentDecoder != "准备中",
+           presentationSize.width > 0, presentationSize.height > 0,
+           let videoTrack = player.tracks(mediaType: .video).first(where: { $0.isEnabled }) {
+            decoderStartLogged = true
+            let depth = (videoTrack as? FFmpegAssetTrack).map { Int($0.bitDepth) } ?? 0
+            Diagnostics.shared.record(.info, "player.decoder",
+                "decoder=\(currentDecoder) size=\(Int(presentationSize.width))x\(Int(presentationSize.height)) fps=\(Self.finite(Double(videoTrack.nominalFrameRate))) bitDepth=\(depth)")
         }
         #if DEBUG
         let diagnosticTime = ProcessInfo.processInfo.systemUptime
