@@ -51,6 +51,9 @@ import TVCore
     @PerceptionIgnored private var cachePreparation: Task<Void, Never>?
     @PerceptionIgnored private var cachePreparationID = UUID()
     @PerceptionIgnored private var needsVideoCacheActivation = false
+    /// The outgoing episode's owner release, stored by stop() so the
+    /// replacement episode's prepare can wait for it to land in Node first.
+    @PerceptionIgnored private var pendingOwnerRelease: Task<Void, Never>?
     @PerceptionIgnored private var recovery: Task<Void, Never>?
     @PerceptionIgnored private var recoveryAttempts = 0
     @PerceptionIgnored private var decoderRecoveryAttempts = 0
@@ -618,7 +621,12 @@ import TVCore
         preparation?.cancel(); preparation = nil; sampler?.cancel(); sampler = nil
         transferTicker?.cancel(); transferTicker = nil
         discardUpcoming()
-        if let playing, let currentPrepared { Self.release(playing, currentPrepared) }
+        if let playing, let currentPrepared, let releaseTask = Self.release(playing, currentPrepared) {
+            // Chain behind any release a previous stop() is still waiting on:
+            // the next prepare drains this task before it adds another owner.
+            let previous = pendingOwnerRelease
+            pendingOwnerRelease = Task { await previous?.value; await releaseTask.value }
+        }
         currentPrepared = nil; automatic = nil
         aiSubtitles.stop()
         remoteSkip.stop(); mediaEnhancements.stop(); externalSubtitles.stop(); subtitles.resetKS()
@@ -747,7 +755,23 @@ import TVCore
         var cacheIOURL: URL?
         var audioCacheIOURL: URL?
     }
+    /// A replacement prepare waits for the outgoing episode's owner release
+    /// (stored by stop()) to land in Node before it adds another owner, so
+    /// owners — and their full-speed forward readers — can't pile up across
+    /// a run of quick switches. The release RPC already times out at 3 s in
+    /// the media service; this wait is capped the same way and proceeds
+    /// regardless, so a stuck release can never hold up playback.
+    private func drainOutgoingOwnerRelease() async {
+        guard let pending = pendingOwnerRelease else { return }
+        pendingOwnerRelease = nil
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let gate = ReleaseDrainGate(continuation)
+            Task { await pending.value; gate.open() }
+            Task { try? await Task.sleep(for: .seconds(3)); gate.open() }
+        }
+    }
     private func prepare(_ channel: Channel) async throws -> Prepared {
+        await drainOutgoingOwnerRelease()
         var address = channel.url
         var headers = channel.headers
         try Task.checkCancellation()
@@ -786,15 +810,36 @@ import TVCore
             cacheEnabled: UserDefaults.standard.object(forKey: "local.videoCache.enabled") as? Bool ?? true,
             sizeGB: max(1, min(4, UserDefaults.standard.integer(forKey: "local.videoCache.sizeGB"))),
             adClean: UserDefaults.standard.object(forKey: "local.hlsAdClean") as? Bool ?? true, isLive: isLive)
+        if let owner = prepared.ownerID {
+            Self.liveOwnerIDs.insert(owner)
+            Diagnostics.shared.record(.info, "cache.owners", "prepare live=\(Self.liveOwnerIDs.count)")
+        }
         return Prepared(url: prepared.url, headers: prepared.headers, owner: prepared.ownerID, backingURL: address,
                         audioURL: prepared.audioURL, audioHeaders: prepared.audioHeaders,
                         cacheIOURL: prepared.cacheIOURL, audioCacheIOURL: prepared.audioCacheIOURL)
     }
-    private static func release(_ channel: Channel, _ prepared: Prepared) {
-        if let owner = prepared.owner { Task { _ = try? await MobileMediaServices.call("playback.release", ["id": .string(owner)]) } }
+    /// Media-cache owners this session has prepared and not yet released,
+    /// behind the `cache.owners` diagnostic: if releases stopped landing in
+    /// Node, this is the count that would pile up there.
+    private static var liveOwnerIDs: Set<String> = []
+    /// Releases a prepared episode: Node aborts the owner's downloads deeply
+    /// once the release RPC lands. Returns the release task when the episode
+    /// had an owner, so stop() can hold it for the next prepare to drain.
+    @discardableResult
+    private static func release(_ channel: Channel, _ prepared: Prepared) -> Task<Void, Never>? {
+        var releaseTask: Task<Void, Never>?
+        if let owner = prepared.owner {
+            releaseTask = Task { _ = try? await MobileMediaServices.call("playback.release", ["id": .string(owner)]) }
+            liveOwnerIDs.remove(owner)
+            Diagnostics.shared.record(.info, "cache.owners", "release live=\(liveOwnerIDs.count)")
+        }
         prepared.disc?.close()
         HongguoStreams.stop(channel.url)
         CloudStreams.stop(prepared.backingURL ?? prepared.url)
+        return releaseTask
+    }
+    private static func episodeLabel(_ channel: Channel) -> String {
+        channel.historyContext?.episodeName ?? channel.name
     }
     private func queueUpcomingIfDue() {
         let enabled = UserDefaults.standard.object(forKey: "local.playback.prefetchNext") as? Bool ?? true
@@ -808,17 +853,23 @@ import TVCore
         }
         if healthyPrefetchSince == nil { healthyPrefetchSince = Date() }
         if upcoming != nil { warmUpcomingIfSafe(); return }
-        // Arm as soon as playback is healthy, not in the last seconds of the
-        // episode: the next episode is resolved, prepared and head-warmed while
-        // this one plays, so a manual switch can reuse it like an automatic one.
-        guard Date().timeIntervalSince(healthyPrefetchSince!) >= 3, !upcomingAttempted, !looping, !isLive,
+        // Arm once this episode has played healthily for 20 s — not in its
+        // last seconds, and not while the viewer is surfing: the next episode
+        // is resolved, prepared and head-warmed while this one plays, so a
+        // manual switch can reuse it like an automatic one.
+        guard Date().timeIntervalSince(healthyPrefetchSince!) >= 20, !upcomingAttempted, !looping, !isLive,
               duration > 0, let upcomingEpisode else { return }
         upcomingAttempted = true; let active = generation
         upcomingTask = Task { [weak self] in
             guard let next = await upcomingEpisode(), let self, self.generation == active, !Task.isCancelled else { return }
+            Diagnostics.shared.record(.info, "prefetch.fate", "armed ep=\(Self.episodeLabel(next))")
             do {
                 let prepared = try await self.prepare(next)
-                guard self.generation == active, !Task.isCancelled else { Self.release(next, prepared); return }
+                guard self.generation == active, !Task.isCancelled else {
+                    Self.release(next, prepared)
+                    Diagnostics.shared.record(.info, "prefetch.fate", "discarded ep=\(Self.episodeLabel(next)) warm=none")
+                    return
+                }
                 self.upcoming = (next, prepared); self.prefetchComplete = false; self.warmUpcomingIfSafe()
             } catch { Diagnostics.shared.record(.warning, "player", "KS next preparation: \(error.localizedDescription)") }
         }
@@ -841,9 +892,14 @@ import TVCore
         }
     }
     private func discardUpcoming() {
+        var fate: String?
+        if let (channel, _) = upcoming {
+            fate = "discarded ep=\(Self.episodeLabel(channel)) warm=\(prefetchComplete ? "done" : (prefetchWarm != nil ? "pending" : "none"))"
+        }
         prefetchWarmID = UUID(); prefetchWarm?.cancel(); prefetchWarm = nil; prefetchComplete = false
         upcomingTask?.cancel(); upcomingTask = nil
         if let (channel, prepared) = upcoming { Self.release(channel, prepared) }; upcoming = nil
+        if let fate { Diagnostics.shared.record(.info, "prefetch.fate", fate) }
     }
     /// True when `channel` is the prepared upcoming episode (same video, episode
     /// and line; the freshly resolved copy need not be the same object or URL)
@@ -859,6 +915,7 @@ import TVCore
     func playUpcoming() -> Bool {
         guard let (channel, prepared) = upcoming, !advancing else { return false }
         advancing = true; upcoming = nil
+        Diagnostics.shared.record(.info, "prefetch.fate", "consumed ep=\(Self.episodeLabel(channel))")
         let advance = onAdvance, end = onPlaybackEnded, resolve = upcomingEpisode, shouldPlay = playsOn
         saveHistory()
         stop(); begin(channel); sourceChannel = channel
@@ -895,6 +952,19 @@ import TVCore
     static func preparing(_ resume: Double?) -> String {
         guard let resume, resume.isFinite, resume >= 5 else { return L10n.text("Getting it ready") }
         return L10n.text("Getting it ready · from %@", Duration.seconds(Int(resume)).formatted(.time(pattern: resume >= 3600 ? .hourMinuteSecond : .minuteSecond)))
+    }
+}
+
+/// Resumes a continuation exactly once, whichever of the two racing tasks in
+/// `drainOutgoingOwnerRelease` arrives first: the release landing, or the cap.
+private final class ReleaseDrainGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private let continuation: CheckedContinuation<Void, Never>
+    init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+    func open() {
+        lock.lock(); defer { lock.unlock() }
+        if !opened { opened = true; continuation.resume() }
     }
 }
 #endif
