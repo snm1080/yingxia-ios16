@@ -1,5 +1,14 @@
 import fs from 'node:fs/promises';
 
+// Production is paced by consumption, independently of the disk reservation:
+// the producer may run at most maxForwardLeadBytes ahead of the highest
+// offset the decoder has consumed before it parks, and it resumes once the
+// lead falls to resumeForwardLeadBytes. Without this window the producer
+// races at line speed until the whole 1–4 GiB disk quota is reserved, which
+// is what made 4K playback spike the current draw in bursts.
+const maxForwardLeadBytes = 96 * 1024 ** 2;
+const resumeForwardLeadBytes = 48 * 1024 ** 2;
+
 // One producer reads the connection already selected by the subscription. The
 // decoder consumes its bounded disk queue independently, so its small packet
 // buffer does not also limit the application's 1–4 GiB forward cache.
@@ -11,6 +20,7 @@ export class ForwardMediaReader {
     this.controller = new AbortController();
     this.signal = AbortSignal.any([signal, this.controller.signal]);
     this.nodes = []; this.waiters = new Set(); this.done = false; this.error = null;
+    this.consumedEnd = meta.start; this.leadHeld = false;
     this.owner.forwardReaders.add(this);
     this.finished = this.produce().catch(error => { this.error = error; }).finally(() => {
       this.done = true; this.wake();
@@ -28,6 +38,18 @@ export class ForwardMediaReader {
     });
   }
 
+  // Parks production while the produced-but-unconsumed lead is too large,
+  // with hysteresis so a resumed producer does not immediately re-park.
+  // A stream's first block can never be held here: before anything has been
+  // produced the lead is zero by construction, so the urgent first-block
+  // reservation in allocate() keeps its bypass.
+  async pace(position) {
+    if (!this.leadHeld && position - this.consumedEnd <= maxForwardLeadBytes) return;
+    this.leadHeld = true;
+    while (position - this.consumedEnd > resumeForwardLeadBytes) await this.wait();
+    this.leadHeld = false;
+  }
+
   async allocate(start) {
     const cache = this.cache, owner = this.owner;
     const caching = owner.enabled && this.revision === owner.cacheRevision;
@@ -37,6 +59,7 @@ export class ForwardMediaReader {
     // A tail/seek opened by libavformat must get its first bytes even while
     // the previous input pins a full disk window. At most one extra RAM block
     // per active request is needed; put() still enforces the disk limit.
+    await this.pace(start);
     await cache.reserveForward(owner, size, this.signal, () => this.nodes.length === 0, this.revision);
     const node = { start, capacity: size, length: 0, consumed: 0, sealed: false,
       data: Buffer.allocUnsafe(size), revision: this.revision, reserved: true };
@@ -119,6 +142,8 @@ export class ForwardMediaReader {
           const end = node.length;
           yield bytes.subarray(node.consumed, end);
           node.consumed = end;
+          if (node.start + end > this.consumedEnd) this.consumedEnd = node.start + end;
+          this.wake();
         }
         if (node.sealed && node.consumed === node.length) { this.releaseNode(node); this.nodes.shift(); }
         else if (node.consumed >= node.length) await this.wait();
