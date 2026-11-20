@@ -1206,7 +1206,7 @@ import TVCore
             do {
                 let resolved = try await catalog.client.playback(episode)
                 guard !Task.isCancelled, self.episodeRequest == request, self.playing == channel else { return }
-                Diagnostics.shared.record(.info, "player.startup", "entry=episode request=\(request) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted))")
+                Diagnostics.shared.record(.info, "player.startup", "entry=episode request=\(request) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted)) addr=\(PlaybackFailureDiagnostics.address(resolved.url))")
                 self.playing = self.catalogChannel(resolved, video: catalog.video, episode: episode, client: catalog.client)
             } catch {
                 guard !Task.isCancelled, self.episodeRequest == request, self.playing == channel else { return }
@@ -1243,7 +1243,7 @@ import TVCore
             do {
                 let resolved = try await catalog.client.playback(episode)
                 guard !Task.isCancelled, self.episodeRequest == request, self.playing == channel else { return }
-                Diagnostics.shared.record(.info, "player.startup", "entry=reresolve request=\(request) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted))")
+                Diagnostics.shared.record(.info, "player.startup", "entry=reresolve request=\(request) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted)) addr=\(PlaybackFailureDiagnostics.address(resolved.url))")
                 let saved = self.visibleHistory.first { $0.context.id == context.id && $0.context.episodeID == context.episodeID && $0.context.episodeFlag == context.episodeFlag }
                 var next = self.catalogChannel(resolved, video: catalog.video, episode: episode, client: catalog.client,
                                                resumePosition: saved?.resumePosition(for: episode))
@@ -1349,7 +1349,7 @@ import TVCore
             }
             guard !Task.isCancelled, playing == previousPlayback, subscription?.origin == subscriptionOrigin, historyScope == selectedScope,
                   historySourceEnabled(entry.context) else { return }
-            Diagnostics.shared.record(.info, "player.startup", "entry=history request=\(startupRequest) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted))")
+            Diagnostics.shared.record(.info, "player.startup", "entry=history request=\(startupRequest) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted)) addr=\(PlaybackFailureDiagnostics.address(channel.url))")
             // A source whose details carry no poster keeps the one saved with the entry.
             // Page progress is separate from video seconds. Nil lets the reader resume its saved
             // page; zero remains the explicit replay command for either kind of media.

@@ -1562,6 +1562,12 @@ extension Store {
         store.selectEpisode(other, from: channel) { session?.lineSwitchFailed($0) }
         return other.flag
     }
+    // A failure the session's own recovery cannot revive (it only ever
+    // re-prepares the address in hand) escalates to the error page's own
+    // remedy: resolve the episode afresh through its source.
+    session.onEscalateReresolve = { [weak store, weak session] failed in
+        store?.reresolvePlayingEpisode(from: failed, failed: { session?.lineSwitchFailed($0) }) ?? false
+    }
     if let context = channel.historyContext, let next = store.nextEpisode(after: channel),
        let catalog = store.catalog(for: channel), context.sourceKey != Bilibili.siteKey {
         session.catalogDanmaku.prefetch(PlaybackHistoryContext(origin: context.origin, site: catalog.client.site,

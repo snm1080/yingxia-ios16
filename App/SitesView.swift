@@ -3599,7 +3599,7 @@ struct VideoDetailView: View {
             let playback = store.subscription.map { client.applying($0) } ?? client
             let resolved = try await playback.resolvePlayback(plan, choice: choice)
             try Task.checkCancellation()
-            Diagnostics.shared.record(.info, "player.startup", "entry=detail request=\(startupRequest) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted))")
+            Diagnostics.shared.record(.info, "player.startup", "entry=detail request=\(startupRequest) stage=source-ready elapsed=\(Date().timeIntervalSince(sourceStarted)) addr=\(PlaybackFailureDiagnostics.address(resolved.url))")
             store.playing = store.catalogChannel(resolved, video: currentVideo(), episode: episode, client: playback, resumePosition: resume)
         } catch { fail(episode, error, mode: mode) }
     }

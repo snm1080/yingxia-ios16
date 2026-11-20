@@ -15,4 +15,18 @@ enum PlaybackFailureDiagnostics {
         }
         return result.joined(separator: ">")
     }
+
+    /// The identity of a resolved playback address: host, port and path
+    /// only, never the query — a signed query is a secret and also changes
+    /// without the address's identity changing. For the loopback proxy
+    /// addresses the sources hand out, the port and the path token are what
+    /// distinguish one resolution from another, so two resolutions of the
+    /// same episode can be told apart (or caught returning the same dead
+    /// address) from a single diagnostic line.
+    static func address(_ url: URL?) -> String {
+        guard let url else { return "-" }
+        let host = url.host() ?? ""
+        let port = url.port.map { ":\($0)" } ?? ""
+        return "\(host)\(port)\(url.path())"
+    }
 }

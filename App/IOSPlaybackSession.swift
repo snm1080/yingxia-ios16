@@ -58,8 +58,18 @@ import TVCore
     @PerceptionIgnored private var recoveryAttempts = 0
     @PerceptionIgnored private var decoderRecoveryAttempts = 0
     @PerceptionIgnored private var lastRecovery: Date?
+    /// Whether the current failure chain already spent its one escalation
+    /// to a fresh source resolve, and the episode it was spent on. The flag
+    /// is keyed to the episode so the restart the re-resolve itself causes
+    /// (same episode, fresh address) cannot spend it a second time, while a
+    /// different episode — or a presented picture — starts a new chain.
+    @PerceptionIgnored private var reresolveEscalated = false
+    @PerceptionIgnored private var reresolveEscalatedEpisode: String?
     var onPlaybackEnded: (() -> Void)?
     var onUnplayableFile: (() -> String?)?
+    /// Asks the store to resolve the failed channel's episode afresh, as the
+    /// error page's Try Again does; true when a re-resolve is under way.
+    var onEscalateReresolve: (@MainActor (Channel) -> Bool)?
     var upcomingEpisode: (@MainActor () async -> Channel?)?
     var playsOn: @MainActor () -> Bool = { false }
     var onAdvance: (@MainActor (Channel) -> Void)?
@@ -273,6 +283,12 @@ import TVCore
         if sourceDanmakuGeneration == active { sourceDanmakuLoading = nil }
     }
     private func begin(_ channel: Channel) {
+        // A different episode begins a new failure chain, which may spend
+        // its own escalation. The restart a re-resolve causes begins the
+        // SAME episode, so its spent escalation survives it.
+        if Self.episodeKey(channel) != reresolveEscalatedEpisode {
+            reresolveEscalated = false; reresolveEscalatedEpisode = nil
+        }
         error = nil; loading = true; showsPicture = false; buffering = false; steps = ["正在解析播放地址"]
         preparationStarted = Date()
         transfer = Transfer(); transfer.host = channel.url.host()
@@ -380,6 +396,9 @@ import TVCore
         if engine.hasPicture && !showsPicture {
             Diagnostics.shared.record(.info, "player.startup", "stage=first-picture elapsed=\(Date().timeIntervalSince(preparationStarted))")
             steps = []
+            // A presented picture closes the failure chain: a failure after
+            // this is a new chain and may escalate again.
+            reresolveEscalated = false; reresolveEscalatedEpisode = nil
         }
         showsPicture = engine.hasPicture
     }
@@ -463,15 +482,49 @@ import TVCore
                 if engine.hasPresentedPicture, decoderRecoveryAttempts == 0,
                    recoverPlayback(reusePrepared: true) { decoderRecoveryAttempts += 1; return }
             } else if recoverPlayback() { return }
+            // The session's own recovery only ever re-prepares the address
+            // already in hand; when that address itself is dead it fails
+            // identically, and only resolving the episode afresh through
+            // its source — what the error page's Try Again does — can
+            // revive it. Escalate to that once per failure chain before
+            // surfacing the error page.
+            if escalateToReresolve(failure) { return }
             engine.pause()
             error = failure.localizedDescription; loading = false; buffering = false
-            Diagnostics.shared.record(.error, "player.recovery", "event=terminal code=\(PlaybackFailureDiagnostics.codes(failure)) \(engine.failureDiagnostic)")
+            Diagnostics.shared.record(.error, "player.recovery", "event=terminal code=\(PlaybackFailureDiagnostics.codes(failure)) addr=\(PlaybackFailureDiagnostics.address((sourceChannel ?? playing)?.url)) \(engine.failureDiagnostic)")
             return
         }
         if looping { engine.seek(to: 0) { [weak self] ok in if ok { self?.engine.play() } }; return }
         saveHistory(completed: true)
         if playsOn(), playUpcoming() { return }
         onPlaybackEnded?()
+    }
+    /// Spends this failure chain's one escalation: asks the store, through
+    /// the player view's wiring, to resolve the playing episode afresh —
+    /// the exact call the error page's Try Again makes, history position
+    /// included. True when a re-resolve is under way; it restarts playback
+    /// through the store's playing channel, so this session only has to
+    /// stay in its loading state, and if the user has meanwhile switched
+    /// episodes the store discards the result exactly as it does for the
+    /// manual retry. False when the chain already escalated, when no
+    /// wiring is installed, or when the channel has no catalogue behind
+    /// it — the caller then goes terminal exactly as before.
+    private func escalateToReresolve(_ failure: Error) -> Bool {
+        guard !reresolveEscalated, let channel = sourceChannel ?? playing,
+              let onEscalateReresolve, onEscalateReresolve(channel) else { return false }
+        reresolveEscalated = true
+        reresolveEscalatedEpisode = Self.episodeKey(channel)
+        Diagnostics.shared.record(.info, "player.recovery", "event=escalate-reresolve code=\(PlaybackFailureDiagnostics.codes(failure)) attempts=\(recoveryAttempts) decoderAttempts=\(decoderRecoveryAttempts) addr=\(PlaybackFailureDiagnostics.address(channel.url))")
+        engine.pause()
+        error = nil; loading = true; buffering = false
+        steps = ["正在重新解析播放地址"]
+        return true
+    }
+    /// What makes two channels the same episode for failure-chain purposes:
+    /// the catalogue identity the history and the episode list already use.
+    private static func episodeKey(_ channel: Channel) -> String? {
+        guard let context = channel.historyContext else { return nil }
+        return "\(context.id)|\(context.episodeID)|\(context.episodeFlag)"
     }
     func saveHistory(completed: Bool = false, item: AVPlayerItem? = nil) {
         guard let context = historyContext, engine.isReady, pendingResume == nil, !restoringPosition, !seekingSegment, !engine.seeking else { return }
@@ -641,7 +694,7 @@ import TVCore
         editingSkip = false; resumeAfterEditing = false; seekingSegment = false
         transfer = Transfer(); steps = []; switchNotice = nil; orientationPolicy = PlaybackOrientationPolicy()
         qualities = []; quality = nil; showsPicture = false; buffering = false; loading = true
-        onPlaybackEnded = nil; onUnplayableFile = nil; upcomingEpisode = nil; onAdvance = nil; playsOn = { false }
+        onPlaybackEnded = nil; onUnplayableFile = nil; onEscalateReresolve = nil; upcomingEpisode = nil; onAdvance = nil; playsOn = { false }
         clearBoost(); healthyPrefetchSince = nil; upcomingAttempted = false; advancing = false
     }
     /// The device is locking (protected data going away). Video pauses and does
