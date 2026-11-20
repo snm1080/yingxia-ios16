@@ -80,7 +80,11 @@ public actor EmbeddedNodeHost {
         if !FileManager.default.fileExists(atPath: bundle.path) { try data.write(to: bundle, options: .atomic) }
         var params = params
         if let path = site.raw["catPawOpen"]?.string { params["catPawOpen"] = path }
-        let operationID = params["wd"] != nil ? UUID().uuidString : nil
+        // Search, play and detail resolves run under a source operation, so
+        // cancelling the caller's task fires cancelAndWait into Node and the
+        // bundle's handler is told to stop instead of running to completion
+        // for an episode the viewer has already left.
+        let operationID = params["wd"] != nil || params["play"] != nil || params["ids"] != nil ? UUID().uuidString : nil
         var input: [String: JSONValue] = [
             "bundle": .string(bundle.path), "api": .string(bundleURL.absoluteString),
             "profile": .string(root.appendingPathComponent("Profiles/" + key).path),
