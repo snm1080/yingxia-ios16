@@ -157,6 +157,7 @@ class DecompressionSession {
     init?(assetTrack: FFmpegAssetTrack, options: KSOptions, formatDescription replacement: CMFormatDescription? = nil) {
         self.assetTrack = assetTrack
         guard let pixelFormatType = assetTrack.pixelFormatType, let formatDescription = replacement ?? assetTrack.formatDescription else {
+            options.onDecoderGateDiagnostic?("session=nil:no-pixel-format-or-format-description") // DIAG26
             return nil
         }
         self.formatDescription = formatDescription
@@ -179,6 +180,7 @@ class DecompressionSession {
         let status = VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: formatDescription, decoderSpecification: CMFormatDescriptionGetExtensions(formatDescription), imageBufferAttributes: attributes, outputCallback: nil, decompressionSessionOut: &session)
         // swiftlint:enable line_length
         guard status == noErr, let decompressionSession = session else {
+            options.onDecoderGateDiagnostic?("session=nil:vt-create-failed:\(status)") // DIAG26
             return nil
         }
         if #available(iOS 14.0, tvOS 14.0, macOS 11.0, *) {
@@ -197,6 +199,7 @@ class DecompressionSession {
             preserveInputColor = assetTrack.dovi?.dv_profile != 5
         }
         self.decompressionSession = decompressionSession
+        options.onDecoderGateDiagnostic?("session=created") // DIAG26
     }
 
     fileprivate func applyOutputMetadata(to pixelBuffer: CVPixelBuffer) {

@@ -278,6 +278,11 @@ struct KSPlaybackChapter: Identifiable, Equatable {
         }
         options.hardwareDecode = decoder != "software"
         options.asynchronousDecompression = decoder != "software"
+        // DIAG26: temporary decoder-gate diagnostics (diagnostics only, no behavior change).
+        options.onDecoderGateDiagnostic = { message in // DIAG26
+            Diagnostics.shared.record(.info, "player.decoder.gate", message) // DIAG26
+        } // DIAG26
+        Diagnostics.shared.record(.info, "player.decoder.gate", "engine decoder=\(decoder) hw=\(options.hardwareDecode) async=\(options.asynchronousDecompression)") // DIAG26
         options.autoDeInterlace = true
         options.videoDelay = -audioDelay
         options.startPlayTime = max(0, startTime)

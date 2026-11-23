@@ -243,6 +243,7 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                         // streams that FFmpeg's VT hwaccel handles fine, and build 23's
                         // behavior was proven on-device, so the replacement inherits
                         // options and may use VideoToolbox hwaccel.
+                        self.options.onDecoderGateDiagnostic?("failure-replacement decoder=\(String(describing: type(of: decoder))) error=\((error as NSError).domain)/\((error as NSError).code)") // DIAG26
                         let replacement = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options)
                         var replaced = false
                         let changed = self.outputRenderQueue.perform(ifGeneration: generation) {
@@ -483,6 +484,7 @@ protocol DecodeProtocol: AnyObject {
 extension SyncPlayerItemTrack {
     func makeDecode(assetTrack: FFmpegAssetTrack) -> DecodeProtocol {
         autoreleasepool {
+            options.onDecoderGateDiagnostic?("gate mediaType=\(mediaType) asyncTrack=\(self is AsyncPlayerItemTrack<Frame>) selfType=\(String(describing: type(of: self))) asyncDecomp=\(options.asynchronousDecompression) hw=\(options.hardwareDecode)") // DIAG26
             if mediaType == .subtitle {
                 return SubtitleDecode(assetTrack: assetTrack, options: options)
             } else {
@@ -491,13 +493,18 @@ extension SyncPlayerItemTrack {
                    let session = DecompressionSession(assetTrack: assetTrack, options: options)
                 {
                     options.onVideoDecoderChanged?("VideoToolbox")
+                    options.onDecoderGateDiagnostic?("branch=VideoToolbox") // DIAG26
                     return VideoToolboxDecode(options: options, session: session)
                 } else if mediaType == .video, assetTrack.requiresNativeDolbyVision {
+                    options.onDecoderGateDiagnostic?("branch=DolbyUnavailable") // DIAG26
                     // P5 and converted P8.1 require their native Dolby/RPU
                     // processing; ordinary software HEVC would lose that work.
                     return UnavailableDolbyVisionDecode()
                 } else {
-                    if mediaType == .video { options.onVideoDecoderChanged?("FFmpeg") }
+                    if mediaType == .video {
+                        options.onVideoDecoderChanged?("FFmpeg")
+                        options.onDecoderGateDiagnostic?("branch=FFmpeg") // DIAG26
+                    }
                     return FFmpegDecode(assetTrack: assetTrack, options: options)
                 }
             }

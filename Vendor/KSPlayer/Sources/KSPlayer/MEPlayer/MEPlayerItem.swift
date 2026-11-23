@@ -520,6 +520,7 @@ extension MEPlayerItem {
                 options.process(assetTrack: first)
                 let frameCapacity = options.videoFrameMaxCount(fps: first.nominalFrameRate, naturalSize: naturalSize, isLive: duration == 0)
                 let track = options.syncDecodeVideo ? SyncPlayerItemTrack<VideoVTBFrame>(mediaType: .video, frameCapacity: frameCapacity, options: options) : AsyncPlayerItemTrack<VideoVTBFrame>(mediaType: .video, frameCapacity: frameCapacity, options: options)
+                options.onDecoderGateDiagnostic?("track=\(options.syncDecodeVideo ? "Sync" : "Async") syncDecodeVideo=\(options.syncDecodeVideo) codec=\(first.codecpar.codec_id) fps=\(first.nominalFrameRate) size=\(Int(naturalSize.width))x\(Int(naturalSize.height))") // DIAG26
                 track.delegate = self
                 allPlayerItemTracks.append(track)
                 videoTrack = track
