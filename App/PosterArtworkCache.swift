@@ -18,7 +18,7 @@ private final class PosterMemory: @unchecked Sendable {
     private let lock = NSLock()
     private let cache = NSCache<NSString, PosterBitmap>()
     private var revision = MediaCache.shared.revision
-    private init() { cache.countLimit = 96; cache.totalCostLimit = 48 * 1024 * 1024 }
+    private init() { cache.countLimit = 288; cache.totalCostLimit = 96 * 1024 * 1024 }
 
     func image(for resource: PosterResource) -> PosterBitmap? {
         return lock.withLock {
@@ -48,8 +48,16 @@ actor PosterLoader {
     private var pending: [PosterResource: Pending] = [:]
     private var queued: [(resource: PosterResource, id: UUID)] = []
     private var running = 0
-    private let concurrentLimit = 6
+    private let concurrentLimit = 16
     private var revision = MediaCache.shared.revision
+
+    /// Posters get their own session: URLSession.shared caps per-host connections,
+    /// which stacked with the loader semaphore and throttled single-host artwork.
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = 16
+        return URLSession(configuration: configuration)
+    }()
 
     nonisolated static func cached(_ resource: PosterResource) -> PosterBitmap? {
         PosterMemory.shared.image(for: resource)
@@ -73,6 +81,12 @@ actor PosterLoader {
                 if var request = pending[resource] {
                     request.waiters[waiter] = continuation
                     pending[resource] = request
+                    // A cell that (re)appears wants its queued poster first, not last:
+                    // promote a not-yet-started request to the front of the queue.
+                    if request.task == nil, let index = queued.firstIndex(where: { $0.id == request.id }) {
+                        let entry = queued.remove(at: index)
+                        queued.insert(entry, at: 0)
+                    }
                 } else {
                     let id = UUID()
                     pending[resource] = Pending(id: id, task: nil, waiters: [waiter: continuation])
@@ -91,13 +105,11 @@ actor PosterLoader {
     private func cancel(_ resource: PosterResource, waiter: UUID) {
         guard var request = pending[resource], let continuation = request.waiters.removeValue(forKey: waiter) else { return }
         continuation.resume(throwing: CancellationError())
-        if request.waiters.isEmpty {
-            pending[resource] = nil
-            request.task?.cancel()
-            queued.removeAll { $0.id == request.id }
-        } else {
-            pending[resource] = request
-        }
+        // The departing waiter stops waiting, but the download itself is left
+        // alive — queued or running — so it still lands in the disk and memory
+        // caches for the next cell that asks. Only the cache-revision sweep in
+        // load() tears requests down wholesale.
+        pending[resource] = request
     }
 
     private func startQueued() {
@@ -108,7 +120,7 @@ actor PosterLoader {
             running += 1
             // Neither flash I/O nor ImageIO may occupy the scheduling actor:
             // visible cells can cancel or join requests while a decode is busy.
-            request.task = Task.detached(priority: .utility) {
+            request.task = Task.detached(priority: .userInitiated) {
                 let result: Result<PosterBitmap, Error>
                 do { result = .success(try await Self.read(next.resource, revision: current)) }
                 catch { result = .failure(error) }
@@ -136,7 +148,7 @@ actor PosterLoader {
         let data: Data
         if let cached { data = cached }
         else if let saved = try? Data(contentsOf: MusicDownloadLibrary.artworkFile(for: resource.url)) { data = saved }
-        else { data = try await TMDBServiceSettings.artworkData(for: resource.url, headers: resource.headers) }
+        else { data = try await TMDBServiceSettings.posterData(for: resource.url, headers: resource.headers, session: PosterLoader.session) }
         try Task.checkCancellation()
         guard revision == disk.revision else { throw CancellationError() }
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),

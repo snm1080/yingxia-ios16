@@ -387,9 +387,9 @@ struct KSPlaybackChapter: Identifiable, Equatable {
     func retainPictureInPictureSource() { pipPresenter?.retainSource() }
     func setPictureInPictureActive(_ active: Bool) {
         (core?.videoOutput as? MetalPlayView)?.pictureInPictureActive = active
-        pipPresenter?.refresh(active: active)
+        pipPresenter?.setActive(active)
     }
-    func preparePictureInPicture() { pipPresenter?.refresh(active: false) }
+    func preparePictureInPicture() { pipPresenter?.prepareToStart() }
     private func synchronizePictureInPictureClock() {
         pipPresenter?.synchronizeClock(time: seeking ? position : displayPosition,
             rate: paused || buffering || seeking ? 0 : Double(speed))

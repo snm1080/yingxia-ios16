@@ -145,6 +145,32 @@ export async function cachedDanmaku(directory, cacheId) {
   });
 }
 
+// Read and verify under the same lock: a prune or replacement cannot change the
+// bytes between verification and the mobile player's replay of a saved track.
+export async function readCachedDanmaku(directory, cacheId) {
+  if (typeof cacheId !== 'string' || !/^[a-f\d]{64}$/.test(cacheId)) return null;
+  const file = path.join(directory, `${cacheId}.xml`);
+  return withCacheFileLock(file, async () => {
+    try {
+      const bytes = await readLimited(file, 64 * 1024 ** 2);
+      if (createHash('sha256').update(bytes).digest('hex') !== cacheId) return null;
+      await fs.utimes(file, new Date(), new Date()).catch(() => {});
+      return decodeDanmaku(bytes);
+    } catch { return null; }
+  });
+}
+
+export async function cacheDanmakuDocument(directory, text) {
+  const bytes = Buffer.from('\uFEFF' + text);
+  if (bytes.length > 64 * 1024 ** 2) return undefined;
+  const cacheId = createHash('sha256').update(bytes).digest('hex');
+  const file = path.join(directory, `${cacheId}.xml`);
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await withCacheFileLock(file, () => atomicWrite(file, bytes));
+  await pruneDanmakuCache(directory, { keep: [cacheId] }).catch(() => {});
+  return cacheId;
+}
+
 export async function prepareDanmaku(input, directory, sessionId, { signal, normalizeUrl, cacheDirectory } = {}) {
   if (!/^[a-f\d-]+$/.test(sessionId)) throw new AppError('INVALID_SESSION', '播放会话无效');
   let contentType = '';

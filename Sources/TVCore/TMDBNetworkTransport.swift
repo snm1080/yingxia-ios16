@@ -30,4 +30,32 @@ extension TMDBServiceSettings {
         if settings.isArtwork(url) { return try await settings.data(for: request, session: .shared) }
         return try await HTTPClient().get(url, headers: headers).0
     }
+
+    /// The poster loader's fetch: same flow as artworkData (same settings, same
+    /// proxy behaviour) but on the caller's session in both branches, and with the
+    /// TMDB size segment clamped to w780 — the poster decoder caps thumbnails at
+    /// 720 px, so originals (0.5–2 MB) buy nothing.
+    public static func posterData(for url: URL, headers: [String: String] = [:], session: URLSession) async throws -> Data {
+        let settings = load()
+        let fetched = Self.clampedPosterURL(artworkURL(url, settings: settings))
+        var request = URLRequest(url: fetched, timeoutInterval: 30)
+        request.allHTTPHeaderFields = headers
+        if settings.isArtwork(url) { return try await settings.data(for: request, session: session) }
+        return try await HTTPClient(session: session, mirrors: .shared).get(fetched, headers: headers).0
+    }
+
+    private static func clampedPosterURL(_ url: URL) -> URL {
+        guard ["image.tmdb.org", "images.tmdb.org"].contains(url.host?.lowercased() ?? "") else { return url }
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        var segments = parts.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        for index in segments.indices.dropLast(2) where segments[index] == "t" && segments[index + 1] == "p" {
+            let size = segments[index + 2]
+            let oversized = size == "original" || ((size.hasPrefix("w") || size.hasPrefix("h")) && (Int(size.dropFirst()) ?? 0) > 780)
+            guard oversized else { return url }
+            segments[index + 2] = "w780"
+            parts.path = segments.joined(separator: "/")
+            return parts.url ?? url
+        }
+        return url
+    }
 }

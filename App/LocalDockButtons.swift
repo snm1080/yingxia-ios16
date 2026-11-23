@@ -119,6 +119,7 @@ struct LocalDockButtonsSettingsView: View {
                                     Text("常驻").font(.caption).foregroundStyle(.secondary)
                                 } else {
                                     Toggle("显示", isOn: visibility(of: button))
+                                        .tint(systemAccent)
                                         .labelsHidden()
                                         .accessibilityLabel(button.title + "显示")
                                 }

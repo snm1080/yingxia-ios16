@@ -20,7 +20,7 @@ function pathFormat(value) {
 }
 
 function declaredFormat(value) {
-  const text = string(value).toLowerCase().trim();
+  const text = string(value).toLowerCase().split(';', 1)[0].trim();
   if (/^(iso|bdmv|mpls|m2ts|mp4|mkv|mov|ts|m3u8|mpd|mp3|m4a|aac|flac|wav|ogg|opus|wma|aiff|ape)$/.test(text)) return text;
   return ({ 'application/x-iso9660-image': 'iso', 'application/x-iso-image': 'iso',
     'video/mp4': 'mp4', 'video/x-matroska': 'mkv', 'application/vnd.apple.mpegurl': 'm3u8',

@@ -5,7 +5,7 @@ import { HomeLibrary } from './parity/lib/home-library.mjs';
 import { PanLinkChecker } from './parity/lib/pan-link-checker.mjs';
 import { LiveDanmakuService } from './parity/lib/live-danmaku.mjs';
 import { normalizeLiveDanmaku } from './parity/lib/live-danmaku-config.mjs';
-import { parseDanmaku, decodeDanmaku } from './parity/lib/danmaku.mjs';
+import { parseDanmaku, decodeDanmaku, readCachedDanmaku, cacheDanmakuDocument } from './parity/lib/danmaku.mjs';
 import { writeDanmakuIndex } from './parity/lib/danmaku-index.mjs';
 import { fetchBuffer } from './parity/lib/http.mjs';
 import { AISubtitleService } from './parity/lib/ai-subtitles.mjs';
@@ -310,8 +310,12 @@ export class MobileServices {
       case 'danmaku.prepare': {
         const session = this.assertSession(params);
         const revision = ++this.danmakuRevision;
+        const cacheDirectory = path.join(this.directory, 'danmaku-cache');
         let text;
-        if (typeof params.text === 'string') {
+        if (params.cacheId !== undefined) {
+          text = await readCachedDanmaku(cacheDirectory, params.cacheId);
+          if (text === null) throw new Error('原弹幕缓存已失效');
+        } else if (typeof params.text === 'string') {
           if (Buffer.byteLength(params.text) > 32 * 1024 ** 2) throw new Error('弹幕文件过大');
           text = params.text;
         } else if (typeof params.data === 'string') {
@@ -352,7 +356,12 @@ export class MobileServices {
           && Math.max(Number(item.effect?.lifetime) || 0, ...(item.effect?.items || []).map(node => Number(node.lifetime) || 0)) > 32);
         const previous = this.document; this.document = { file, manifest, headerLength, sessionId: session.id, longEvents };
         if (previous) await fs.rm(previous.file, { force: true });
-        return { count: manifest.count, chunks: manifest.chunks.length };
+        // Preserve the complete original document, including advanced effects,
+        // separately from the session index that is deleted on playback close.
+        const cacheId = params.cacheId ?? await cacheDanmakuDocument(cacheDirectory, text).catch(() => undefined);
+        signal?.throwIfAborted();
+        if (this.session !== session || revision !== this.danmakuRevision) throw new Error('播放媒体或弹幕选择已改变');
+        return { count: manifest.count, chunks: manifest.chunks.length, ...(cacheId ? { cacheId } : {}) };
       }
       case 'danmaku.window': {
         this.assertSession(params);
