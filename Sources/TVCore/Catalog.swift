@@ -845,7 +845,7 @@ public struct CatalogClient: Sendable {
     private static let sniffTimeoutError = TVError.unsupported(L10n.text("Video detection timed out before a playable address appeared."))
 
     private func playResolved(_ plan: PlaybackPlan, choice: PlaybackChoice) async throws -> Channel {
-        let address = Self.unwrapPluginProxy(choice.address)
+        let address = Self.unwrapClientProxy(Self.unwrapPluginProxy(choice.address))
         if site.key == "local.media.file", let file = URL(string: address), file.isFileURL,
            FileManager.default.fileExists(atPath: file.path) {
             return Channel(name: choice.name, group: plan.group, url: file, headers: plan.headers)
@@ -958,6 +958,15 @@ public struct CatalogClient: Sendable {
     static func unwrapPluginProxy(_ address: String) -> String {
         let items = pluginProxyQuery(address)
         guard items.first(where: { $0.name == "do" })?.value == "m3u8",
+              let inner = items.first(where: { $0.name == "url" })?.value, !inner.isEmpty else { return address }
+        return inner
+    }
+    /// Some servers rewrite play results through the client app's own loopback proxy
+    /// (`http://127.0.0.1:5575/proxy?thread=10&chunkSize=256&url=...`), which only that client can serve.
+    /// In this `thread`/`chunkSize` mode the wrapped address is the real media, so it plays directly.
+    static func unwrapClientProxy(_ address: String) -> String {
+        let items = pluginProxyQuery(address)
+        guard items.contains(where: { $0.name == "thread" }), items.contains(where: { $0.name == "chunkSize" }),
               let inner = items.first(where: { $0.name == "url" })?.value, !inner.isEmpty else { return address }
         return inner
     }
