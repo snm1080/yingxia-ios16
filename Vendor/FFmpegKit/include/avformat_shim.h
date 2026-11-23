@@ -23,7 +23,7 @@ int ff_isom_write_vpcc(void *s, AVIOContext *pb,
                        const AVCodecParameters *par);
 //int ff_isom_write_avcc(AVIOContext *pb, const uint8_t *data, int len);
 //int ff_isom_write_hvcc(AVIOContext *pb, const uint8_t *data, int size, int ps_array_completeness);
-//int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size, int write_seq_header);
+int ff_isom_write_av1c(AVIOContext *pb, const uint8_t *buf, int size, int write_seq_header);
 //#import <libavformat/url.h>
 extern AVClass ffurl_context_class;
 
