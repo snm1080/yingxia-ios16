@@ -18,6 +18,21 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     private let expanding: Bool
     private let sorted: Bool
     private var destroyed = false
+    private var wakePending = false
+    private let sizeOf: (Item) -> Int64
+    private let durationOf: (Item) -> TimeInterval
+    private var queuedBytes: Int64 = 0
+    private var queuedDuration: TimeInterval = 0
+    public var byteCount: Int64 {
+        condition.lock()
+        defer { condition.unlock() }
+        return queuedBytes
+    }
+    public var bufferedDuration: TimeInterval {
+        condition.lock()
+        defer { condition.unlock() }
+        return max(0, queuedDuration)
+    }
     private var _generation: UInt64 = 0
     var generation: UInt64 {
         condition.lock()
@@ -44,9 +59,13 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public internal(set) var fps: Float = 24
     public private(set) var maxCount: Int
     private var mask: UInt
-    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true) {
+    public init(initialCapacity: Int = 256, sorted: Bool = false, expanding: Bool = true,
+                sizeOf: @escaping (Item) -> Int64 = { _ in 0 },
+                durationOf: @escaping (Item) -> TimeInterval = { _ in 0 }) {
         self.expanding = expanding
         self.sorted = sorted
+        self.sizeOf = sizeOf
+        self.durationOf = durationOf
         let capacity = initialCapacity.nextPowerOf2()
         _buffer = ContiguousArray<Item?>(repeating: nil, count: Int(capacity))
         maxCount = Int(capacity)
@@ -63,6 +82,8 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             assertionFailure("value is not nil of headIndex: \(headIndex),tailIndex: \(tailIndex), bufferCount: \(_buffer.count), mask: \(mask)")
         }
         _buffer[Int(tailIndex & mask)] = value
+        queuedBytes += max(0, sizeOf(value))
+        queuedDuration += measuredDuration(value)
         if sorted {
             // 不用sort进行排序，这个比较高效
             var index = tailIndex
@@ -102,7 +123,9 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         }
         if headIndex == tailIndex {
             if wait {
+                if wakePending { wakePending = false; return nil }
                 condition.wait()
+                wakePending = false
                 if destroyed || headIndex == tailIndex {
                     return nil
                 }
@@ -120,11 +143,22 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         } else {
             headIndex &+= 1
             _buffer[index] = nil
+            queuedBytes -= max(0, sizeOf(item))
+            queuedDuration -= measuredDuration(item)
             if _count == maxCount >> 1 {
                 condition.signal()
             }
             return item
         }
+    }
+
+    /// A decoder-control callback can arrive before the worker begins waiting.
+    /// Preserve that wake until pop observes it, even with no media packet.
+    func wake() {
+        condition.lock()
+        wakePending = true
+        condition.signal()
+        condition.unlock()
     }
 
     public func search(where predicate: (Item) -> Bool) -> [Item] {
@@ -150,6 +184,10 @@ public class CircularBuffer<Item: ObjectQueueItem> {
                     // subtitles the 255-slot queue fills within 10-15 minutes and
                     // the app traps on KSPlayer_MEPlayerItem_read.
                     while headIndex <= i {
+                        if let removed = _buffer[Int(headIndex & mask)] {
+                            queuedBytes -= max(0, sizeOf(removed))
+                            queuedDuration -= measuredDuration(removed)
+                        }
                         _buffer[Int(headIndex & mask)] = nil
                         headIndex &+= 1
                     }
@@ -185,6 +223,8 @@ public class CircularBuffer<Item: ObjectQueueItem> {
             let readSlot = Int(readIndex & mask)
             guard let item = _buffer[readSlot] else { continue }
             if expired(item) {
+                queuedBytes -= max(0, sizeOf(item))
+                queuedDuration -= measuredDuration(item)
                 _buffer[readSlot] = nil
                 continue
             }
@@ -207,6 +247,8 @@ public class CircularBuffer<Item: ObjectQueueItem> {
         update?()
         headIndex = 0
         tailIndex = 0
+        queuedBytes = 0
+        queuedDuration = 0
         _buffer.removeAll(keepingCapacity: !destroyed)
         _buffer.append(contentsOf: ContiguousArray<Item?>(repeating: nil, count: destroyed ? 1 : maxCount))
         condition.broadcast()
@@ -215,6 +257,11 @@ public class CircularBuffer<Item: ObjectQueueItem> {
     public func shutdown() {
         destroyed = true
         flush()
+    }
+
+    private func measuredDuration(_ item: Item) -> TimeInterval {
+        let value = durationOf(item)
+        return value.isFinite && value > 0 ? value : 0
     }
 
     private func _doubleCapacity() {

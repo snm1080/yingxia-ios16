@@ -16,6 +16,11 @@ import AppKit
 public class KSMEPlayer: NSObject {
     private var loopCount = 1
     private var playerItem: MEPlaybackSource
+    private var sourceID = UUID()
+    private var sourceDelegate: SourceDelegate?
+    private var retiringSource: MEPlaybackSource?
+    private var pendingReplacement: (URL, KSOptions)?
+    private var prepareAfterReplacement = false
     public let audioOutput: AudioOutput
     private var options: KSOptions
     private var bufferingCountDownTimer: Timer?
@@ -139,7 +144,9 @@ public class KSMEPlayer: NSObject {
         }
         self.options = options
         super.init()
-        playerItem.delegate = self
+        let sourceDelegate = SourceDelegate(owner: self, sourceID: sourceID)
+        self.sourceDelegate = sourceDelegate
+        playerItem.delegate = sourceDelegate
         audioOutput.renderSource = playerItem
         videoOutput?.renderSource = playerItem
         videoOutput?.displayLayerDelegate = self
@@ -352,7 +359,7 @@ extension KSMEPlayer: MEPlayerDelegate {
 
 extension KSMEPlayer: MediaPlayerProtocol {
     public var chapters: [Chapter] {
-        playerItem.chapters
+        sourceDelegate == nil ? [] : playerItem.chapters
     }
 
     public var subtitleDataSouce: SubtitleDataSouce? { self }
@@ -369,7 +376,7 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     @MainActor
     public var naturalSize: CGSize {
-        options.display == .plane ? playerItem.naturalSize : KSOptions.sceneSize
+        sourceDelegate == nil ? .zero : (options.display == .plane ? playerItem.naturalSize : KSOptions.sceneSize)
     }
 
     public var isExternalPlaybackActive: Bool { false }
@@ -377,27 +384,49 @@ extension KSMEPlayer: MediaPlayerProtocol {
     public var view: UIView? { videoOutput }
 
     public func replace(url: URL, options: KSOptions) {
-        KSLog("replaceUrl \(self)")
         shutdown()
-        playerItem.delegate = nil
+        pendingReplacement = (url, options)
+        // A standby reader may already be fully closed. Its completion runs
+        // synchronously on main, before the new descriptor is installed.
+        if retiringSource == nil { activateReplacement() }
+    }
+
+    private func finishReplacement(retired: MEPlaybackSource) {
+        guard retiringSource === retired else { return }
+        retiringSource = nil
+        activateReplacement()
+    }
+
+    private func activateReplacement() {
+        guard let (url, options) = pendingReplacement else { return }
+        pendingReplacement = nil
+        let prepare = prepareAfterReplacement
+        prepareAfterReplacement = false
+        sourceID = UUID()
         playerItem = MEPlaybackSource(url: url, options: options)
+        self.options = options
+        if audioOutput is AudioUnitPlayer, playbackRate != 1 {
+            options.audioFilters = options.audioFilters.filter { !$0.hasPrefix("atempo=") }
+                + ["atempo=\(playbackRate)"]
+        }
+        let delegate = SourceDelegate(owner: self, sourceID: sourceID)
+        sourceDelegate = delegate
+        playerItem.delegate = delegate
         if options.videoDisable {
             videoOutput = nil
         } else if videoOutput == nil {
             videoOutput = KSOptions.videoPlayerType.init(options: options)
             videoOutput?.displayLayerDelegate = self
         }
-        self.options = options
-        playerItem.delegate = self
-        audioOutput.flush()
         audioOutput.renderSource = playerItem
-        videoOutput?.renderSource = playerItem
         videoOutput?.options = options
+        videoOutput?.renderSource = playerItem
+        if prepare { prepareToPlay() }
     }
 
     public var currentPlaybackTime: TimeInterval {
         get {
-            playerItem.currentPlaybackTime
+            sourceDelegate == nil ? 0 : playerItem.currentPlaybackTime
         }
         set {
             seek(time: newValue) { _ in }
@@ -406,7 +435,7 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     /// 见 `MEPlayerItem.displayedVideoTime`——最近一帧绘制到 display layer 的 PTS，
     /// 适合驱动需要与画面严格同步的视图（audioClock 因 buffer prefill 跑在画面之前不适用）。
-    public var displayedVideoTime: TimeInterval { playerItem.displayedVideoTime }
+    public var displayedVideoTime: TimeInterval { sourceDelegate == nil ? 0 : playerItem.displayedVideoTime }
     public func relativeVideoTime(for timestamp: CMTime) -> TimeInterval { playerItem.relativeVideoTime(for: timestamp) }
     public var hasReachedEndOfInput: Bool { playerItem.hasReachedEndOfInput }
     #if DEBUG
@@ -414,14 +443,16 @@ extension KSMEPlayer: MediaPlayerProtocol {
     public var subtitleDiagnostic: String { playerItem.subtitleDiagnostic }
     #endif
 
-    public var duration: TimeInterval { playerItem.duration }
+    public var duration: TimeInterval { sourceDelegate == nil ? 0 : playerItem.duration }
 
-    public var fileSize: Double { playerItem.fileSize }
+    public var fileSize: Double { sourceDelegate == nil ? 0 : playerItem.fileSize }
+    public var cacheTimeline: [PlaybackCacheTimeline] { sourceDelegate == nil ? [] : playerItem.cacheTimeline }
 
-    public var seekable: Bool { playerItem.seekable }
+    public var seekable: Bool { sourceDelegate != nil && playerItem.seekable }
 
     public var dynamicInfo: DynamicInfo? {
-        playerItem.dynamicInfo
+        guard sourceDelegate != nil else { return nil }
+        return playerItem.dynamicInfo
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
@@ -461,6 +492,10 @@ extension KSMEPlayer: MediaPlayerProtocol {
     public func prepareToPlay() {
         KSLog("prepareToPlay \(self)")
         failedSource = false
+        if retiringSource != nil || pendingReplacement != nil {
+            prepareAfterReplacement = true
+            return
+        }
         options.prepareTime = CACurrentMediaTime()
         playerItem.prepareToPlay()
         bufferingProgress = 0
@@ -489,16 +524,37 @@ extension KSMEPlayer: MediaPlayerProtocol {
 
     public func shutdown() {
         KSLog("shutdown \(self)")
+        pendingReplacement = nil
+        prepareAfterReplacement = false
+        sourceID = UUID()
+        sourceDelegate = nil
+        playerItem.delegate = nil
         seekPictureRevision &+= 1; pendingSeekPicture = nil
         playbackState = .stopped
         loadState = .idle
         runOnMainThread { [weak self] in
-            self?.videoOutput?.discardPendingFrame()
-            self?.options.resetVideoClock()
+            guard let self else { return }
+            self.audioOutput.pause()
+            self.audioOutput.flush()
+            self.videoOutput?.pause()
+            self.videoOutput?.flush()
+            self.audioOutput.renderSource = nil
+            self.videoOutput?.renderSource = nil
+            self.outputsPaused = true
+            self.options.resetVideoClock()
         }
         isReadyToPlay = false
+        playableTime = 0
         loopCount = 0
-        playerItem.shutdown()
+        if retiringSource == nil {
+            let retiring = playerItem
+            retiringSource = retiring
+            retiring.shutdown()
+            retiring.whenClosed { [weak self, weak retiring] in
+                guard let retiring else { return }
+                runOnMainThread { [weak self] in self?.finishReplacement(retired: retiring) }
+            }
+        }
         options.prepareTime = 0
         options.dnsStartTime = 0
         options.tcpStartTime = 0
@@ -564,7 +620,10 @@ extension KSMEPlayer: MediaPlayerProtocol {
     }
 
     public func tracks(mediaType: AVFoundation.AVMediaType) -> [MediaPlayerTrack] {
-        playerItem.assetTracks.compactMap { track -> MediaPlayerTrack? in
+        // During standby/close the old AVStream storage may already be freed.
+        // No caller may discover a retired track through the reused facade.
+        guard sourceDelegate != nil else { return [] }
+        return playerItem.assetTracks.compactMap { track -> MediaPlayerTrack? in
             if track.mediaType == mediaType {
                 return track
             } else if mediaType == .subtitle {
@@ -707,4 +766,25 @@ public extension KSMEPlayer {
     func stoptRecord() {
         playerItem.stopRecord()
     }
+}
+
+private final class SourceDelegate: MEPlayerDelegate {
+    weak var owner: KSMEPlayer?
+    let sourceID: UUID
+    init(owner: KSMEPlayer, sourceID: UUID) { self.owner = owner; self.sourceID = sourceID }
+    private func send(_ body: @escaping (KSMEPlayer) -> Void) {
+        runOnMainThread { [weak self] in
+            guard let self, let owner = self.owner, owner.accepts(sourceID: self.sourceID) else { return }
+            body(owner)
+        }
+    }
+    func sourceDidOpened() { send { $0.sourceDidOpened() } }
+    func sourceDidFailed(error: NSError?) { send { $0.sourceDidFailed(error: error) } }
+    func sourceDidFinished() { send { $0.sourceDidFinished() } }
+    func sourceDidChange(loadingState: LoadingState) { send { $0.sourceDidChange(loadingState: loadingState) } }
+    func sourceDidChange(oldBitRate: Int64, newBitrate: Int64) { send { $0.sourceDidChange(oldBitRate: oldBitRate, newBitrate: newBitrate) } }
+}
+
+extension KSMEPlayer {
+    fileprivate func accepts(sourceID: UUID) -> Bool { self.sourceID == sourceID && retiringSource == nil }
 }

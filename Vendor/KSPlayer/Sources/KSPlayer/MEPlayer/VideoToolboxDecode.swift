@@ -20,6 +20,7 @@ class VideoToolboxDecode: DecodeProtocol {
     private var startTime = Int64(0)
     private var lastPosition = Int64(0)
     private var needReconfig = false
+    private var awaitingLiveKeyFrame = false
 
     init(options: KSOptions, session: DecompressionSession) {
         self.options = options
@@ -40,6 +41,24 @@ class VideoToolboxDecode: DecodeProtocol {
         }
         guard let corePacket = packet.corePacket?.pointee, let data = corePacket.data else {
             return
+        }
+        if options.isLiveStreaming, corePacket.flags & AV_PKT_FLAG_CORRUPT != 0 {
+            // Known TS loss is not a hardware capability failure. Leave this
+            // decoder selected, retire its references, then resume at the next
+            // clean keyframe. The output watchdog bounds a missing keyframe.
+            awaitingLiveKeyFrame = true
+            return
+        }
+        if awaitingLiveKeyFrame {
+            guard packet.isKeyFrame else { return }
+            VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
+            guard let replacement = DecompressionSession(assetTrack: session.assetTrack, options: options,
+                formatDescription: session.formatDescription) else {
+                completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: kVTInvalidSessionErr)))
+                return
+            }
+            session = replacement
+            awaitingLiveKeyFrame = false
         }
         do {
             if packet.isKeyFrame, session.assetTrack.isAnnexB, corePacket.size > 0,
@@ -120,6 +139,7 @@ class VideoToolboxDecode: DecodeProtocol {
     }
 
     func shutdown() {
+        VTDecompressionSessionWaitForAsynchronousFrames(session.decompressionSession)
         VTDecompressionSessionInvalidate(session.decompressionSession)
     }
 
@@ -250,6 +270,8 @@ extension CMVideoCodecType {
             return "hvcC"
         case kCMVideoCodecType_VP9:
             return "vpcC"
+        case kCMVideoCodecType_AV1:
+            return "av1C"
         default: return "avcC"
         }
     }

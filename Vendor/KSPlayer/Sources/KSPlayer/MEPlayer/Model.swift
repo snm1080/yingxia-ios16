@@ -37,6 +37,7 @@ public protocol OutputRenderSourceDelegate: AnyObject {
 
 protocol CodecCapacityDelegate: AnyObject {
     func codecDidFinished(track: some CapacityProtocol)
+    func codecDidFailed(track: some CapacityProtocol, error: NSError)
 }
 
 protocol MEPlayerDelegate: AnyObject {

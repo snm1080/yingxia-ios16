@@ -11,15 +11,34 @@ public final class MEPlayerItem: Sendable {
     private let url: URL
     private let options: KSOptions
     private let operationQueue = OperationQueue()
-    private let condition = NSCondition()
+    private let readState = MEPlaybackReadState()
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
     private let cacheInputIO: PlaybackInputIO
+    private let cacheTimelineLock = NSLock()
+    private var publishedCacheTimeline: [PlaybackCacheTimeline] = []
+    private var cacheIndexCounts: [Int32: Int32] = [:]
+    private var cacheIndexPoints: [Int32: [PlaybackCacheTimeline.Point]] = [:]
+    private var nextCacheIndexSample = 0.0
+    var cacheTimeline: [PlaybackCacheTimeline] { cacheTimelineLock.withLock { publishedCacheTimeline } }
     private var outputFormatCtx: UnsafeMutablePointer<AVFormatContext>?
     private var outputPacket: UnsafeMutablePointer<AVPacket>?
     private var streamMapping = [Int: Int]()
     private var openOperation: BlockOperation?
     private var readOperation: BlockOperation?
     private var closeOperation: BlockOperation?
+    private let closeLock = NSLock()
+    private var closeFinished = false
+    private var closeCompletions: [() -> Void] = []
+    /// Register after shutdown; completion means demux, decode and native
+    /// callbacks have stopped and the old format context has been released.
+    func whenClosed(_ completion: @escaping () -> Void) {
+        let finished = closeLock.withLock { () -> Bool in
+            if closeFinished { return true }
+            closeCompletions.append(completion)
+            return false
+        }
+        if finished { completion() }
+    }
     private var seekingCompletionHandler: ((Bool) -> Void)?
     // 没有音频数据可以渲染
     private var isAudioStalled = true
@@ -62,6 +81,9 @@ public final class MEPlayerItem: Sendable {
     private var subtitlePrerollDeadline: CFTimeInterval?
     private var injectedSubtitlePackets: [Packet] = []
     private var colorProbeDeadline: TimeInterval?
+    // Set and read only by the active native I/O call. This bounds HTTP
+    // reconnects and demux probing even when bytes never yield a usable packet.
+    private var liveReadDeadline: TimeInterval?
     private var colorProbePackets: [DolbyVisionProbePacket] = []
     private var colorProbePacketIndex = 0
     private var dolbyPacketPairer: DolbyVisionPacketPairer?
@@ -94,9 +116,11 @@ public final class MEPlayerItem: Sendable {
         }
     }
 
-    private var state = MESourceState.idle {
-        didSet {
-            switch state {
+    private var state: MESourceState {
+        get { readState.value }
+        set {
+            readState.set(newValue)
+            switch newValue {
             case .opened:
                 // Publish readiness after readThread can accept an immediate resume seek.
                 break
@@ -209,6 +233,8 @@ public final class MEPlayerItem: Sendable {
 
 extension MEPlayerItem {
     private func openThread() {
+        liveReadDeadline = options.isLiveStreaming ? ProcessInfo.processInfo.systemUptime + 25 : nil
+        defer { liveReadDeadline = nil }
         avformat_close_input(&self.formatCtx)
         formatCtx = avformat_alloc_context()
         guard let formatCtx else {
@@ -224,6 +250,7 @@ extension MEPlayerItem {
             let formatContext = Unmanaged<MEPlayerItem>.fromOpaque(ctx).takeUnretainedValue()
             if let deadline = formatContext.subtitlePrerollDeadline, CACurrentMediaTime() >= deadline { return 1 }
             if let deadline = formatContext.colorProbeDeadline, ProcessInfo.processInfo.systemUptime >= deadline { return 1 }
+            if let deadline = formatContext.liveReadDeadline, ProcessInfo.processInfo.systemUptime >= deadline { return 1 }
             switch formatContext.state {
             case .finished, .closed, .failed:
                 return 1
@@ -296,6 +323,7 @@ extension MEPlayerItem {
         duration = TimeInterval(max(formatCtx.pointee.duration, 0)) / TimeInterval(AV_TIME_BASE)
         fileSize = Double(formatCtx.pointee.bit_rate) * duration / 8
         createCodec(formatCtx: formatCtx)
+        publishCacheTimeline()
         if state == .failed || state == .closed { return }
         if formatCtx.pointee.nb_chapters > 0 {
             chapters.removeAll()
@@ -580,9 +608,7 @@ extension MEPlayerItem {
         allPlayerItemTracks.forEach { $0.decode() }
         if notifyReady, state == .reading { delegate?.sourceDidOpened() }
         while [MESourceState.paused, .seeking, .reading].contains(state) {
-            if state == .paused {
-                condition.wait()
-            }
+            readState.waitWhilePaused()
             if state == .seeking {
                 colorProbePackets.removeAll(); colorProbePacketIndex = 0
                 dolbyPacketPairer?.reset()
@@ -893,6 +919,8 @@ extension MEPlayerItem {
     /// Demux on the reader thread. Dolby EL access units supply only RPU;
     /// the output contains the unchanged base AU and converted single-layer RPU.
     private func readColorPacket(into packet: UnsafeMutablePointer<AVPacket>) throws -> Int32 {
+        liveReadDeadline = options.isLiveStreaming ? ProcessInfo.processInfo.systemUptime + 12 : nil
+        defer { liveReadDeadline = nil }
         while true {
             if let ready = try dolbyPacketPairer?.takeReady() {
                 av_packet_move_ref(packet, ready.packet)
@@ -928,7 +956,11 @@ extension MEPlayerItem {
     }
 
     private func reading() -> Int32 {
-        defer { cacheInputIO.publishBytes() }
+        defer {
+            cacheInputIO.publishBytes()
+            let now = ProcessInfo.processInfo.systemUptime
+            if now >= nextCacheIndexSample { nextCacheIndexSample = now + 1; publishCacheTimeline() }
+        }
         let packet = Packet()
         guard let corePacket = packet.corePacket else {
             return 0
@@ -1041,6 +1073,74 @@ extension MEPlayerItem {
         return readResult
     }
 
+    /// No network/probe work is performed for the bar. Full indexes (MP4) and
+    /// incrementally learned indexes (Matroska) are sampled only when their
+    /// selected track/count changes, with at most 20,001 points per track.
+    private func publishCacheTimeline() {
+        guard let transport = options.cacheIOURL,
+              transport.path.hasPrefix("/media-cache/"), let formatCtx else { return }
+        let resourceID = String(transport.lastPathComponent.split(separator: ".").first ?? "")
+        let selected = assetTracks.filter { $0.isEnabled && ($0.mediaType == .video || $0.mediaType == .audio) }
+        var counts: [Int32: Int32] = [:]
+        for track in selected {
+            if let stream = formatCtx.pointee.streams[Int(track.trackID)] {
+                counts[track.trackID] = avformat_index_get_entries_count(stream)
+            }
+        }
+        guard counts != cacheIndexCounts else { return }
+        let previousCounts = cacheIndexCounts
+        cacheIndexCounts = counts
+        var indexes: [PlaybackCacheTimeline] = []
+        var nextPoints: [Int32: [PlaybackCacheTimeline.Point]] = [:]
+        for track in selected {
+            var points = cacheIndexPoints[track.trackID] ?? []
+            if counts[track.trackID] == previousCounts[track.trackID] {
+                // A growing companion index never rescans an unchanged movie.
+            } else if let stream = formatCtx.pointee.streams[Int(track.trackID)],
+               let count = counts[track.trackID], count > 1 {
+                let step = max(1, (Int(count) + 19_999) / 20_000)
+                let previous = Int(previousCounts[track.trackID] ?? 0)
+                let oldStep = max(1, (previous + 19_999) / 20_000)
+                let extends = previous > 1 && Int(count) > previous && oldStep == step && !points.isEmpty
+                if !extends { points.removeAll(keepingCapacity: true) }
+                else if (previous - 1) % step != 0 { points.removeLast() }
+                let first = extends ? ((previous + step - 1) / step) * step : 0
+                var positions = Array(stride(from: first, to: Int(count), by: step))
+                if positions.last != Int(count) - 1 { positions.append(Int(count) - 1) }
+                for offset in positions {
+                    guard let entry = avformat_index_get_entry(stream, Int32(offset)),
+                          entry.pointee.timestamp != .min, entry.pointee.pos >= 0 else { points = []; break }
+                    var timestamp = entry.pointee.timestamp
+                    if options.formatName.contains("matroska"), offset > 0,
+                       let prior = avformat_index_get_entry(stream, Int32(offset - 1)),
+                       prior.pointee.pos == entry.pointee.pos {
+                        // Raw entry sampling can land in the middle of an audio
+                        // cluster. Its earliest timestamp is the exact boundary;
+                        // a later sample would paint uncached bytes in that cluster.
+                        var low = 0, high = offset
+                        while low < high {
+                            let middle = low + (high - low) / 2
+                            guard let candidate = avformat_index_get_entry(stream, Int32(middle)) else { break }
+                            if candidate.pointee.pos < entry.pointee.pos { low = middle + 1 }
+                            else { high = middle }
+                        }
+                        if let boundary = avformat_index_get_entry(stream, Int32(low)),
+                           boundary.pointee.pos == entry.pointee.pos { timestamp = boundary.pointee.timestamp }
+                    }
+                    guard timestamp != .min else { points = []; break }
+                    let time = track.timebase.cmtime(for: timestamp).seconds - startTime.seconds
+                    guard time.isFinite else { points = []; break }
+                    points.append(.init(position: entry.pointee.pos, time: time))
+                }
+            } else { points = [] }
+            nextPoints[track.trackID] = points
+            indexes.append(PlaybackCacheTimeline(resourceID: resourceID, points: points,
+                                                  duration: duration, timeOrigin: startTime.seconds))
+        }
+        cacheIndexPoints = nextPoints
+        cacheTimelineLock.withLock { publishedCacheTimeline = indexes }
+    }
+
     /// The seamless-loop queues keep their existing ownership. Only the
     /// demux/RPU epoch resets when the input jumps backwards.
     private func seekLoopDemux(to target: CMTime, relativeTime: TimeInterval) throws {
@@ -1061,15 +1161,12 @@ extension MEPlayerItem {
     }
 
     private func pause() {
-        if state == .reading {
-            state = .paused
-        }
+        readState.transition(from: .reading, to: .paused)
     }
 
     private func resume() {
-        if state == .paused {
-            state = .reading
-            condition.signal()
+        if readState.transition(from: .paused, to: .reading) {
+            timer.fireDate = Date.distantPast
         }
     }
 }
@@ -1119,6 +1216,7 @@ extension MEPlayerItem: MediaPlayback {
         let closeOperation = BlockOperation {
             Thread.current.name = (self.operationQueue.name ?? "") + "_close"
             self.allPlayerItemTracks.forEach { $0.shutdown() }
+            self.allPlayerItemTracks.forEach { $0.shutdownAndWait() }
             self.colorProbePackets.removeAll(); self.colorProbePacketIndex = 0
             self.dolbyPacketPairer = nil
             self.inlineDolbyConverters.removeAll()
@@ -1137,6 +1235,13 @@ extension MEPlayerItem: MediaPlayback {
             self.duration = 0
             self.closeOperation = nil
             self.operationQueue.cancelAllOperations()
+            let completions = self.closeLock.withLock { () -> [() -> Void] in
+                self.closeFinished = true
+                let pending = self.closeCompletions
+                self.closeCompletions.removeAll()
+                return pending
+            }
+            completions.forEach { $0() }
         }
         closeOperation.queuePriority = .veryHigh
         closeOperation.qualityOfService = .userInteractive
@@ -1148,7 +1253,6 @@ extension MEPlayerItem: MediaPlayback {
             closeOperation.addDependency(openOperation)
         }
         operationQueue.addOperation(closeOperation)
-        condition.signal()
         if options.syncDecodeVideo || options.syncDecodeAudio {
             DispatchQueue.global().async { [weak self] in
                 self?.allPlayerItemTracks.forEach { $0.shutdown() }
@@ -1164,42 +1268,51 @@ extension MEPlayerItem: MediaPlayback {
     }
 
     public func seek(time: TimeInterval, completion: @escaping ((Bool) -> Void)) {
-        if state == .reading || state == .paused || state == .finished || state == .seeking {
-            invalidateAudioClockUpdates()
+        let previous = readState.transition(from: [.reading, .paused, .finished, .seeking], to: .seeking) { previous in
+            self.invalidateAudioClockUpdates()
+            self.seekTime = time
+            self.seekingCompletionHandler = completion
+            if previous != .seeking {
+                self.allPlayerItemTracks.forEach { $0.seek(time: time + self.startTime.seconds) }
+            }
+            // Seek payload and queue generations are ready before waking a
+            // reader stopped at the high-water buffer threshold.
         }
-        if state == .reading || state == .paused {
-            seekTime = time
-            state = .seeking
-            seekingCompletionHandler = completion
-            condition.broadcast()
-            allPlayerItemTracks.forEach { $0.seek(time: time + startTime.seconds) }
-        } else if state == .finished {
-            seekTime = time
-            state = .seeking
-            seekingCompletionHandler = completion
-            read()
-        } else if state == .seeking {
-            seekTime = time
-            seekingCompletionHandler = completion
-        } else {
+        guard let previous else {
             DispatchQueue.main.async { completion(false) }
             return
         }
+        if previous == .finished { read() }
         isAudioStalled = audioTrack == nil
     }
 }
 
 extension MEPlayerItem: CodecCapacityDelegate {
+    func codecDidFailed(track: some CapacityProtocol, error: NSError) {
+        // Decoder callbacks run independently of demuxing and may arrive after
+        // close. Atomically stop the reader before notifying its owner, which
+        // closes both inputs and enters the application's bounded recovery.
+        guard track.mediaType == .audio,
+              readState.transition(from: [.opened, .reading, .paused, .seeking, .finished],
+                                   to: .failed, preparing: { _ in }) != nil else { return }
+        timer.fireDate = Date.distantFuture
+        delegate?.sourceDidFailed(error: error)
+    }
+
     func codecDidChangeCapacity() {
         let loadingState = options.playable(capacitys: videoAudioTracks, isFirst: isFirst, isSeek: isSeek)
         delegate?.sourceDidChange(loadingState: loadingState)
         if loadingState.isPlayable {
             isFirst = false
             isSeek = false
-            if loadingState.loadedTime > options.maxBufferDuration {
+            let packetBytes = videoAudioTracks.reduce(Int64(0)) { $0 + $1.packetByteCount }
+            let byteLimited = options.maxBufferSize > 0
+            if loadingState.loadedTime > options.maxBufferDuration
+                || (byteLimited && packetBytes >= options.maxBufferSize) {
                 adaptableVideo(loadingState: loadingState)
                 pause()
-            } else if loadingState.loadedTime < options.maxBufferDuration / 2 {
+            } else if loadingState.loadedTime < options.maxBufferDuration / 2,
+                      !byteLimited || packetBytes < options.maxBufferSize / 2 {
                 resume()
             }
         } else {
@@ -1359,7 +1472,17 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
         case .remain:
             break
         case .next:
-            break
+            // One or two missed display ticks leave a high-FPS stream behind
+            // even after the UI recovers: showing one old frame on each new
+            // tick never closes that gap. Within the normal clock tolerance,
+            // select the newest already-due frame using the same bounded queue
+            // snapshot as severe-delay recovery. Forced paused seeks keep their
+            // exact requested picture and future frames remain queued.
+            guard !force, let current = frame, recoveryFrameCount > 0 else { break }
+            let sourceFPS = current.fps.isFinite && current.fps > 0 ? Double(current.fps) : 60
+            guard dynamicInfo.audioVideoSyncDiff < -1 / sourceFPS - 0.000001,
+                  dynamicInfo.audioVideoSyncDiff >= -4 / sourceFPS else { break }
+            fallthrough
         case .dropNextFrame:
             // Catch up by replacing the stale picture with a newer due one.
             // Dropping the next picture while showing the old one reverses

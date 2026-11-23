@@ -174,6 +174,8 @@ public enum ClockProcessType {
 public protocol CapacityProtocol {
     var fps: Float { get }
     var packetCount: Int { get }
+    var packetByteCount: Int64 { get }
+    var loadedTime: TimeInterval { get }
     var frameCount: Int { get }
     var frameMaxCount: Int { get }
     var isEndOfFile: Bool { get }
@@ -181,7 +183,9 @@ public protocol CapacityProtocol {
 }
 
 extension CapacityProtocol {
-    var loadedTime: TimeInterval {
+    public var packetByteCount: Int64 { 0 }
+
+    public var loadedTime: TimeInterval {
         TimeInterval(packetCount + frameCount) / TimeInterval(fps)
     }
 }

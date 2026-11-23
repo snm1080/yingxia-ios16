@@ -72,12 +72,15 @@ class VideoSwresample: FrameChange {
     private let dstFormat: AVPixelFormat?
     private let fps: Float
     private let isDovi: Bool
-    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi: Bool) {
+    private let preferBiPlanar420: Bool
+    private var fullRange420 = false
+    init(dstWidth: Int32? = nil, dstHeight: Int32? = nil, dstFormat: AVPixelFormat? = nil, fps: Float = 60, isDovi: Bool, preferBiPlanar420: Bool = false) {
         self.dstWidth = dstWidth
         self.dstHeight = dstHeight
         self.dstFormat = dstFormat
         self.fps = fps
         self.isDovi = isDovi
+        self.preferBiPlanar420 = preferBiPlanar420
     }
 
     func change(avframe: UnsafeMutablePointer<AVFrame>) throws -> MEFrame {
@@ -94,28 +97,37 @@ class VideoSwresample: FrameChange {
         return frame
     }
 
-    private func setup(format: AVPixelFormat, width: Int32, height: Int32, linesize: Int32) {
-        if self.format == format, self.width == width, self.height == height {
+    private func setup(format: AVPixelFormat, width: Int32, height: Int32, linesize: Int32, fullRange: Bool) {
+        let useNV12 = preferBiPlanar420 && format == AV_PIX_FMT_YUV420P
+        let fullRange420 = useNV12 && fullRange
+        if pool != nil, self.format == format, self.width == width, self.height == height, self.fullRange420 == fullRange420 {
             return
         }
+        self.fullRange420 = fullRange420
         self.format = format
         self.height = height
         self.width = width
         let dstWidth = dstWidth ?? width
         let dstHeight = dstHeight ?? height
         let pixelFormatType: OSType
-        if self.dstWidth == nil, self.dstHeight == nil, dstFormat == nil, let osType = format.osType() {
+        // FFmpeg's planar 10-bit formats store samples in the low bits, while
+        // their CoreVideo P010/P210/P410 counterparts require the high bits.
+        // Snapshot/PiP conversion must run swscale instead of copying those
+        // words unchanged. Inline Metal retains its original low-bit planes.
+        if !useNV12, self.dstWidth == nil, self.dstHeight == nil, dstFormat == nil, format.leftShift == 0,
+           let osType = format.osType() {
             pixelFormatType = osType
             sws_freeContext(imgConvertCtx)
             imgConvertCtx = nil
         } else {
             let dstFormat = dstFormat ?? format.bestPixelFormat
-            pixelFormatType = dstFormat.osType()!
+            pixelFormatType = dstFormat.osType(fullRange: fullRange420)!
 //            imgConvertCtx = sws_getContext(width, height, self.format, width, height, dstFormat, Int32(SWS_FAST_BILINEAR.rawValue), nil, nil, nil)
             // AV_PIX_FMT_VIDEOTOOLBOX格式是无法进行swscale的
             imgConvertCtx = sws_getCachedContext(imgConvertCtx, width, height, self.format, dstWidth, dstHeight, dstFormat, Int32(SWS_FAST_BILINEAR.rawValue), nil, nil, nil)
+            guard imgConvertCtx != nil else { pool = nil; return }
         }
-        pool = CVPixelBufferPool.create(width: dstWidth, height: dstHeight, bytesPerRowAlignment: linesize, pixelFormatType: pixelFormatType)
+        pool = CVPixelBufferPool.create(width: dstWidth, height: dstHeight, bytesPerRowAlignment: useNV12 ? 64 : linesize, pixelFormatType: pixelFormatType)
     }
 
     func transfer(frame: AVFrame) -> PixelBufferProtocol? {
@@ -125,7 +137,7 @@ class VideoSwresample: FrameChange {
         if format.leftShift > 0 {
             return PixelBuffer(frame: frame)
         }
-        let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize))
+        let pbuf = transfer(format: format, width: width, height: height, data: Array(tuple: frame.data), linesize: Array(tuple: frame.linesize), fullRange: frame.color_range == AVCOL_RANGE_JPEG)
         if let pbuf {
             var metadata = frame
             withUnsafePointer(to: &metadata) { VideoColorMetadata.apply(frame: $0, pixelBuffer: pbuf) }
@@ -133,8 +145,8 @@ class VideoSwresample: FrameChange {
         return pbuf
     }
 
-    func transfer(format: AVPixelFormat, width: Int32, height: Int32, data: [UnsafeMutablePointer<UInt8>?], linesize: [Int32]) -> CVPixelBuffer? {
-        setup(format: format, width: width, height: height, linesize: linesize[1] == 0 ? linesize[0] : linesize[1])
+    func transfer(format: AVPixelFormat, width: Int32, height: Int32, data: [UnsafeMutablePointer<UInt8>?], linesize: [Int32], fullRange: Bool = false) -> CVPixelBuffer? {
+        setup(format: format, width: width, height: height, linesize: linesize[1] == 0 ? linesize[0] : linesize[1], fullRange: fullRange)
         guard let pool else {
             return nil
         }
@@ -144,16 +156,25 @@ class VideoSwresample: FrameChange {
             guard let pbuf, ret == kCVReturnSuccess else {
                 return nil
             }
-            CVPixelBufferLockBaseAddress(pbuf, CVPixelBufferLockFlags(rawValue: 0))
+            guard CVPixelBufferLockBaseAddress(pbuf, []) == kCVReturnSuccess else { return nil }
+            defer { CVPixelBufferUnlockBaseAddress(pbuf, []) }
             let bufferPlaneCount = pbuf.planeCount
             if let imgConvertCtx {
-                let bytesPerRow = (0 ..< bufferPlaneCount).map { i in
-                    Int32(CVPixelBufferGetBytesPerRowOfPlane(pbuf, i))
+                guard (1...4).contains(bufferPlaneCount) else { return nil }
+                var bytesPerRow = [Int32](repeating: 0, count: 4)
+                var contents = [UnsafeMutablePointer<UInt8>?](repeating: nil, count: 4)
+                for plane in 0..<bufferPlaneCount {
+                    guard let address = pbuf.baseAddressOfPlane(at: plane) else { return nil }
+                    bytesPerRow[plane] = Int32(pbuf.isPlanar ? CVPixelBufferGetBytesPerRowOfPlane(pbuf, plane) : CVPixelBufferGetBytesPerRow(pbuf))
+                    contents[plane] = address.assumingMemoryBound(to: UInt8.self)
                 }
-                let contents = (0 ..< bufferPlaneCount).map { i in
-                    pbuf.baseAddressOfPlane(at: i)?.assumingMemoryBound(to: UInt8.self)
+                var sources = [UnsafePointer<UInt8>?](repeating: nil, count: 4)
+                var strides = [Int32](repeating: 0, count: 4)
+                for plane in 0..<min(4, data.count, linesize.count) {
+                    sources[plane] = UnsafePointer(data[plane])
+                    strides[plane] = linesize[plane]
                 }
-                _ = sws_scale(imgConvertCtx, data.map { UnsafePointer($0) }, linesize, 0, height, contents, bytesPerRow)
+                guard sws_scale(imgConvertCtx, sources, strides, 0, height, contents, bytesPerRow) == Int32(pbuf.height) else { return nil }
             } else {
                 let planeCount = format.planeCount
                 let byteCount = format.bitDepth > 8 ? 2 : 1
@@ -190,7 +211,6 @@ class VideoSwresample: FrameChange {
                     }
                 }
             }
-            CVPixelBufferUnlockBaseAddress(pbuf, CVPixelBufferLockFlags(rawValue: 0))
             return pbuf
         }
     }

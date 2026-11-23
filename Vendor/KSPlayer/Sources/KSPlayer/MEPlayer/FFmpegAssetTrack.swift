@@ -139,18 +139,29 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
     /// `AVCodecParameters.frame_size` is audio-only and left at `0` by most
     /// demuxers (AAC/MP3/Opus/FLAC/Vorbis) until the first frame is decoded,
     /// and a `0` divisor traps Swift with a divide-by-zero. When it is unset,
-    /// fall back to codec-aware constants (TRUEHD: 48, everything else: 1000)
+    /// fall back to codec-aware constants
     /// instead of deriving a frame size arithmetically. `sample_rate` can also
     /// be `0` pre-decode, so guard both before dividing — mirroring
     /// `AudioDescriptor`'s own `sampleRate <= 0` guard (`Resample.swift`).
     static func audioNominalFrameRate(sampleRate: Int32, frameSize: Int32, codecID: AVCodecID) -> Float {
         // Suggested by the maintainer: codec-aware fallbacks instead of deriving a
         // frame size from the stream timebase (whose den/num can integer-divide to 0).
-        let effectiveFrameSize = frameSize > 0 ? frameSize : codecID == AV_CODEC_ID_TRUEHD ? 48 : 1000
+        let fallback: Int32
+        switch codecID {
+        case AV_CODEC_ID_TRUEHD: fallback = 48
+        case AV_CODEC_ID_AAC, AV_CODEC_ID_AAC_LATM, AV_CODEC_ID_AV3A: fallback = 1024
+        case AV_CODEC_ID_AC3, AV_CODEC_ID_EAC3: fallback = 1536
+        case AV_CODEC_ID_MP2, AV_CODEC_ID_MP3: fallback = 1152
+        case AV_CODEC_ID_OPUS: fallback = 960
+        default: fallback = 1000
+        }
+        let effectiveFrameSize = frameSize > 0 ? frameSize : fallback
         guard sampleRate > 0, effectiveFrameSize > 0 else {
             return 48
         }
-        return max(Float(sampleRate / effectiveFrameSize), 48)
+        // Preserve fractional rates. EAC3 at 48 kHz is 31.25 packets/s;
+        // clamping it to 48 makes a 45-second queue retain 69 seconds.
+        return Float(sampleRate) / Float(effectiveFrameSize)
     }
 
     init?(codecpar: AVCodecParameters) {
@@ -216,7 +227,10 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
             var extradataSize = Int32(0)
             var extradata = codecpar.extradata
             let atomsData: Data?
-            if let extradata {
+            if codecpar.codec_id == AV_CODEC_ID_AV1 {
+                atomsData = Self.av1ConfigurationRecord(codecpar)
+                isConvertNALSize = false
+            } else if let extradata {
                 extradataSize = codecpar.extradata_size
                 var data = Data(bytes: extradata, count: max(0, Int(extradataSize)))
                 let isNALCodec = [kCMVideoCodecType_H264, kCMVideoCodecType_HEVC].contains(codecType.rawValue)
@@ -326,8 +340,24 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
         trackID = 0
     }
 
-    func createContext(options: KSOptions) throws -> UnsafeMutablePointer<AVCodecContext> {
-        try codecpar.createContext(options: options)
+    private static func av1ConfigurationRecord(_ codecpar: AVCodecParameters) -> Data? {
+        guard let bytes = codecpar.extradata, codecpar.extradata_size > 0 else { return nil }
+        var context: UnsafeMutablePointer<AVIOContext>?
+        guard avio_open_dyn_buf(&context) >= 0, let context else { return nil }
+        // FFmpeg accepts both av1C and raw OBUs. Keep the sequence header in the
+        // generated record and parse from FFmpeg's padded extradata allocation.
+        let status = ff_isom_write_av1c(context, bytes, codecpar.extradata_size, 1)
+        avio_flush(context)
+        let ioError = context.pointee.error
+        var output: UnsafeMutablePointer<UInt8>?
+        let size = avio_close_dyn_buf(context, &output)
+        defer { av_free(output) }
+        guard status >= 0, ioError >= 0, size >= 4, let output else { return nil }
+        return Data(bytes: output, count: Int(size))
+    }
+
+    func createContext(options: KSOptions, hardwareDecode: Bool? = nil) throws -> UnsafeMutablePointer<AVCodecContext> {
+        try codecpar.createContext(options: options, hardwareDecode: hardwareDecode)
     }
 
     public var isEnabled: Bool {
@@ -353,6 +383,9 @@ public class FFmpegAssetTrack: MediaPlayerTrack {
 extension FFmpegAssetTrack {
     var pixelFormatType: OSType? {
         let format = AVPixelFormat(codecpar.format)
+        if codecpar.codec_id == AV_CODEC_ID_AV1, format == AV_PIX_FMT_YUV420P {
+            return AV_PIX_FMT_NV12.osType(fullRange: codecpar.color_range == AVCOL_RANGE_JPEG)
+        }
         return format.osType(fullRange: formatDescription?.fullRangeVideo ?? false)
     }
 }

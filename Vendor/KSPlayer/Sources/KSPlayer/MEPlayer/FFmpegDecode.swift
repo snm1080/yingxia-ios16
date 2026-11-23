@@ -18,18 +18,21 @@ class FFmpegDecode: DecodeProtocol {
     private let seekByBytes: Bool
     private var reportedVideoDecoder: String?
     private var audioResynchronizationPackets = 8
-    required init(assetTrack: FFmpegAssetTrack, options: KSOptions) {
+    private var liveResynchronizationPackets = 8
+    private var awaitingLiveVideoKeyFrame = false
+    required init(assetTrack: FFmpegAssetTrack, options: KSOptions, hardwareDecode: Bool? = nil) {
         self.options = options
         seekByBytes = assetTrack.seekByBytes
         do {
-            codecContext = try assetTrack.createContext(options: options)
+            codecContext = try assetTrack.createContext(options: options, hardwareDecode: hardwareDecode)
         } catch {
             KSLog(error as CustomStringConvertible)
         }
         codecContext?.pointee.time_base = assetTrack.timebase.rational
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
         if assetTrack.mediaType == .video {
-            frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil)
+            frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil,
+                                          preferBiPlanar420: assetTrack.codecpar.codec_id == AV_CODEC_ID_AV1)
         } else {
             frameChange = AudioSwresample(audioDescriptor: assetTrack.audioDescriptor!)
         }
@@ -40,9 +43,10 @@ class FFmpegDecode: DecodeProtocol {
             completionHandler(.failure(NSError(description: "The media decoder could not be opened.")))
             return
         }
+        guard prepareLivePacket(packet) else { return }
         let sendResult = avcodec_send_packet(codecContext, packet.corePacket)
         if sendResult < 0, sendResult != AVError.tryAgain.code {
-            if shouldResynchronizeAudio(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
+            if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
             completionHandler(.failure(NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: sendResult)))
             return
         }
@@ -68,6 +72,8 @@ class FFmpegDecode: DecodeProtocol {
         while true {
             let result = avcodec_receive_frame(codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
+                guard acceptLiveFrame(mediaType: packet.assetTrack.mediaType,
+                    corrupt: inputFrame.pointee.flags & AV_FRAME_FLAG_CORRUPT != 0) else { continue }
                 if packet.assetTrack.mediaType == .audio { audioResynchronizationPackets = 0 }
                 if packet.assetTrack.mediaType == .video {
                     let decoder = inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue ? "VideoToolbox (FFmpeg)" : "FFmpeg software"
@@ -198,7 +204,7 @@ class FFmpegDecode: DecodeProtocol {
                 } else if result == AVError.tryAgain.code {
                     break
                 } else {
-                    if shouldResynchronizeAudio(mediaType: packet.assetTrack.mediaType, error: result) { break }
+                    if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: result) { break }
                     let error = NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
                     KSLog(error)
                     completionHandler(.failure(error))
@@ -206,6 +212,48 @@ class FFmpegDecode: DecodeProtocol {
                 }
             }
         }
+    }
+
+    private func prepareLivePacket(_ packet: Packet) -> Bool {
+        guard options.isLiveStreaming else { return true }
+        if (packet.corePacket?.pointee.flags ?? 0) & AV_PKT_FLAG_CORRUPT != 0 {
+            // MPEG-TS continuity/PES loss cannot be repaired by a decoder.
+            // Discard the damaged references and wait for a clean random access
+            // point; the app's output deadline bounds an absent next keyframe.
+            avcodec_flush_buffers(codecContext)
+            filter.flush()
+            if packet.assetTrack.mediaType == .video { awaitingLiveVideoKeyFrame = true }
+            return false
+        }
+        if packet.assetTrack.mediaType == .video, awaitingLiveVideoKeyFrame {
+            guard packet.isKeyFrame else { return false }
+            awaitingLiveVideoKeyFrame = false
+        }
+        return true
+    }
+
+    private func shouldResynchronizePacket(mediaType: AVFoundation.AVMediaType, error: Int32) -> Bool {
+        guard options.isLiveStreaming, error == AVError.invalidData.code else {
+            return shouldResynchronizeAudio(mediaType: mediaType, error: error)
+        }
+        guard liveResynchronizationPackets > 0 else { return false }
+        liveResynchronizationPackets -= 1
+        avcodec_flush_buffers(codecContext)
+        filter.flush()
+        if mediaType == .video { awaitingLiveVideoKeyFrame = true }
+        return true
+    }
+
+    private func acceptLiveFrame(mediaType: AVFoundation.AVMediaType, corrupt: Bool) -> Bool {
+        guard options.isLiveStreaming else { return true }
+        if corrupt {
+            avcodec_flush_buffers(codecContext)
+            filter.flush()
+            if mediaType == .video { awaitingLiveVideoKeyFrame = true }
+            return false
+        }
+        liveResynchronizationPackets = 8
+        return true
     }
 
     private func shouldResynchronizeAudio(mediaType: AVFoundation.AVMediaType, error: Int32) -> Bool {
@@ -220,6 +268,8 @@ class FFmpegDecode: DecodeProtocol {
 
     func doFlushCodec() {
         audioResynchronizationPackets = 8
+        liveResynchronizationPackets = 8
+        awaitingLiveVideoKeyFrame = false
         bestEffortTimestamp = Int64(0)
         // seek之后要清空下，不然解码可能还会有缓存，导致返回的数据是之前seek的。
         avcodec_flush_buffers(codecContext)
@@ -235,6 +285,8 @@ class FFmpegDecode: DecodeProtocol {
 
     func decode() {
         audioResynchronizationPackets = 8
+        liveResynchronizationPackets = 8
+        awaitingLiveVideoKeyFrame = false
         bestEffortTimestamp = Int64(0)
         filter.flush()
         if codecContext != nil {

@@ -23,6 +23,10 @@ open class KSOptions {
     public var preferredForwardBufferDuration = KSOptions.preferredForwardBufferDuration
     /// 最大缓存视频时间
     public var maxBufferDuration = KSOptions.maxBufferDuration
+    /// Compressed native packet queues only; disk-cache bytes are independent.
+    /// Zero keeps only the duration watermark. Readiness may exceed this soft
+    /// limit until both selected tracks have enough decoded output to start.
+    public var maxBufferSize: Int64 = 32 * 1024 * 1024
     /// 是否开启秒开
     public var isSecondOpen = KSOptions.isSecondOpen
     /// 开启精确seek
@@ -111,6 +115,8 @@ open class KSOptions {
     /// A recovery keeps the selected stream in both ordinary and companion inputs.
     public var preferredAudioTrackID: Int32?
     public var hardwareDecode = KSOptions.hardwareDecode
+    /// Explicit input identity; duration alone can misclassify live TS/HLS.
+    public var isLiveStreaming = false
     public var asynchronousDecompression = KSOptions.asynchronousDecompression
     public var videoDisable = false
     public var canStartPictureInPictureAutomaticallyFromInline = KSOptions.canStartPictureInPictureAutomaticallyFromInline
@@ -172,7 +178,9 @@ open class KSOptions {
         audio.startPlayTime = startPlayTime
         audio.preferredForwardBufferDuration = preferredForwardBufferDuration
         audio.maxBufferDuration = maxBufferDuration
+        audio.maxBufferSize = maxBufferSize
         audio.syncDecodeAudio = syncDecodeAudio
+        audio.isLiveStreaming = isLiveStreaming
         audio.preferredAudioTrackID = preferredAudioTrackID
         audio.audioFilters = audioFilters
         audio.decoderOptions = decoderOptions
@@ -295,7 +303,10 @@ open class KSOptions {
         if count >= UInt8.max {
             return UInt8.max
         } else {
-            return UInt8(count)
+            // Initial readiness requires two decoded frames. A one-slot ring
+            // blocks its producer after the first frame, so low-rate mono
+            // audio (for example 8 kHz AAC) could never become playable.
+            return UInt8(max(2, count))
         }
     }
 
@@ -450,24 +461,22 @@ open class KSOptions {
                 videoClockDelayCount += 1
                 let log = "[video] video delay=\(diff), clock=\(desire), delay count=\(videoClockDelayCount), frameCount=\(frameCount)"
                 if frameCount == 1 {
-                    if diff < -1, videoClockDelayCount % 10 == 0 {
-                        KSLog("\(log) drop gop Packet")
-                        return (diff, .dropGOPPacket)
-                    } else if videoClockDelayCount % 5 == 0 {
+                    // A slow decoder (for example 8K during a speed boost)
+                    // still needs every compressed reference packet. The
+                    // display thread cannot skip a GOP while that decoder is
+                    // concurrently consuming it. Catch up only with pictures
+                    // the decoder has already completed.
+                    if videoClockDelayCount % 5 == 0 {
                         KSLog("\(log) drop next frame")
                         return (diff, .dropNextFrame)
                     } else {
                         return (diff, .next)
                     }
                 } else {
-                    if diff < -8, videoClockDelayCount % 100 == 0 {
-                        KSLog("\(log) seek video track")
-                        return (diff, .seek)
-                    }
-                    if diff < -1, videoClockDelayCount % 10 == 0 {
-                        KSLog("\(log) flush video track")
-                        return (diff, .flush)
-                    }
+                    // The reader bounds catch-up to this decoded queue's
+                    // snapshot and preserves future PTS. Flushing the whole
+                    // queue after a held speed also discards those good future
+                    // pictures just as the selected normal speed is restored.
                     if videoClockDelayCount % 2 == 0 {
                         KSLog("\(log) drop next frame")
                         return (diff, .dropNextFrame)

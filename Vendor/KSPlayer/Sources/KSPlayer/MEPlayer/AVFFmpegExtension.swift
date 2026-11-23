@@ -73,7 +73,7 @@ extension AVCodecContext {
 }
 
 extension AVCodecParameters {
-    mutating func createContext(options: KSOptions?) throws -> UnsafeMutablePointer<AVCodecContext> {
+    mutating func createContext(options: KSOptions?, hardwareDecode: Bool? = nil) throws -> UnsafeMutablePointer<AVCodecContext> {
         var codecContextOption = avcodec_alloc_context3(nil)
         guard let codecContext = codecContextOption else {
             throw NSError(errorCode: .codecContextCreate)
@@ -83,7 +83,7 @@ extension AVCodecParameters {
             avcodec_free_context(&codecContextOption)
             throw NSError(errorCode: .codecContextSetParam, avErrorCode: result)
         }
-        if codec_type == AVMEDIA_TYPE_VIDEO, options?.hardwareDecode ?? false {
+        if codec_type == AVMEDIA_TYPE_VIDEO, hardwareDecode ?? options?.hardwareDecode ?? false {
             codecContext.getFormat()
         }
         guard let codec = avcodec_find_decoder(codecContext.pointee.codec_id) else {
@@ -336,6 +336,10 @@ extension AVCodecID {
             return .mpeg4Video
         case AV_CODEC_ID_VP9:
             return CMFormatDescription.MediaSubType(rawValue: kCMVideoCodecType_VP9)
+        // AV1 is software decoded on older iPhones, but source geometry must
+        // still reach the player before its first decoded picture arrives.
+        case AV_CODEC_ID_AV1:
+            return CMFormatDescription.MediaSubType(rawValue: 0x61763031) // av01
         // Software-decoded AVS still needs a nonzero source format description
         // for dimensions and metadata; this does not request native AVS decode.
         case AV_CODEC_ID_AVS2:
@@ -436,9 +440,15 @@ extension AVRational: Equatable {
     }
 }
 
-public struct AVError: Error, Equatable {
+public struct AVError: Error, Equatable, CustomNSError {
     public var code: Int32
     public var message: String
+
+    // Swift's default Error bridge gives this struct an unrelated code of 1.
+    // Preserve the native cause when it is nested in a player's NSError.
+    public static var errorDomain: String { "KSPlayer.FFmpeg" }
+    public var errorCode: Int { Int(code) }
+    public var errorUserInfo: [String: Any] { [NSLocalizedDescriptionKey: message] }
 
     init(code: Int32) {
         self.code = code

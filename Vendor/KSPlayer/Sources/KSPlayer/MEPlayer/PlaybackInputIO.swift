@@ -9,6 +9,7 @@ import FFmpegKit
 final class PlaybackInputIO: @unchecked Sendable {
     private let original: String
     private let transport: String
+    private let retriesTransientBilibiliResponse: Bool
     private let counterLock = NSLock()
     private var inputs: [UInt: UnsafeMutablePointer<AVIOContext>] = [:]
     private var closedBytes: Int64 = 0
@@ -57,6 +58,10 @@ final class PlaybackInputIO: @unchecked Sendable {
     init(originalURL: URL, transportURL: URL) {
         original = originalURL.isFileURL ? originalURL.path : originalURL.absoluteString
         transport = transportURL.isFileURL ? transportURL.path : transportURL.absoluteString
+        retriesTransientBilibiliResponse = originalURL.scheme?.lowercased() == "http"
+            && ["127.0.0.1", "localhost", "::1", "[::1]"].contains(originalURL.host?.lowercased() ?? "")
+            && originalURL.path.range(of: "^/spider/bili_all/3/proxy/media/[a-f0-9]{32}/(?:video|audio)$",
+                                      options: .regularExpression) != nil
     }
 
     func install(on format: UnsafeMutablePointer<AVFormatContext>) {
@@ -77,6 +82,17 @@ final class PlaybackInputIO: @unchecked Sendable {
                 }
                 if let blacklist = context.pointee.protocol_blacklist {
                     av_dict_set(fields, "protocol_blacklist", blacklist, 0)
+                }
+                if mapped, mapping.retriesTransientBilibiliResponse {
+                    // This source translates a transient CDN connection reset
+                    // into 500 before any media bytes (the cache can emit 502).
+                    // Retry the same input once,
+                    // including when the cache transports it; auth/404 errors,
+                    // cancellation and persistent failures still end promptly.
+                    av_dict_set(fields, "reconnect_on_http_error", "500,502,503,504", 0)
+                    av_dict_set(fields, "reconnect_max_retries", "1", 0)
+                    av_dict_set(fields, "reconnect_delay_max", "1", 0)
+                    av_dict_set(fields, "reconnect_delay_total_max", "1", 0)
                 }
                 // Keep the source's HTTP options on the app-owned loopback request.
                 // An extensionless manifest is handed back to the original server

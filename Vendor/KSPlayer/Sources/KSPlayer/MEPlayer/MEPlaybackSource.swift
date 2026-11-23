@@ -48,6 +48,14 @@ final class MEPlaybackSource: OutputRenderSourceDelegate {
     var naturalSize: CGSize { primary.naturalSize }
     var chapters: [Chapter] { primary.chapters }
     var fileSize: Double { primary.fileSize + (companion?.fileSize ?? 0) }
+    var cacheTimeline: [PlaybackCacheTimeline] {
+        let primaryIndex = primary.cacheTimeline
+        guard let companion else { return primaryIndex }
+        let audioIndex = companion.cacheTimeline
+        // An unindexed companion must not inherit the primary video's coverage.
+        guard !primaryIndex.isEmpty, !audioIndex.isEmpty else { return [] }
+        return primaryIndex + audioIndex
+    }
     var currentPlaybackTime: TimeInterval {
         if let failedTime = lock.withLock({ failedPlaybackTime }) { return failedTime }
         if let companion, !lock.withLock({ ended.contains(1) }) { return companion.currentPlaybackTime }
@@ -86,6 +94,17 @@ final class MEPlaybackSource: OutputRenderSourceDelegate {
     }
 
     func prepareToPlay() { primary.prepareToPlay(); companion?.prepareToPlay() }
+
+    func whenClosed(_ completion: @escaping () -> Void) {
+        let group = DispatchGroup()
+        group.enter()
+        primary.whenClosed { group.leave() }
+        if let companion {
+            group.enter()
+            companion.whenClosed { group.leave() }
+        }
+        group.notify(queue: .global(qos: .userInitiated), execute: completion)
+    }
 
     func shutdown() {
         let closing: (((Bool) -> Void)?)? = lock.withLock {

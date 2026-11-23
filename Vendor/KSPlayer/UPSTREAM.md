@@ -36,3 +36,23 @@ lacked (Dolby Vision pipeline, MEPlaybackSource/PlaybackInputIO, playback
 clock/cadence, Metal gating, ASSAnimation) are present. Official source wins
 any conflict.
 
+
+---
+
+## build06 stability pack synced (2026-11-23, our build 24)
+
+lmentor's build06 snapshot (branch `iOS16.2-NoJava`, published 2026-11-23)
+replaced 14 KSPlayer files and added `MEPlaybackReadState.swift` and
+`PlaybackCacheTimeline.swift`: `KSMEPlayer.replaceUrl` defers activation until
+the retiring source fully closes, the new read-state class makes reader
+wait/resume/seek/close mutex-correct, and `KSOptions` gains a 32 MB
+packet-queue soft cap (`maxBufferSize`), an explicit live-streaming flag, an
+audio-frame-count floor of 2, and GOP-safe video clock sync. Synced wholesale
+under `Sources/`; nothing outside `Vendor/KSPlayer` changed.
+
+The one local deviation is unchanged and was re-applied on top of the synced
+`KSMEPlayer.swift`: the `audioRouteChange` headphone fix (build 6, 2026-11-18)
+— when `playbackState == .playing`, `KSOptions.activateAudioSession()` +
+`audioOutput.play()` after `audioOutput.flush()`. Upstream's version of the
+function is still stock (format update + flush only), so this block must be
+re-applied after every future Vendor sync.
