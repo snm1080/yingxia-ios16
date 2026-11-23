@@ -1448,7 +1448,7 @@ struct SiteView: View {
         if browser.busy {
             LoadingCard { .source(site, origin: origin, title: L10n.text("Loading source content…")) }
         }
-        if initialLoading { PosterSkeletonGrid().loadingFocus { dismiss() } }
+        if initialLoading { PosterSkeletonGrid(columns: catalogColumns).loadingFocus { dismiss() } }
         if let error = browser.error {
             ErrorStateCard(
                 title: L10n.text("Unable to load this source"),

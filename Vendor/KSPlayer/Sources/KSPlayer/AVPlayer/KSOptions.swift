@@ -112,8 +112,6 @@ open class KSOptions {
     public var onVideoDecoderFailed: ((String) -> Void)?
     /// Structured native error before fallback/terminal notification, without input URLs.
     public var onVideoDecoderError: ((NSError) -> Void)?
-    /// DIAG26: temporary decoder-gate diagnostic sink (diagnostics only, no behavior change).
-    public var onDecoderGateDiagnostic: ((String) -> Void)?
     /// A recovery keeps the selected stream in both ordinary and companion inputs.
     public var preferredAudioTrackID: Int32?
     public var hardwareDecode = KSOptions.hardwareDecode

@@ -1220,9 +1220,13 @@ struct SkeletonBlock: View {
 
 struct PosterSkeletonGrid: View {
     var count = 12
+    /// Columns to render; defaults to the shared poster grid. Callers whose
+    /// loaded grid computes its own columns (SitesView's catalog grid) pass
+    /// that same computation so skeleton and content never disagree.
+    var columns: [GridItem] = Layout.posterColumns
     var body: some View {
         WithPerceptionTracking {
-            LazyVGrid(columns: Layout.posterColumns, spacing: Layout.gridRowSpacing) {
+            LazyVGrid(columns: columns, spacing: Layout.gridRowSpacing) {
                 WithPerceptionTracking {
                     ForEach(0..<count, id: \.self) { _ in
                         WithPerceptionTracking {

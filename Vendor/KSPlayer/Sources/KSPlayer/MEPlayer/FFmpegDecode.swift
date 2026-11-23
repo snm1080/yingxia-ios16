@@ -80,7 +80,6 @@ class FFmpegDecode: DecodeProtocol {
                     if reportedVideoDecoder != decoder {
                         reportedVideoDecoder = decoder
                         options.onVideoDecoderChanged?(decoder)
-                        options.onDecoderGateDiagnostic?("ffmpeg-first-frame=\(decoder)") // DIAG26
                     }
                 }
                 var displayData: MasteringDisplayMetadata?

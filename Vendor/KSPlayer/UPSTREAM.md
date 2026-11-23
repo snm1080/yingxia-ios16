@@ -72,14 +72,3 @@ VT hwaccel handles fine, and build 23's behavior was proven on-device; build
 24 (with upstream's `hardwareDecode: false`) fell back to permanent software
 decode instead, driving CPU to ~99% on 4K60. Approved by Sam, 2026-11-23.
 This deviation must be re-applied after every future Vendor sync.
-
----
-
-## Temporary DIAG26 diagnostics (our build 26, 2026-11-23)
-
-Build 26 adds TEMPORARY DIAG26 diagnostics across `KSOptions.swift`,
-`MEPlayerItemTrack.swift`, `VideoToolboxDecode.swift`, `FFmpegDecode.swift`,
-and `MEPlayerItem.swift`, plus the `KSOptions.onDecoderGateDiagnostic`
-callback, wired in `App/KSPlaybackEngine.swift`. Every added line carries the
-`DIAG26` marker so it can be stripped by grep once the hard-decode diagnosis
-closes. Diagnostics only — no behavior change.
