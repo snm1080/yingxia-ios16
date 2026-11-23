@@ -56,3 +56,19 @@ The one local deviation is unchanged and was re-applied on top of the synced
 `audioOutput.play()` after `audioOutput.flush()`. Upstream's version of the
 function is still stock (format update + flush only), so this block must be
 re-applied after every future Vendor sync.
+
+---
+
+## Second local deviation: VT fallback decoder (2026-11-23, our build 25)
+
+File: `Sources/KSPlayer/MEPlayer/MEPlayerItemTrack.swift`, in the
+decoder-failure replacement inside `SyncPlayerItemTrack`. Upstream (build06)
+constructs the replacement FFmpeg decoder with `hardwareDecode: false`, so a
+native VideoToolbox failure disables VideoToolbox for the replacement too.
+Our version omits that argument, restoring build 23's fallback semantics: the
+replacement inherits `options` and may use VideoToolbox hwaccel. Why: on the
+user's A12/iOS 16.6 the native VT decoder can trip on streams that FFmpeg's
+VT hwaccel handles fine, and build 23's behavior was proven on-device; build
+24 (with upstream's `hardwareDecode: false`) fell back to permanent software
+decode instead, driving CPU to ~99% on 4K60. Approved by Sam, 2026-11-23.
+This deviation must be re-applied after every future Vendor sync.

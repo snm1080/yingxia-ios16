@@ -1,15 +1,18 @@
 import Foundation
+import CryptoKit
 import Perception
 
 public struct PosterResource: Hashable, Sendable {
     public let url: URL
     public let headers: [String: String]
-    public static func artworkScope(_ url: URL) -> String { "artwork:" + url.absoluteString }
+    private let addressKey: String
+    public static func artworkScope(_ url: URL) -> String { "artwork:" + cacheAddress(url) }
     public var cacheKey: String {
-        url.absoluteString + headers.sorted { $0.key < $1.key }.map { "\n\($0.key.lowercased()):\($0.value)" }.joined()
+        addressKey + headers.sorted { $0.key < $1.key }.map { "\n\($0.key.lowercased()):\($0.value)" }.joined()
     }
     public init(url: URL, headers: [String: String] = [:]) {
         self.url = url
+        addressKey = Self.cacheAddress(url)
         var headers = headers
         // Douban's image hosts refuse covers without a Douban Referer (HTTP 418, or 403 with another site's);
         // many sources and the Douban lists on Discover show them.
@@ -18,7 +21,44 @@ public struct PosterResource: Hashable, Sendable {
         }
         self.headers = headers
     }
+
+    private static func cacheAddress(_ url: URL) -> String {
+        guard url.scheme?.lowercased() == "data" else { return url.absoluteString }
+        // An inline cover can contain hundreds of kilobytes. Keep that payload out
+        // of memory-cache keys and the disk index's persisted artwork scope.
+        return "data:sha256:" + SHA256.hash(data: Data(url.absoluteString.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Subscription folders and resources may embed raster covers rather than use
+    /// HTTP endpoints. Bound decoded bytes to the artwork cache's per-image limit;
+    /// ImageIO still has to decode the image before the loader commits any cache data.
+    public static func inlineImageData(for url: URL) -> Data? {
+        guard url.scheme?.lowercased() == "data" else { return nil }
+        return inlineImageData(url.absoluteString)
+    }
+
+    private static func inlineImageData(_ address: String) -> Data? {
+        let maximumBytes = 8 * 1024 * 1024
+        guard address.utf8.count <= maximumBytes * 4,
+              address.prefix(5).lowercased() == "data:",
+              let comma = address.firstIndex(of: ",") else { return nil }
+        let metadata = address[address.index(address.startIndex, offsetBy: 5)..<comma].lowercased().split(separator: ";")
+        guard let type = metadata.first,
+              ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp",
+               "image/tiff", "image/x-icon", "image/vnd.microsoft.icon", "image/heic", "image/heif", "image/avif"].contains(type),
+              metadata.last == "base64",
+              let payload = String(address[address.index(after: comma)...]).removingPercentEncoding,
+              payload.utf8.count <= ((maximumBytes + 2) / 3) * 4,
+              let data = Data(base64Encoded: payload), !data.isEmpty, data.count <= maximumBytes else { return nil }
+        return data
+    }
+
     public init?(address: String, origin: URL) {
+        if address.prefix(5).lowercased() == "data:" {
+            guard Self.inlineImageData(address) != nil, let url = URL(string: address) else { return nil }
+            self.init(url: url)
+            return
+        }
         // TVBox appends transport headers to artwork URLs. Do not send that suffix as part of the URL.
         let pattern = #"@(Headers|Cookie|Referer|User-Agent)="#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }

@@ -238,10 +238,12 @@ class SyncPlayerItemTrack<Frame: MEFrame>: PlayerItemTrackProtocol, CustomString
                         self.options.onVideoDecoderError?(NSError(domain: failure.domain, code: failure.code, userInfo: details))
                     }
                     if decoder is VideoToolboxDecode, !packet.assetTrack.requiresNativeDolbyVision {
-                        // FFmpeg can select VideoToolbox too. A native failure must
-                        // disable it for this replacement, without changing the
-                        // shared/user decoder preference or other tracks.
-                        let replacement = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options, hardwareDecode: false)
+                        // Deliberate local deviation (see Vendor/KSPlayer/UPSTREAM.md):
+                        // on the user's A12/iOS 16.6 the native VT decoder can trip on
+                        // streams that FFmpeg's VT hwaccel handles fine, and build 23's
+                        // behavior was proven on-device, so the replacement inherits
+                        // options and may use VideoToolbox hwaccel.
+                        let replacement = FFmpegDecode(assetTrack: packet.assetTrack, options: self.options)
                         var replaced = false
                         let changed = self.outputRenderQueue.perform(ifGeneration: generation) {
                             self.decoderLock.withLock {

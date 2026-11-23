@@ -18,7 +18,7 @@ private final class PosterMemory: @unchecked Sendable {
     private let lock = NSLock()
     private let cache = NSCache<NSString, PosterBitmap>()
     private var revision = MediaCache.shared.revision
-    private init() { cache.countLimit = 288; cache.totalCostLimit = 96 * 1024 * 1024 }
+    private init() { cache.countLimit = 288; cache.totalCostLimit = 160 * 1024 * 1024 }
 
     func image(for resource: PosterResource) -> PosterBitmap? {
         return lock.withLock {
@@ -90,7 +90,7 @@ actor PosterLoader {
                 } else {
                     let id = UUID()
                     pending[resource] = Pending(id: id, task: nil, waiters: [waiter: continuation])
-                    queued.append((resource, id))
+                    queued.insert((resource, id), at: 0)
                     startQueued()
                 }
             }
@@ -147,6 +147,10 @@ actor PosterLoader {
         let cached = disk.data(for: resource.cacheKey, kind: .artwork, scope: scope)
         let data: Data
         if let cached { data = cached }
+        else if resource.url.scheme?.lowercased() == "data" {
+            guard let embedded = PosterResource.inlineImageData(for: resource.url) else { throw URLError(.cannotDecodeContentData) }
+            data = embedded
+        }
         else if let saved = try? Data(contentsOf: MusicDownloadLibrary.artworkFile(for: resource.url)) { data = saved }
         else { data = try await TMDBServiceSettings.posterData(for: resource.url, headers: resource.headers, session: PosterLoader.session) }
         try Task.checkCancellation()
