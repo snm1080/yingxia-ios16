@@ -412,6 +412,13 @@ import TVCore
     func managedSubscriptions(in group: LocalSourceGroup) -> [SubscriptionEntry] {
         subscriptions.filter { (localSourceGroups[$0.address] ?? .subscription) == group }
     }
+    /// The library records behind the managed entries, keyed by entry address. A record's
+    /// `input` is where an entry's original address or files live; entries added by a plain
+    /// address have no record and their address is the entry address itself.
+    func localSourceRecordsByAddress() async -> [String: LocalSourceRecord] {
+        let records = (try? await LocalSourceLibrary.shared.records()) ?? []
+        return Dictionary(records.map { ($0.address.absoluteString, $0) }, uniquingKeysWith: { first, _ in first })
+    }
     /// The app marks readiness only after backup recovery and local adapter restoration.
     /// Scene callbacks before that point remember foreground state without starting I/O.
     func startSubscriptionUpdates() {
@@ -697,6 +704,122 @@ import TVCore
         guard let index = subscriptions.firstIndex(where: { $0.address == entry.address }), subscriptions[index].name != name else { return }
         subscriptions[index].name = name
         saveSubscriptionList()
+    }
+    /// Replaces a library-backed entry's origin with new inputs, keeping its list slot, enabled
+    /// state and (unless a new one is given) its name. The replacement is prepared and validated
+    /// first; a failure leaves the old entry, its record and its document untouched.
+    func replaceLocalSource(_ entry: SubscriptionEntry, with inputs: [URL], name proposedName: String? = nil,
+                            importingCopy: Bool = false, group targetGroup: LocalSourceGroup? = nil) async {
+        guard !importing, !restoringBackup,
+              subscriptions.contains(where: { $0.address == entry.address }) else { return }
+        let group = targetGroup ?? localSourceGroups[entry.address] ?? .subscription
+        let scoped = inputs.filter { $0.startAccessingSecurityScopedResource() }
+        importing = true; importError = nil; notice = nil
+        defer { importing = false; scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
+        do {
+            let prepared = try await LocalSourceLibrary.shared.prepare(inputs, group: group, http: http,
+                                                                         name: proposedName, importingCopy: importingCopy)
+            let copies = try await prepared.subscriptions(http: http)
+            try await LocalSourceLibrary.shared.commit(prepared)
+            guard let slot = subscriptions.firstIndex(where: { $0.address == entry.address }) else { return }
+            let old = subscriptions[slot]
+            var entries: [SubscriptionEntry] = []
+            for (record, copy) in zip(prepared.records, copies) {
+                let value = SubscriptionEntry(address: record.address.absoluteString, name: record.name, enabled: old.enabled)
+                entries.append(value)
+                localSourceGroups[value.address] = group
+                keep(copy, for: value)
+            }
+            if entries.count == 1, entries[0].address == old.address {
+                // Same origin re-imported (for example the same file picked again): the record
+                // and document were refreshed in place above; only the name can differ.
+                subscriptions[slot].name = entries[0].name
+            } else {
+                // An address already listed elsewhere is updated by the import, not duplicated:
+                // drop that other slot before splicing so the list keeps one entry per address.
+                let newAddresses = Set(entries.map(\.address))
+                subscriptions.removeAll { $0.address != old.address && newAddresses.contains($0.address) }
+                guard let slot = subscriptions.firstIndex(where: { $0.address == old.address }) else { return }
+                if !newAddresses.contains(old.address) {
+                    documents[old.address] = nil; subscriptionErrors[old.address] = nil
+                    localSourceGroups[old.address] = nil
+                    subscriptionUpdateFingerprints[old.address] = nil
+                    subscriptionUpdateSchedule.forget(old.address)
+                    let oldAddress = old.address
+                    Task { try? await LocalSourceLibrary.shared.remove(address: oldAddress) }
+                    if persistsChanges { try? FileManager.default.removeItem(at: Self.file(for: old)); ImportedFiles.remove(old.address) }
+                }
+                subscriptions.replaceSubrange(slot...slot, with: entries)
+            }
+            saveSubscriptionList(); rebuildSubscription()
+            notice = group == .live
+                ? "已导入 \(copies.reduce(0) { $0 + $1.lives.count }) 个直播列表"
+                : "已导入 \(copies.reduce(0) { $0 + $1.sites.count }) 个来源"
+        } catch { importError = error.localizedDescription }
+    }
+    /// Replaces a plain address entry's address, keeping its list slot, enabled state and the
+    /// given name. The new address is fetched and parsed first; a failure (or an address that
+    /// holds no subscription) leaves the old entry untouched. Bundle, MD5 and Python addresses
+    /// route to the library pipeline, exactly as a fresh import of them would.
+    func replaceSubscriptionAddress(_ entry: SubscriptionEntry, with url: URL, name proposedName: String) async {
+        guard !importing, !restoringBackup,
+              subscriptions.contains(where: { $0.address == entry.address }) else { return }
+        if url.pathExtension.lowercased() == "py" || url.pathExtension.lowercased() == "md5" || url.lastPathComponent == "index.js" {
+            await replaceLocalSource(entry, with: [url], name: proposedName.isEmpty ? nil : proposedName,
+                                     group: url.pathExtension.lowercased() == "py" ? .python : .subscription)
+            return
+        }
+        importing = true; importError = nil; notice = nil
+        defer { importing = false }
+        do {
+            guard case .subscription(let value) = try await http.subscriptionImport(url) else {
+                throw TVError.unsupported("此地址没有可用的订阅内容")
+            }
+            guard let slot = subscriptions.firstIndex(where: { $0.address == entry.address }) else { return }
+            let old = subscriptions[slot]
+            let newAddress = url.absoluteString
+            if newAddress == old.address {
+                subscriptions[slot].name = proposedName
+                keep(value, for: old)
+            } else {
+                subscriptions.removeAll { $0.address == newAddress }
+                guard let slot = subscriptions.firstIndex(where: { $0.address == old.address }) else { return }
+                let replacement = SubscriptionEntry(address: newAddress, name: proposedName, enabled: old.enabled)
+                subscriptions[slot] = replacement
+                localSourceGroups[newAddress] = .subscription
+                keep(value, for: replacement)
+                documents[old.address] = nil; subscriptionErrors[old.address] = nil
+                localSourceGroups[old.address] = nil
+                subscriptionUpdateFingerprints[old.address] = nil
+                subscriptionUpdateSchedule.forget(old.address)
+                if persistsChanges {
+                    try? FileManager.default.removeItem(at: Self.file(for: old)); ImportedFiles.remove(old.address)
+                    if defaults.string(forKey: "subscriptionAddress") == old.address {
+                        defaults.set(newAddress, forKey: "subscriptionAddress")
+                    }
+                }
+            }
+            saveSubscriptionList(); rebuildSubscription()
+            notice = L10n.text("Imported sources: %lld · Live playlists: %lld", value.sites.count, value.lives.count)
+        } catch {
+            Diagnostics.shared.failure("subscription", "replace host=\(url.host() ?? "-")", error)
+            importError = L10n.text("Import failed: %@", error.localizedDescription)
+        }
+    }
+    /// Replaces a file-imported plain entry with a newly picked file: the file is copied in
+    /// first (as a fresh file import does), then the entry swaps to the copy's address.
+    func replaceImportedFile(_ entry: SubscriptionEntry, with file: URL, name proposedName: String) async {
+        guard !importing, !restoringBackup else { return }
+        let scoped = file.startAccessingSecurityScopedResource()
+        let copied = Result { try ImportedFiles.add(file) }
+        if scoped { file.stopAccessingSecurityScopedResource() }
+        switch copied {
+        case .failure(let error): importError = L10n.text("Import failed: %@", error.localizedDescription)
+        case .success(let url):
+            await replaceSubscriptionAddress(entry, with: url, name: proposedName)
+            // A replacement that failed leaves no copy behind, like a failed file import.
+            if importError != nil { ImportedFiles.remove(url.absoluteString) }
+        }
     }
     func removeSubscription(_ entry: SubscriptionEntry) { removeSubscriptions([entry.address]) }
     /// Removes several subscriptions and their saved copies, then merges what is left once.

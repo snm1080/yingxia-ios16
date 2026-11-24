@@ -17,6 +17,8 @@ struct LocalSourceSettingsView: View {
     @State private var confirmsDeleteAll = false
     @State private var websiteShown = false
     @State private var reorderSession = LocalSettingsReorderSession()
+    @State private var sourceRecords: [String: LocalSourceRecord] = [:]
+    @State private var editing: EditingLocalSource?
     private var activeEntry: SubscriptionEntry? { store.managedSubscriptions(in: group).first(where: \.enabled) }
     var body: some View {
         WithPerceptionTracking {
@@ -34,12 +36,22 @@ struct LocalSourceSettingsView: View {
             }
             .onAppear { store.importError = nil; store.notice = nil }
             .onDisappear { reorderSession.cancel() }
+            .task { await reloadSourceRecords() }
+            .onChange(of: store.subscriptions) { _ in Task { await reloadSourceRecords() } }
             .localGlassDialog(isPresented: $websiteShown, title: "接口配置", layout: .expanded) {
                 WithPerceptionTracking {
                     ConfigCenterView {
                         guard let entry = activeEntry, let document = store.documents[entry.address],
                               let site = document.sites.first(where: { $0.raw["catPawOpen"] != nil }) else { return nil }
                         return await CatPawOpen.configCenter(site: site, origin: document.origin, jarURL: document.spiderURL)
+                    }
+                }
+            }
+            .localGlassDialog(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } }), title: "编辑来源") {
+                WithPerceptionTracking {
+                    if let editing {
+                        LocalSourceEditor(entry: editing.entry, group: group, record: editing.record,
+                                          originURL: editing.originURL, originLabel: editing.originLabel) { self.editing = nil }
                     }
                 }
             }
@@ -164,7 +176,13 @@ struct LocalSourceSettingsView: View {
                             store.moveManagedSubscription(source, onto: target)
                         }) {
                         ForEach(store.managedSubscriptions(in: group)) { entry in
-                            ManagedLocalSourceRow(entry: entry, group: group, reorderEnabled: !preparingSelection,
+                            let origin = origin(of: entry)
+                            ManagedLocalSourceRow(entry: entry, group: group, caption: origin.caption, captionIsURL: origin.isURL,
+                                onEdit: origin.editable ? {
+                                    editing = EditingLocalSource(entry: entry, record: sourceRecords[entry.address],
+                                                                 originURL: origin.url, originLabel: origin.caption)
+                                } : nil,
+                                reorderEnabled: !preparingSelection,
                                 reorderSession: $reorderSession, remove: { store.removeSubscription(entry) })
                                 .disabled(preparingSelection)
                                 .localSettingsReorderRow(id: entry.address)
@@ -184,6 +202,39 @@ struct LocalSourceSettingsView: View {
         batchReport = nil
         store.importError = nil; store.notice = "正在打开文件选择器…"
         showsPicker = true
+    }
+
+    private func reloadSourceRecords() async {
+        sourceRecords = await store.localSourceRecordsByAddress()
+    }
+
+    /// Where an entry came from, for the row caption and the editor. A library record keeps the
+    /// original inputs: a remote import shows the address it was imported from (never the
+    /// internal `sources.yingxia.invalid` entry address); a file import shows its file, or the
+    /// saved-copy label when the picker kept no path. Plain address entries show their address.
+    private func origin(of entry: SubscriptionEntry) -> LocalSourceOrigin {
+        if let record = sourceRecords[entry.address] {
+            let isRemote = { (url: URL) in ["http", "https"].contains(url.scheme?.lowercased() ?? "") }
+            if record.input.allSatisfy(isRemote), let remote = record.input.first {
+                // Several entries can share one input set (a multi-script Python import);
+                // those are shown but not edited entry by entry.
+                let siblings = sourceRecords.values.filter { $0.group == record.group && $0.input == record.input }.count
+                return LocalSourceOrigin(url: remote, caption: remote.absoluteString, isURL: true,
+                                         editable: record.input.count == 1 && siblings <= 1)
+            }
+            if let file = record.input.first(where: \.isFileURL) {
+                return LocalSourceOrigin(url: nil, caption: "本地文件 · \(file.lastPathComponent)", isURL: false, editable: true)
+            }
+            return LocalSourceOrigin(url: nil, caption: "本地文件 · 已保存副本", isURL: false, editable: true)
+        }
+        if ImportedFiles.isImported(entry.address) {
+            let name = URL(string: entry.address)?.lastPathComponent ?? "已保存副本"
+            return LocalSourceOrigin(url: nil, caption: "本地文件 · \(name)", isURL: false, editable: true)
+        }
+        if let url = URL(string: entry.address), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            return LocalSourceOrigin(url: url, caption: entry.address, isURL: true, editable: true)
+        }
+        return LocalSourceOrigin(url: nil, caption: entry.address, isURL: false, editable: false)
     }
 
     private func importSelectedDocuments(_ selection: LocalDocumentSelection) {
@@ -220,6 +271,9 @@ private struct ManagedLocalSourceRow: View {
     @Environment(Store.self) private var store
     let entry: SubscriptionEntry
     let group: LocalSourceGroup
+    let caption: String
+    let captionIsURL: Bool
+    let onEdit: (() -> Void)?
     let reorderEnabled: Bool
     @Binding var reorderSession: LocalSettingsReorderSession
     let remove: () -> Void
@@ -246,6 +300,12 @@ private struct ManagedLocalSourceRow: View {
                     Button("更新") { Task { await store.refreshSource(entry) } }
                         .frame(minWidth: 44, minHeight: 44)
                         .accessibilityLabel("更新\(entry.title)")
+                    if let onEdit {
+                        Button("编辑", action: onEdit)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .accessibilityLabel("编辑\(entry.title)")
+                            .accessibilityIdentifier("sources.entry.\(entry.id).edit")
+                    }
                     if group == .python {
                         LocalSettingsReorderHandle(title: entry.title, id: entry.address,
                             enabled: reorderEnabled && !store.importing && !store.restoringBackup, session: $reorderSession)
@@ -255,11 +315,177 @@ private struct ManagedLocalSourceRow: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(store.importing || store.restoringBackup)
+                Text(caption)
+                    .font(captionIsURL ? .system(.caption2, design: .monospaced) : .caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("来源地址 \(caption)")
                 if let failure = store.subscriptionErrors[entry.address] {
                     Text(failure).font(.footnote).foregroundStyle(.red)
                 }
             }
             .padding(.vertical, 3)
+        }
+    }
+}
+
+/// What a row shows about an entry's origin, and whether that origin can be edited.
+private struct LocalSourceOrigin {
+    let url: URL?
+    let caption: String
+    let isURL: Bool
+    let editable: Bool
+}
+
+/// The snapshot the editor opens with: the entry, its library record when it has one, and
+/// the editable address (nil for file-backed entries, which re-pick instead).
+private struct EditingLocalSource: Identifiable {
+    let entry: SubscriptionEntry
+    let record: LocalSourceRecord?
+    let originURL: URL?
+    let originLabel: String
+    var id: String { entry.address }
+}
+
+/// Editor for one imported entry: rename it, replace a remote address, or re-pick the file a
+/// file-backed entry came from. A failed replacement is reported here and changes nothing;
+/// a successful one closes and leaves the standard import notice on the page behind.
+private struct LocalSourceEditor: View {
+    @Environment(Store.self) private var store
+    let entry: SubscriptionEntry
+    let group: LocalSourceGroup
+    let record: LocalSourceRecord?
+    let originURL: URL?
+    let originLabel: String
+    let close: () -> Void
+    @State private var name: String
+    @State private var address: String
+    @State private var error: String?
+    @State private var showsPicker = false
+    @State private var preparing = false
+
+    init(entry: SubscriptionEntry, group: LocalSourceGroup, record: LocalSourceRecord?,
+         originURL: URL?, originLabel: String, close: @escaping () -> Void) {
+        self.entry = entry; self.group = group; self.record = record
+        self.originURL = originURL; self.originLabel = originLabel; self.close = close
+        _name = State(initialValue: entry.name)
+        _address = State(initialValue: originURL?.absoluteString ?? "")
+    }
+
+    var body: some View {
+        WithPerceptionTracking {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("名称").font(.caption).foregroundStyle(.secondary)
+                    TextField("名称（可选，留空自动生成）", text: $name)
+                        .accessibilityLabel("来源名称")
+                        .accessibilityIdentifier("sources.editor.name")
+                        .padding(.horizontal, 10).frame(minHeight: 40)
+                        .localGlassInputSurface()
+                }
+                if originURL != nil {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("地址").font(.caption).foregroundStyle(.secondary)
+                        TextField("地址", text: $address)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.URL)
+                            .accessibilityLabel("来源地址")
+                            .accessibilityIdentifier("sources.editor.address")
+                            .padding(.horizontal, 10).frame(minHeight: 40)
+                            .localGlassInputSurface()
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("来源").font(.caption).foregroundStyle(.secondary)
+                        Text(originLabel).font(.callout).lineLimit(2).truncationMode(.middle)
+                        Button("重新选择文件") { showsPicker = true }
+                            .frame(minHeight: 44)
+                            .accessibilityLabel("重新选择文件")
+                            .accessibilityIdentifier("sources.editor.repick")
+                            .disabled(store.importing || preparing)
+                    }
+                }
+                if preparing || store.importing { ProgressView("正在导入或更新") }
+                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+                HStack {
+                    Spacer()
+                    Button("取消", action: close)
+                        .frame(minWidth: 44, minHeight: 44)
+                    Button("保存", action: save)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("sources.editor.save")
+                        .disabled(store.importing || preparing
+                            || (originURL != nil && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                }
+            }
+            .padding(20)
+            .localDialogContentHeight()
+            .localDocumentImporter(isPresented: $showsPicker, kind: group == .python ? .pythonFiles : .subscriptionFile) { result in
+                switch result {
+                case .success(let selection): replaceWithSelection(selection)
+                case .failure(let error): self.error = error.localizedDescription
+                }
+            } cancelled: { }
+        }
+    }
+
+    private func save() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let originURL else {
+            // A file-backed entry's origin changes through 重新选择文件; saving here renames only.
+            if trimmedName != entry.name { store.renameSubscription(entry, to: trimmedName) }
+            close()
+            return
+        }
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAddress == originURL.absoluteString {
+            if trimmedName != entry.name { store.renameSubscription(entry, to: trimmedName) }
+            close()
+            return
+        }
+        let url: URL
+        do { url = try WebAddress.resolve(trimmedAddress) }
+        catch { self.error = error.localizedDescription; return }
+        self.error = nil
+        let entry = entry, record = record
+        Task {
+            if record != nil {
+                await store.replaceLocalSource(entry, with: [url], name: trimmedName.isEmpty ? nil : trimmedName)
+            } else {
+                await store.replaceSubscriptionAddress(entry, with: url, name: trimmedName)
+            }
+            if let message = store.importError { error = message; store.importError = nil }
+            else { close() }
+        }
+    }
+
+    private func replaceWithSelection(_ selection: LocalDocumentSelection) {
+        guard !preparing, !store.importing else { selection.release(); return }
+        preparing = true
+        error = nil
+        let entry = entry, record = record
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            defer { preparing = false }
+            let report = await selection.importDocuments { _, url in
+                guard !store.importing else {
+                    throw NSError(domain: "LocalSourceImport", code: 2, userInfo: [NSLocalizedDescriptionKey: "另一个来源正在导入或更新，请稍后重试此文件"])
+                }
+                if record != nil {
+                    await store.replaceLocalSource(entry, with: [url], name: trimmedName.isEmpty ? nil : trimmedName, importingCopy: true)
+                } else {
+                    await store.replaceImportedFile(entry, with: url, name: trimmedName)
+                }
+                if let message = store.importError {
+                    store.importError = nil
+                    throw NSError(domain: "LocalSourceImport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+                }
+                return store.notice ?? "已保存"
+            }
+            if report.successCount > 0 { close() }
+            else { error = report.details.isEmpty ? report.summary : report.details }
         }
     }
 }
