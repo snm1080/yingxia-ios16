@@ -84,7 +84,7 @@ struct LocalAppNavigation: View {
     private var dockButtons: [LocalDockButton] { dockConfiguration.visible }
     private var current: AppSection {
         switch store.section {
-        case .discover, .live: .home
+        case .discover: .home
         case .more: .settings
         default: store.section
         }

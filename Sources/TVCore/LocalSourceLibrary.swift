@@ -307,7 +307,7 @@ public actor LocalSourceLibrary {
                 } else {
                     format = "tvbox"; files["subscription.json"] = try readLocal(input, max: 20_000_000)
                 }
-            } else if input.pathExtension.lowercased() == "md5" || bundleMembers.contains(input.lastPathComponent.lowercased()) || input.pathExtension.isEmpty {
+            } else if group != .live && (input.pathExtension.lowercased() == "md5" || bundleMembers.contains(input.lastPathComponent.lowercased()) || input.pathExtension.isEmpty) {
                 var base = input
                 if bundleMembers.contains(base.lastPathComponent.lowercased()) {
                     var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
