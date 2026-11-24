@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fetchResponse } from './http.mjs';
 import { normalizeHeaders } from './playback.mjs';
+import { log } from '../../diagnostics.mjs';
 
 // Multi-thread (MT) local proxy for play addresses unwrapped from the client
 // app's own loopback proxy (`/proxy?thread=…&chunkSize=…&url=…`, build 30).
@@ -17,9 +18,9 @@ const MIN_CHUNK_BYTES = 64 * 1024;
 const MAX_CHUNK_BYTES = 1024 ** 2;
 const DEFAULT_CHUNK_KB = 256;
 const MAX_THREAD = 10;
-const WINDOW_BYTES = 8 * 1024 ** 2;          // park issuing fetches at this undelivered lead
-const RESUME_BYTES = 4 * 1024 ** 2;          // resume issuing at half the window (pace() hysteresis shape)
-const CACHE_BYTES = 16 * 1024 ** 2;          // per-registration chunk cache
+const WINDOW_BYTES = 16 * 1024 ** 2;         // issued-but-undelivered lead: per-request byte gate AND per-registration hard ceiling
+const RESUME_BYTES = 8 * 1024 ** 2;          // per-request byte gate resumes at half the window (hysteresis on the byte gate only)
+const CACHE_BYTES = 8 * 1024 ** 2;           // per-registration chunk cache (build 33 rebalance: window 8→16 MiB, cache 16→8 MiB; window + cache still = REGISTRATION_BYTES)
 const REGISTRATION_BYTES = 24 * 1024 ** 2;   // per-registration ceiling (window + cache)
 const GLOBAL_BYTES = 48 * 1024 ** 2;         // across all registrations
 const MAX_REGISTRATIONS = 4;
@@ -98,8 +99,13 @@ export class MtProxy {
     const threadInput = Math.floor(Number(params.thread));
     const thread = Number.isFinite(threadInput) ? Math.min(MAX_THREAD, Math.max(2, threadInput)) : MAX_THREAD;
     const chunkInput = Number(params.chunkSizeKB);
+    const requestedBytes = Math.floor((Number.isFinite(chunkInput) && chunkInput > 0 ? chunkInput : DEFAULT_CHUNK_KB) * 1024);
+    // Build 33 (H2): the MT grid is floored at 1 MiB — dou fetches quark/UC in
+    // 1 MiB chunks, and at 256 KiB the fixed per-request cost (TTFB, redirect
+    // hops) is amortised 4× worse. A larger param is still honoured only up
+    // to the existing 1 MiB clamp ceiling, so the grid is effectively 1 MiB.
     const chunkBytes = Math.min(MAX_CHUNK_BYTES, Math.max(MIN_CHUNK_BYTES,
-      Math.floor((Number.isFinite(chunkInput) && chunkInput > 0 ? chunkInput : DEFAULT_CHUNK_KB) * 1024)));
+      Math.max(requestedBytes, MAX_CHUNK_BYTES)));
     const headers = normalizeHeaders(params.headers);
     // Probe exactly like the reference engines: one `bytes=0-0` GET. Anything
     // but a 206 with a parseable total fails registration and Swift falls
@@ -130,6 +136,14 @@ export class MtProxy {
       createdAt: Date.now(), lastAccessAt: Date.now(),
       cache: new Map(), cacheBytes: 0, heldBytes: 0,
       inflight: new Map(), undeliveredBytes: 0,
+      stats: {
+        bornAt: Date.now(), lastActivityAt: Date.now(),
+        fetchesStarted: 0, fetchesCompleted: 0, activeFetches: 0, peakInflight: 0,
+        bytesDelivered: 0, windowHighWater: 0,
+        latencyCount: 0, latencySumMs: 0, latencySamples: [],
+        retries: 0, chunkFailures: 0, byteParks: 0, ceilingQueues: 0,
+        emitted: false,
+      },
       dead: false, cleaned: false, deathFailure: '',
       controller: new AbortController(),
       cond: null, notify: null,
@@ -166,7 +180,23 @@ export class MtProxy {
       if (this.expired(registration)) this.removeRegistration(registration);
   }
 
+  // One MTSTATS summary line per registration, emitted when it closes,
+  // evicts or is invalidated. Token prefix only — never headers, never the
+  // upstream URL (not even its host).
+  emitStats(registration) {
+    const stats = registration.stats;
+    if (!stats || stats.emitted) return;
+    stats.emitted = true;
+    const lifeMs = Math.max(1, stats.lastActivityAt - stats.bornAt);
+    const samples = [...stats.latencySamples].sort((a, b) => a - b);
+    const p95 = samples.length ? samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.95))] : 0;
+    const avgMs = stats.latencyCount ? Math.round(stats.latencySumMs / stats.latencyCount) : 0;
+    const bps = Math.round(stats.bytesDelivered * 1000 / lifeMs);
+    log(`MTSTATS tok=${registration.token.slice(0, 8)} life_ms=${lifeMs} fetches_started=${stats.fetchesStarted} fetches_completed=${stats.fetchesCompleted} peak_inflight=${stats.peakInflight} bytes_delivered=${stats.bytesDelivered} achieved_bps=${bps} lat_avg_ms=${avgMs} lat_p95_ms=${Math.round(p95)} retries=${stats.retries} chunk_failures=${stats.chunkFailures} byte_parks=${stats.byteParks} ceiling_queues=${stats.ceilingQueues} window_hwm_bytes=${stats.windowHighWater}`);
+  }
+
   removeRegistration(registration) {
+    this.emitStats(registration);
     if (this.routes.get(registration.token) === registration) this.routes.delete(registration.token);
     registration.dead = true;
     registration.controller.abort();
@@ -185,6 +215,7 @@ export class MtProxy {
     // the rest of the TTL would only hammer the CDN. Invalidate at once:
     // live requests fail with this class, later requests 404.
     registration.deathFailure ||= failure;
+    log(`MTLIMIT tok=${registration.token.slice(0, 8)} event=auth_kill failure=${String(failure).replace(/\s+/g, '_')}`);
     this.removeRegistration(registration);
   }
 
@@ -235,11 +266,35 @@ export class MtProxy {
   }
 
   async fetchChunk(registration, index, signal) {
+    const stats = registration.stats;
+    const startedAt = Date.now();
+    stats.fetchesStarted++;
+    stats.activeFetches++;
+    if (stats.activeFetches > stats.peakInflight) stats.peakInflight = stats.activeFetches;
+    try {
+      return await this.fetchChunkAttempts(registration, index, signal, stats);
+    } catch (error) {
+      stats.chunkFailures++;
+      throw error;
+    } finally {
+      stats.activeFetches--;
+      const elapsed = Date.now() - startedAt;
+      stats.latencyCount++;
+      stats.latencySumMs += elapsed;
+      // Small reservoir for a rough p95: fill to 256 samples, then overwrite
+      // a pseudo-random slot so later chunks stay represented.
+      if (stats.latencySamples.length < 256) stats.latencySamples.push(elapsed);
+      else stats.latencySamples[Math.floor(Math.random() * stats.latencySamples.length)] = elapsed;
+      stats.lastActivityAt = Date.now();
+    }
+  }
+
+  async fetchChunkAttempts(registration, index, signal, stats) {
     const start = index * registration.chunkBytes;
     const end = Math.min(start + registration.chunkBytes, registration.total) - 1;
     let failure = 'upstream error';
     for (let attempt = 0; attempt <= RETRY_BACKOFFS_MS.length; attempt++) {
-      if (attempt) await delay(RETRY_BACKOFFS_MS[attempt - 1], undefined, { signal });
+      if (attempt) { stats.retries++; await delay(RETRY_BACKOFFS_MS[attempt - 1], undefined, { signal }); }
       if (registration.dead) throw new MtError(registration.deathFailure || 'registration closed', { retryable: false });
       let result;
       try {
@@ -260,6 +315,7 @@ export class MtProxy {
       if (result.status !== 206) { failure = `upstream ${result.status}`; continue; }
       if (result.headers.get('content-range') !== `bytes ${start}-${end}/${registration.total}`
         || result.body.length !== end - start + 1) { failure = 'range mismatch'; continue; }
+      stats.fetchesCompleted++;
       return result.body;
     }
     throw new MtError(failure);
@@ -407,7 +463,7 @@ export class MtProxy {
     const last = Math.floor(span.end / chunkBytes);
     const controller = new AbortController();
     response.on('close', () => { if (!response.writableEnded) controller.abort(); });
-    const state = { undelivered: 0, delivered: first, failure: null };
+    const state = { windowBytes: 0, activeFetches: 0, failure: null };
     const slots = new Map();
     for (let index = first; index <= last; index++) {
       let resolve, reject;
@@ -431,14 +487,21 @@ export class MtProxy {
         const slice = handle.buf.subarray(
           Math.max(0, span.start - chunkStart),
           Math.min(handle.buf.length, span.end - chunkStart + 1));
-        if (slice.length && !response.write(slice))
-          await awaitAbortable(new Promise(resolve => response.once('drain', resolve)), controller.signal);
+        // Build 33 (H3): a chunk counts as delivered the moment it is handed
+        // to response.write() — the fetch window releases at write(), not
+        // after drain. The drain wait still applies backpressure before the
+        // next chunk is written, so at most one chunk sits in the socket
+        // buffer beyond the accounting and no new buffer is introduced.
+        const backpressured = slice.length ? !response.write(slice) : false;
         handle.release();
-        state.undelivered -= handle.buf.length;
+        state.windowBytes -= handle.buf.length;
         registration.undeliveredBytes -= handle.buf.length;
-        state.delivered = index + 1;
+        registration.stats.bytesDelivered += slice.length;
+        registration.stats.lastActivityAt = Date.now();
         registration.lastAccessAt = Date.now();
         registration.notify();
+        if (backpressured)
+          await awaitAbortable(new Promise(resolve => response.once('drain', resolve)), controller.signal);
         if (index === last) break;
       }
       response.end();
@@ -456,40 +519,57 @@ export class MtProxy {
       }
     } finally {
       await producer.catch(() => {});
-      registration.undeliveredBytes -= state.undelivered;
-      state.undelivered = 0;
+      registration.undeliveredBytes -= state.windowBytes;
+      state.windowBytes = 0;
       registration.notify();
     }
   }
 
-  // Issues covering chunks in index order, at most `thread` in flight per
-  // registration and at most the fetch window ahead of the delivery cursor;
-  // delivery (in serve) is strictly in order but streams each chunk as soon
-  // as its predecessors are out.
+  // Issues covering chunks in index order with completion-driven refill
+  // (build 33, H1): a replacement fetch launches as soon as one of THIS
+  // request's fetches settles, sustaining up to `thread` of this request's
+  // fetches in flight whenever the byte window allows — there is no
+  // chunk-count park latch and no delivery-cursor gate. Accounting is
+  // per-request (H4): this request parks on its own byte window (with
+  // hysteresis on the byte gate only) and on its own in-flight count; the
+  // registration-global counter survives only as a hard ceiling — when a
+  // second overlapping request would push the registration over it, the
+  // producer queues at the ceiling instead of both producers parking at a
+  // shared low threshold. Delivery (in serve) is strictly in order but
+  // streams each chunk as soon as its predecessors are out.
   async produce(registration, state, slots, first, last, signal) {
     const chunkBytes = registration.chunkBytes;
-    let parked = false;
+    const stats = registration.stats;
+    let byteParked = false;
+    let ceilingQueued = false;
     for (let index = first; index <= last; index++) {
       const length = Math.min(chunkBytes, registration.total - index * chunkBytes);
       for (;;) {
         if (signal.aborted) throw abortError();
         if (registration.dead) throw new MtError(registration.deathFailure || 'registration closed', { retryable: false });
-        const ahead = index - state.delivered;
-        if (!parked && (registration.undeliveredBytes + length > WINDOW_BYTES || ahead >= registration.thread)) parked = true;
-        if (parked) {
-          if (registration.undeliveredBytes <= RESUME_BYTES && ahead <= Math.max(1, registration.thread >> 1)) parked = false;
-          else { await awaitAbortable(registration.cond.promise, signal); continue; }
-        }
-        if (registration.inflight.size >= registration.thread) {
+        // Per-request byte gate: park at the window, resume at half of it.
+        if (!byteParked && state.windowBytes + length > WINDOW_BYTES) { byteParked = true; stats.byteParks++; }
+        if (byteParked && state.windowBytes <= RESUME_BYTES) byteParked = false;
+        // Registration-global hard ceiling (RAM bound, not a pace gate).
+        const atCeiling = !byteParked && registration.undeliveredBytes + length > WINDOW_BYTES
+          && state.windowBytes + length <= WINDOW_BYTES;
+        if (atCeiling && !ceilingQueued) { ceilingQueued = true; stats.ceilingQueues++; }
+        if (!atCeiling) ceilingQueued = false;
+        if (byteParked || atCeiling || state.activeFetches >= registration.thread) {
           await awaitAbortable(registration.cond.promise, signal);
           continue;
         }
         break;
       }
-      state.undelivered += length;
+      state.windowBytes += length;
       registration.undeliveredBytes += length;
+      if (registration.undeliveredBytes > stats.windowHighWater)
+        stats.windowHighWater = registration.undeliveredBytes;
+      state.activeFetches++;
       const slot = slots.get(index);
-      this.getChunk(registration, index).then(slot.resolve, slot.reject);
+      this.getChunk(registration, index).then(
+        handle => { state.activeFetches--; registration.notify(); slot.resolve(handle); },
+        error => { state.activeFetches--; registration.notify(); slot.reject(error); });
     }
   }
 }
