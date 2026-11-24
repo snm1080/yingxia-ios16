@@ -72,3 +72,28 @@ VT hwaccel handles fine, and build 23's behavior was proven on-device; build
 24 (with upstream's `hardwareDecode: false`) fell back to permanent software
 decode instead, driving CPU to ~99% on 4K60. Approved by Sam, 2026-11-23.
 This deviation must be re-applied after every future Vendor sync.
+
+---
+
+## Third local deviation: P5 swallowed-packet fail-fast guard (2026-11-24, our build 29)
+
+File: `Sources/KSPlayer/MEPlayer/VideoToolboxDecode.swift`. Upstream's
+`VideoToolboxDecode.decodeFrame` has two paths that consume a packet without
+ever calling its completion handler: the async output callback returns
+silently on `.frameDropped`, and a synchronous
+`kVTInvalidSessionErr`/`kVTVideoDecoderMalfunctionErr` on a non-keyframe only
+sets `needReconfig` (the next packet then pays a full session recreate plus a
+blocking drain, indefinitely). With no completion, neither a frame nor a
+failure reaches the track, so the reader keeps demuxing into the packet queue
+until the process dies. On-device evidence (build 26 diagnostics export,
+2026-11-23): a Dolby Vision Profile 5 title's recovery reopen created a VT
+session, produced exactly one frame (the seek target), then logged nothing
+again; the process was jetsammed ≤20 s later at a 1518 MB footprint. Our
+version counts consecutive swallowed packets on both paths, resets the count
+on any completed frame, and on crossing 120 (~2 s at 60 fps, ~5 s at 24 fps —
+a healthy session completes frames continuously, and any recoverable stream
+completes a frame within one GOP) completes the current packet with
+`.failure` through the same completion handler, landing on the existing
+terminal path (track `.failed` → the DV error surface for
+`requiresNativeDolbyVision` tracks). This deviation must be re-applied after
+every future Vendor sync.

@@ -21,6 +21,36 @@ class VideoToolboxDecode: DecodeProtocol {
     private var lastPosition = Int64(0)
     private var needReconfig = false
     private var awaitingLiveKeyFrame = false
+    // Deviation #3 (see Vendor/KSPlayer/UPSTREAM.md): swallowed-packet
+    // fail-fast guard. Two paths below consume a packet without ever calling
+    // its completion handler — the async output callback returning silently
+    // on .frameDropped, and a synchronous InvalidSession/Malfunction error on
+    // a non-keyframe that only sets needReconfig. If VideoToolbox stops
+    // producing frames that way (observed with Dolby Vision Profile 5:
+    // session created, one frame out, then silence while the reader keeps
+    // feeding the packet queue until the process is jetsammed), neither a
+    // frame nor a failure reaches the track and playback spins forever.
+    // Count consecutive swallowed packets, reset on any completed frame, and
+    // complete the current packet with a failure once the limit is crossed
+    // so the track's existing failure handling terminates playback.
+    // 120 packets is ~2 s at 60 fps and ~5 s at 24 fps: a healthy session
+    // completes frames continuously, and even a recoverable stream completes
+    // a frame within one GOP, so 120 consecutive completions missing can
+    // only mean the decoder is wedged.
+    private static let swallowedPacketLimit = 120
+    private var consecutiveSwallowedPackets = 0
+    private var swallowGuardTripped = false
+
+    /// Counts one packet consumed without a completion. Returns true exactly
+    /// once, on the call that crosses the fail-fast limit.
+    private func registerSwallowedPacket() -> Bool {
+        consecutiveSwallowedPackets += 1
+        guard consecutiveSwallowedPackets >= Self.swallowedPacketLimit, !swallowGuardTripped else {
+            return false
+        }
+        swallowGuardTripped = true
+        return true
+    }
 
     init(options: KSOptions, session: DecompressionSession) {
         self.options = options
@@ -94,7 +124,15 @@ class VideoToolboxDecode: DecodeProtocol {
                     completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                     return
                 }
-                guard !infoFlags.contains(.frameDropped), let imageBuffer else { return }
+                guard !infoFlags.contains(.frameDropped), let imageBuffer else {
+                    // Swallowed packet (B1): the frame was dropped, so this
+                    // packet's completion would never be called.
+                    if self.registerSwallowedPacket() {
+                        completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: kVTVideoDecoderMalfunctionErr)))
+                    }
+                    return
+                }
+                self.consecutiveSwallowedPackets = 0
                 decodingSession.applyOutputMetadata(to: imageBuffer)
                 let frame = VideoVTBFrame(fps: decodingSession.assetTrack.nominalFrameRate, isDovi: decodingSession.assetTrack.dovi != nil)
                 frame.corePixelBuffer = imageBuffer
@@ -117,6 +155,11 @@ class VideoToolboxDecode: DecodeProtocol {
             } else if status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr {
                 if packet.isKeyFrame {
                     throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
+                } else if registerSwallowedPacket() {
+                    // Swallowed packet (B2) past the limit: reconfiguring
+                    // again would just repeat the cycle, so complete this
+                    // packet with the session's own error instead.
+                    completionHandler(.failure(NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)))
                 } else {
                     // 解决从后台切换到前台，解码失败的问题
                     needReconfig = true
