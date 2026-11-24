@@ -42,7 +42,7 @@ struct PlaybackHistoryView: View {
             .catalogSearchable(text: $query, prompt: L10n.text("Search history"))
             .screenBackdrop().historyDetailsDestination().tabTitle(AppSection.history.title)
             .disabled(!canInteract)
-            .confirmationDialog("清空当前显示的观看记录？", isPresented: $confirmsClear, titleVisibility: .visible) {
+            .alert("清空当前显示的观看记录？", isPresented: $confirmsClear) {
                 Button("清空观看记录", role: .destructive) {
                     guard canInteract else { return }
                     history.remove(clearIDs); clearIDs.removeAll()

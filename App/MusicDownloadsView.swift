@@ -28,9 +28,10 @@ struct MusicDownloadsView: View {
                 // Files may have been deleted or moved in Finder while the app was in the background.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in library.forgetMissing() }
                 #endif
-                .confirmationDialog(L10n.text("Delete all downloaded songs?"), isPresented: $confirmsDeleteAll, titleVisibility: .visible) {
+                .alert(L10n.text("Delete all downloaded songs?"), isPresented: $confirmsDeleteAll) {
                     WithPerceptionTracking {
                         Button(L10n.text("Delete Downloads"), role: .destructive) { library.remove(library.items.map(\.id)) }
+                        Button(L10n.text("Cancel"), role: .cancel) { }
                     }
                 }
             if embedded {
@@ -232,9 +233,10 @@ struct MusicDownloadedCollectionView: View {
 
                  }}
                 #endif
-                .confirmationDialog(collection.title, isPresented: $confirmsRemove, titleVisibility: .visible) {
+                .alert(collection.title, isPresented: $confirmsRemove) {
                     WithPerceptionTracking {
                         Button(L10n.text("Remove Download"), role: .destructive) { library.remove(collection: id); dismiss() }
+                        Button(L10n.text("Cancel"), role: .cancel) { }
                     }
                 }
             } else {

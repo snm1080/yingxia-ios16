@@ -56,13 +56,14 @@ struct DownloadsView: View {
 
              }}
             #endif
-            .confirmationDialog(L10n.text("Delete all downloaded episodes of %@?", deleting?.title ?? ""),
-                                isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            .alert(L10n.text("Delete all downloaded episodes of %@?", deleting?.title ?? ""),
+                   isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
                                     WithPerceptionTracking {
                     Button(L10n.text("Delete Downloads"), role: .destructive) {
                         if let deleting { library.remove(deleting.items.map(\.id)) }
                         deleting = nil
                     }
+                    Button(L10n.text("Cancel"), role: .cancel) { deleting = nil }
                                     }
             }
         }
@@ -1186,6 +1187,24 @@ extension View {
             }
             controller?.present(sheet, animated: true)
         }
+    }
+}
+
+/// Presents the system share sheet for arbitrary items, anchored to the window itself the same way
+/// `DownloadSharing` anchors its sheet: on iPad the sheet is a popover, and a window anchor cannot be
+/// dismantled by a page rebuild the way a toolbar or menu button can.
+@MainActor enum WindowAnchoredShare {
+    static func present(_ items: [Any]) {
+        guard let scene = UIApplication.shared.appWindowScene, let window = scene.keyWindow ?? scene.windows.first else { return }
+        var controller = window.rootViewController
+        while let next = controller?.presentedViewController, !next.isBeingDismissed { controller = next }
+        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = window
+            popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        controller?.present(sheet, animated: true)
     }
 }
 #endif

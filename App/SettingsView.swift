@@ -1158,9 +1158,10 @@ private struct SubscriptionDetailView: View {
                 }
             }.settingsRows() }
             .settingsForm(current.title)
-            .confirmationDialog(L10n.text("Remove"), isPresented: $confirmsRemoval) {
+            .alert(L10n.text("Remove"), isPresented: $confirmsRemoval) {
                 WithPerceptionTracking {
                     Button(L10n.text("Remove"), role: .destructive) { store.removeSubscription(current); dismiss() }
+                    Button(L10n.text("Cancel"), role: .cancel) { }
                 }
             }
         }
@@ -1209,9 +1210,10 @@ private struct RemoveSubscriptionsView: View {
                 }
             }.settingsRows() }
             .settingsForm(L10n.text("Remove Subscriptions"))
-            .confirmationDialog(L10n.text("Remove %lld Subscriptions", chosen.count), isPresented: $confirmsRemoval) {
+            .alert(L10n.text("Remove %lld Subscriptions", chosen.count), isPresented: $confirmsRemoval) {
                 WithPerceptionTracking {
                     Button(L10n.text("Remove"), role: .destructive) { store.removeSubscriptions(Set(chosen.map(\.address))); dismiss() }
+                    Button(L10n.text("Cancel"), role: .cancel) { }
                 }
             }
         }
@@ -1400,7 +1402,11 @@ struct DiagnosticsView: View {
                         Label(L10n.text("Open Log Folder"), systemImage: "folder")
                     }
                     #endif
-                    #if !os(tvOS)
+                    #if os(iOS)
+                    if let exportURL {
+                        Button { WindowAnchoredShare.present([exportURL]) } label: { Label(L10n.text("Share Logs"), systemImage: "square.and.arrow.up") }
+                    }
+                    #elseif !os(tvOS)
                     if let exportURL { ShareLink(item: exportURL) { Label(L10n.text("Share Logs"), systemImage: "square.and.arrow.up") } }
                     #endif
                 }

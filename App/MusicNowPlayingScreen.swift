@@ -1,6 +1,7 @@
 #if os(iOS)
 import AVKit
 import MediaPlayer
+import UIKit
 import SwiftUI
 import Perception
 import TVCore
@@ -56,7 +57,7 @@ struct MusicNowPlayingScreen: View {
                 guard let url = music.track?.artwork, let color = await PosterPalette.average(url), !Task.isCancelled else { return }
                 withAnimation(.easeInOut(duration: 0.6)) { tint = color }
             }
-            .appOnChange(of: music.track == nil) { _, gone in if gone { dismiss() } }
+            .appOnChange(of: music.track == nil) { _, gone in if gone { dismissCover() } }
             .accessibilityAction(.escape) { dismiss() }
             .musicMoreDialog(isPresented: $showsMore, showChannels: { showsChannels = true })
             .sheet(isPresented: $showsChannels) { WithPerceptionTracking { MusicChannelsView() } }
@@ -83,6 +84,23 @@ struct MusicNowPlayingScreen: View {
                                startPoint: .topLeading, endPoint: .bottomTrailing)
             }.clipped()
         }.allowsHitTesting(false).accessibilityHidden(true)
+    }
+
+    /// The track ending dismisses this cover, but the route picker's system popover may still be
+    /// presented above it: dismantling the cover first would let the popover's transition run after
+    /// its anchor left the window, which aborts the app. Dismiss whatever is presented on top first
+    /// (the popover, or the cover's own host when nothing is above it), then dismiss the cover on a
+    /// later runloop turn, once that dismissal has landed.
+    private func dismissCover() {
+        guard let scene = UIApplication.shared.appWindowScene,
+              let window = scene.keyWindow ?? scene.windows.first,
+              var topmost = window.rootViewController else { dismiss(); return }
+        while let presented = topmost.presentedViewController, !presented.isBeingDismissed { topmost = presented }
+        // Only the root in the chain means this cover's host is not in it; the plain dismissal is the only path.
+        guard topmost !== window.rootViewController else { dismiss(); return }
+        topmost.dismiss(animated: true) {
+            DispatchQueue.main.async { dismiss() }
+        }
     }
 
     private func topArtwork(_ music: MusicPlaybackSession, size: CGFloat, short: Bool) -> some View {

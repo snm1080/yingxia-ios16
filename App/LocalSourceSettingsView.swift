@@ -171,7 +171,7 @@ struct LocalSourceSettingsView: View {
                         }
                     }
                 }
-                .confirmationDialog("删除全部 Python？", isPresented: $confirmsDeleteAll, titleVisibility: .visible) {
+                .alert("删除全部 Python？", isPresented: $confirmsDeleteAll) {
                     Button("删除全部", role: .destructive) {
                         store.removeSubscriptions(Set(store.managedSubscriptions(in: .python).map(\.address)))
                     }
@@ -239,7 +239,7 @@ private struct ManagedLocalSourceRow: View {
                         .frame(minWidth: 44, minHeight: 44)
                         .accessibilityLabel("删除 " + entry.title)
                         .accessibilityIdentifier("sources.entry.\(entry.id).delete")
-                        .confirmationDialog("删除来源？", isPresented: $confirmsRemoval) {
+                        .alert("删除来源？", isPresented: $confirmsRemoval) {
                             Button("删除", role: .destructive, action: remove)
                             Button("取消", role: .cancel) { }
                         }
