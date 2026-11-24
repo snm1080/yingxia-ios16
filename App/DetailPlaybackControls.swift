@@ -51,10 +51,10 @@ struct DetailPlaybackControls: View {
         Button { start(mode) } label: {
             HStack(spacing: 8) {
                 if busy && loadingMode == mode { ProgressView().controlSize(.small) }
-                else { Image(systemName: symbol).font(.system(size: 19, weight: .semibold)).foregroundStyle(Brand.accent) }
+                else { Image(systemName: symbol).font(.system(size: 23, weight: .semibold)).foregroundStyle(Brand.accent) }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(title).font(.system(size: 21, weight: .semibold)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }.frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).padding(.horizontal, 13)
                 .contentShape(Rectangle())

@@ -3009,7 +3009,7 @@ struct VideoDetailView: View {
         Button { choosingDownloads = true } label: {
             Label(L10n.text("Download"), systemImage: "arrow.down.circle")
                 .labelStyle(DownloadLabelStyle(iconOnly: iconOnly))
-                .font(.system(size: 19, weight: .semibold)).lineLimit(1).fixedSize()
+                .font(.system(size: 23, weight: .semibold)).lineLimit(1).fixedSize()
         }
         .controlButton().controlSize(.large).accessibilityLabel(L10n.text("Download"))
     }
@@ -3031,7 +3031,7 @@ struct VideoDetailView: View {
                 }
                 #endif
             }
-            .font(.system(size: 19, weight: .semibold)).lineLimit(1).fixedSize()
+            .font(.system(size: 23, weight: .semibold)).lineLimit(1).fixedSize()
         }
         .controlButton().controlSize(.large)
         .accessibilityLabel(title).help(title)
@@ -3149,7 +3149,7 @@ struct VideoDetailView: View {
                         mobileDetailTools.padding(.top, containerWidth < 600 ? 110 : 80)
                     }
                 if let original = tmdb.details?.originalName, !original.isEmpty, original != tmdb.details?.name {
-                    Text(original).font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text(original).font(.system(size: 17)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).multilineTextAlignment(.center)
                 }
                 LocalCatalogDetailTitle(title: tmdb.details?.name ?? currentVideo().name, logo: tmdb.details?.logo, width: containerWidth)
@@ -3170,12 +3170,12 @@ struct VideoDetailView: View {
         HStack(spacing: 4) {
             Text([tmdb.details.map { $0.mediaType == .movie ? "电影" : "剧集" } ?? mobileSourceMetadata.type,
                   SourceLabel(client.site.name).text].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                .font(.system(size: 15, weight: .medium)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityValue(mobileTMDBStatus)
             if containerWidth >= 600 {
                 if tmdb.phase == .looking { ProgressView().controlSize(.mini) }
-                Text(mobileTMDBStatus).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(mobileTMDBStatus).font(.system(size: 15)).foregroundStyle(.secondary).lineLimit(1)
             }
             LocalCatalogArtworkControls(count: mobileDetailArtwork.count, selection: $detailArtworkSelection, paused: $detailArtworkPaused) {
                 choosingDetailArtwork = true
@@ -3184,7 +3184,7 @@ struct VideoDetailView: View {
                 Button { choosingDetailMatch = true } label: {
                     if containerWidth >= 600 {
                         Label(tmdb.details == nil ? "匹配影片" : "更换匹配", systemImage: "magnifyingglass")
-                            .font(.caption.weight(.semibold)).padding(.horizontal, 8).frame(minHeight: 44)
+                            .font(.system(size: 16, weight: .semibold)).padding(.horizontal, 8).frame(minHeight: 44)
                     } else {
                         Image(systemName: tmdb.phase == .failed ? "exclamationmark.magnifyingglass" : "magnifyingglass")
                             .frame(width: 44, height: 44)
@@ -3267,13 +3267,13 @@ struct VideoDetailView: View {
         let visible = LocalCatalogDetailRules.page(ordered, group: group, descending: reversesEpisodes).map { entries[$0.index] }
         return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("线路").font(.system(size: 19, weight: .semibold))
+                Text("线路").font(.system(size: 23, weight: .semibold))
                 mobileFlagPicker
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
-                    Text("剧集").font(.system(size: 19, weight: .semibold))
-                    Text("\(items.count) 集").font(.system(size: 13)).monospacedDigit().foregroundStyle(.secondary)
+                    Text("剧集").font(.system(size: 23, weight: .semibold))
+                    Text("\(items.count) 集").font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                     if count > 1 {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 5) {
@@ -3283,7 +3283,7 @@ struct VideoDetailView: View {
                                         let end = min((index + 1) * LocalCatalogDetailRules.groupSize, entries.count)
                                         Button { mobileEpisodeGroupFlag = activeFlag; mobileEpisodeGroup = index } label: {
                                             Text(start == end ? "\(start)" : "\(start)-\(end)")
-                                                .font(.system(size: 13)).monospacedDigit().padding(.horizontal, 10).frame(minHeight: 44)
+                                                .font(.system(size: 17)).monospacedDigit().padding(.horizontal, 10).frame(minHeight: 44)
                                                 .foregroundStyle(index == group ? Brand.accent : Color.secondary)
                                                 .background(index == group ? Brand.accent.opacity(0.1) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
                                                 .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(index == group ? Brand.accent.opacity(0.45) : Color.primary.opacity(0.12), lineWidth: 0.5) }
@@ -3299,29 +3299,29 @@ struct VideoDetailView: View {
                 HStack(spacing: 4) {
                     if tmdb.phase == .looking {
                         ProgressView().controlSize(.mini)
-                        Text("正在获取剧集资料…").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                        Text("正在获取剧集资料…").font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                     } else if tmdb.phase == .failed {
-                        Button { Task { await tmdb.retry() } } label: { Label("重试剧集资料", systemImage: "arrow.clockwise").font(.system(size: 13)).frame(minHeight: 44) }
+                        Button { Task { await tmdb.retry() } } label: { Label("重试剧集资料", systemImage: "arrow.clockwise").font(.system(size: 17)).frame(minHeight: 44) }
                             .buttonStyle(.plain).accessibilityIdentifier("detail.episodeMetadata.retry")
                     }
                     Spacer(minLength: 0)
                     if items.count > 1 {
                         Button { reversesEpisodes.toggle() } label: {
                             Label(reversesEpisodes ? "倒序" : "正序", systemImage: reversesEpisodes ? "arrow.up" : "arrow.down")
-                                .font(.system(size: 13)).padding(.horizontal, 8).frame(minHeight: 44)
+                                .font(.system(size: 17)).padding(.horizontal, 8).frame(minHeight: 44)
                         }.buttonStyle(.plain).accessibilityLabel(reversesEpisodes ? "切换为正序" : "切换为倒序")
                             .accessibilityIdentifier("episodes.reverse")
                     }
                     Button { mobileEpisodeList.toggle() } label: {
                         Label(mobileEpisodeList ? "缩略图" : "列表", systemImage: mobileEpisodeList ? "rectangle.stack" : "list.bullet")
-                            .font(.system(size: 13)).padding(.horizontal, 8).frame(minHeight: 44)
+                            .font(.system(size: 17)).padding(.horizontal, 8).frame(minHeight: 44)
                             .foregroundStyle(mobileEpisodeList ? Brand.accent : Color.primary)
                     }.buttonStyle(.plain).accessibilityLabel(mobileEpisodeList ? "显示剧集缩略图" : "显示默认剧集列表")
                         .accessibilityIdentifier("detail.episodes.layout")
                 }
             }
             if loadingEpisode != nil {
-                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在解析播放地址…").font(.system(size: 14)).foregroundStyle(.secondary) }
+                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("正在解析播放地址…").font(.system(size: 18)).foregroundStyle(.secondary) }
                     .accessibilityElement(children: .combine)
             }
             if mobileEpisodeList {
@@ -3389,7 +3389,7 @@ struct VideoDetailView: View {
                         WithPerceptionTracking {
                             Button { selectedFlag = flag } label: {
                                 Text(flag.isEmpty ? "默认线路" : SourceLabel(flag).text)
-                                    .font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                                    .font(.system(size: 21, weight: .semibold)).lineLimit(1)
                                     .padding(.horizontal, 15).frame(minHeight: 44)
                                     .foregroundStyle(flag == activeFlag ? Brand.onAccent : Color.primary)
                                     .background(flag == activeFlag ? Brand.accent : Color.primary.opacity(0.06), in: Capsule())

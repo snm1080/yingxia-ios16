@@ -46,7 +46,7 @@ struct LocalCatalogDetailEpisodeCard: View {
                     .overlay { LocalCatalogEpisodeArtwork(primary: movieArtwork ?? value.info?.still, fallback: video.poster, headers: video.posterHeaders) }
                     .overlay {
                         if loading { ProgressView().tint(.white).padding(12).background(.black.opacity(0.5), in: Circle()) }
-                        else { Image(systemName: "play.fill").font(.system(size: 17)).foregroundStyle(.white).padding(11).background(.black.opacity(0.35), in: Circle()) }
+                        else { Image(systemName: "play.fill").font(.system(size: 21)).foregroundStyle(.white).padding(11).background(.black.opacity(0.35), in: Circle()) }
                     }
                     .overlay(alignment: .top) { badges.padding(8) }
                     .overlay(alignment: .bottomTrailing) {
@@ -56,12 +56,12 @@ struct LocalCatalogDetailEpisodeCard: View {
                     }.clipped()
             } else { badges.padding([.top, .horizontal], 9) }
             VStack(alignment: overview.isEmpty ? .center : .leading, spacing: 6) {
-                Text(value.title).font(.system(size: 15, weight: .medium)).lineLimit(overview.isEmpty ? 2 : 1)
+                Text(value.title).font(.system(size: 19, weight: .medium)).lineLimit(overview.isEmpty ? 2 : 1)
                     .frame(maxWidth: .infinity, alignment: overview.isEmpty ? .center : .leading)
                 if movie, value.title != value.episode.name {
-                    Text(value.episode.name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(value.episode.name).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(2)
                 }
-                if !overview.isEmpty { Text(overview).font(.system(size: 13)).lineSpacing(4).foregroundStyle(.secondary).lineLimit(3) }
+                if !overview.isEmpty { Text(overview).font(.system(size: 17)).lineSpacing(4).foregroundStyle(.secondary).lineLimit(3) }
             }.padding(.horizontal, 13).padding(.top, 12).padding(.bottom, 14)
         }
         .frame(width: 216, alignment: .topLeading)
@@ -75,8 +75,8 @@ struct LocalCatalogDetailEpisodeCard: View {
         }
     }
     private func badge(_ title: String) -> some View {
-        Text(title).font(.system(size: 12, weight: .medium)).monospacedDigit().lineLimit(1).foregroundStyle(.white)
-            .padding(.horizontal, 6).padding(.vertical, 3).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 5))
+        Text(title).font(.system(size: 16, weight: .medium)).monospacedDigit().lineLimit(1).foregroundStyle(.white)
+            .padding(.horizontal, 5).padding(.vertical, 3).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 5))
     }
 }
 
@@ -108,11 +108,11 @@ struct LocalCatalogDetailEpisodeRow: View {
     let loading: Bool
     var body: some View {
         HStack(spacing: 8) {
-            if loading { ProgressView().controlSize(.small) } else { Image(systemName: "play.fill").font(.system(size: 14)) }
+            if loading { ProgressView().controlSize(.small) } else { Image(systemName: "play.fill").font(.system(size: 18)) }
             VStack(alignment: .leading, spacing: 4) {
-                Text(movie ? value.title : value.numberLabel ?? value.episode.name).font(.system(size: 15, weight: .medium)).lineLimit(2)
+                Text(movie ? value.title : value.numberLabel ?? value.episode.name).font(.system(size: 19, weight: .medium)).lineLimit(2)
                 if value.episode.name != (movie ? value.title : value.numberLabel ?? value.episode.name) {
-                    Text(value.episode.name).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(value.episode.name).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
             Spacer(minLength: 0)

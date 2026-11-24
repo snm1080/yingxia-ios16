@@ -45,7 +45,7 @@ struct CatalogDetailSections: View {
                 facts
                 if let recommendations = details.recommendations, !recommendations.isEmpty { related(recommendations) }
                 Link(destination: details.link) { Label(L10n.text("View on TMDB"), systemImage: "arrow.up.right.square") }
-                    .font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 15)
+                    .font(.system(size: 17)).frame(maxWidth: .infinity).padding(.vertical, 15)
                     .accessibilityIdentifier("discover.detail.tmdb")
             }
             .onAppear { presentationChanged(presenting) }
@@ -90,10 +90,10 @@ struct CatalogDetailSections: View {
         VStack(spacing: 7) {
             PosterImage(url: person.profile, symbol: "person.fill").frame(width: 83, height: 83).clipShape(Circle())
             VStack(spacing: 2) {
-                Text(person.name).font(.system(size: 13)).lineLimit(1)
-                if let role = person.role { Text(role).font(.system(size: 11)).lineLimit(1).opacity(0.55) }
+                Text(person.name).font(.system(size: 17)).lineLimit(1)
+                if let role = person.role { Text(role).font(.system(size: 15)).lineLimit(1).opacity(0.55) }
             }
-        }.frame(width: 99).contentShape(Rectangle())
+        }.frame(width: 112).contentShape(Rectangle())
     }
     private func studioRail(_ studios: [TMDBMatch.Studio]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -117,7 +117,7 @@ struct CatalogDetailSections: View {
         VStack(spacing: 10) {
             if let logo = studio.logo { TMDBArtwork(url: logo, maxPixels: 400, fill: false).frame(width: 100, height: 44) }
             else { Image(systemName: "film.stack").frame(width: 100, height: 44) }
-            Text(studio.name).font(.system(size: 11)).lineLimit(1)
+            Text(studio.name).font(.system(size: 15)).lineLimit(1)
         }.padding(15).frame(width: 145).background(.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     private var genres: some View {
@@ -137,7 +137,7 @@ struct CatalogDetailSections: View {
         }
     }
     private func genreChip(_ name: String) -> some View {
-        Text(name).font(.system(size: 14, weight: .medium)).padding(.horizontal, 20).padding(.vertical, 12)
+        Text(name).font(.system(size: 18, weight: .medium)).padding(.horizontal, 20).padding(.vertical, 12)
             .background(.primary.opacity(0.08), in: Capsule())
     }
     private var calendarAction: some View {
@@ -145,9 +145,9 @@ struct CatalogDetailSections: View {
             HStack(spacing: 12) {
                 Image(systemName: "calendar").font(.system(size: 20)).foregroundStyle(Brand.accent)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("播出日历").font(.system(size: 15, weight: .semibold))
+                    Text("播出日历").font(.system(size: 19, weight: .semibold))
                     Text(details.nextEpisode.map { "第\($0.season)季 · 第\($0.number)集 · \($0.date)" } ?? "查看各季度的播出安排")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 16)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
@@ -228,8 +228,8 @@ struct CatalogDetailSections: View {
     }
     private func fact(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 11)).opacity(0.55)
-            Text(value.isEmpty ? "—" : value).font(.system(size: 14)).fixedSize(horizontal: false, vertical: true).selectable()
+            Text(title).font(.system(size: 15)).opacity(0.55)
+            Text(value.isEmpty ? "—" : value).font(.system(size: 18)).fixedSize(horizontal: false, vertical: true).selectable()
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func related(_ items: [TMDBMatch.Candidate]) -> some View {
@@ -247,7 +247,7 @@ struct CatalogDetailSections: View {
         }
     }
     private func heading(_ title: String) -> some View {
-        Text(title).font(.system(size: 19, weight: .semibold)).padding(.horizontal, 20)
+        Text(title).font(.system(size: 23, weight: .semibold)).padding(.horizontal, 20)
     }
 }
 
@@ -262,13 +262,13 @@ struct CatalogSourceDetailSections: View {
         VStack(alignment: .leading, spacing: 24) {
             if metadata.actor != nil || metadata.director != nil {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("主演与导演").font(.system(size: 19, weight: .semibold))
+                    Text("主演与导演").font(.system(size: 23, weight: .semibold))
                     if let actor = metadata.actor { sourceFact("主演", actor) }
                     if let director = metadata.director { sourceFact("导演", director) }
                 }
             }
             VStack(alignment: .leading, spacing: 14) {
-                Text(L10n.text("Information")).font(.system(size: 19, weight: .semibold))
+                Text(L10n.text("Information")).font(.system(size: 23, weight: .semibold))
                 sourceFact("作品", video.name)
                 sourceFact("来源", SourceLabel(sourceName).text)
                 if let year = metadata.year { sourceFact("年份", year) }
@@ -280,8 +280,8 @@ struct CatalogSourceDetailSections: View {
     }
     private func sourceFact(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 14)).fixedSize(horizontal: false, vertical: true).selectable()
+            Text(title).font(.system(size: 15)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 18)).fixedSize(horizontal: false, vertical: true).selectable()
         }
     }
 }

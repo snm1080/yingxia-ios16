@@ -361,7 +361,7 @@ struct LocalCatalogDetailTitle: View {
         }.frame(maxWidth: .infinity)
     }
     private var titleText: some View {
-        Text(title).font(.system(size: 38, weight: .semibold))
+        Text(title).font(.system(size: 42, weight: .semibold))
             .multilineTextAlignment(.center).lineLimit(3).minimumScaleFactor(0.6)
             .frame(minHeight: 70).accessibilityAddTraits(.isHeader)
     }
@@ -450,7 +450,7 @@ private struct LocalDoubanRatingPill: View {
 private struct LocalCatalogFilmPill: ViewModifier {
     var highlight = false
     func body(content: Content) -> some View {
-        content.font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+        content.font(.system(size: 16)).fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background((highlight ? Brand.amber : Color.primary).opacity(highlight ? 0.12 : 0.08), in: Capsule())
             .overlay { Capsule().strokeBorder((highlight ? Brand.amber : Color.primary).opacity(highlight ? 0.45 : 0.22), lineWidth: 1) }
@@ -463,9 +463,9 @@ struct LocalCatalogSynopsisButton: View {
     var body: some View {
         Button(action: open) {
             HStack(alignment: .center, spacing: 12) {
-                Text(overview).font(.system(size: 16)).lineSpacing(5).lineLimit(3)
+                Text(overview).font(.system(size: 20)).lineSpacing(5).lineLimit(3)
                     .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right").font(.system(size: 16)).foregroundStyle(Brand.accent)
+                Image(systemName: "chevron.right").font(.system(size: 20)).foregroundStyle(Brand.accent)
             }.foregroundStyle(Color.primary.opacity(0.78)).frame(minHeight: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("查看完整简介").accessibilityIdentifier("detail.overview")
     }
