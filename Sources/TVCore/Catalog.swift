@@ -845,12 +845,20 @@ public struct CatalogClient: Sendable {
     private static let sniffTimeoutError = TVError.unsupported(L10n.text("Video detection timed out before a playable address appeared."))
 
     private func playResolved(_ plan: PlaybackPlan, choice: PlaybackChoice) async throws -> Channel {
-        let address = Self.unwrapClientProxy(Self.unwrapPluginProxy(choice.address))
+        let unwrapped = Self.unwrapPluginProxy(choice.address)
+        let clientProxy = Self.clientProxyParts(unwrapped)
+        let address = clientProxy?.inner ?? Self.unwrapClientProxy(unwrapped)
         if site.key == "local.media.file", let file = URL(string: address), file.isFileURL,
            FileManager.default.fileExists(atPath: file.path) {
             return Channel(name: choice.name, group: plan.group, url: file, headers: plan.headers)
         }
         if address.lowercased().hasPrefix("magnet:") { throw TVError.unsupported(L10n.text("This source returned a magnet link. Torrent playback is not supported.")) }
+        // Only an address that arrived through the client-proxy unwrap, with a
+        // real multi-thread request, may engage the MT proxy. Registration
+        // failure of any kind falls through to the direct address below.
+        if let clientProxy, clientProxy.thread > 1, let mtURL = await Self.mtProxyURL(clientProxy, headers: plan.headers) {
+            return Channel(name: choice.name, group: plan.group, url: mtURL, headers: [:], subtitles: plan.subtitles)
+        }
         if Self.isPluginProxy(address) {
             // A Bili JAR spider's proxy id: Yingxia's own Bilibili source plays the same video.
             if let id = Self.bilibiliProxyID(address), let bilibili = CloudSources.site(where: \.isBilibili) {
@@ -969,5 +977,30 @@ public struct CatalogClient: Sendable {
         guard items.contains(where: { $0.name == "thread" }), items.contains(where: { $0.name == "chunkSize" }),
               let inner = items.first(where: { $0.name == "url" })?.value, !inner.isEmpty else { return address }
         return inner
+    }
+    /// The parts of a client-proxy address: the wrapped media address plus the
+    /// `thread`/`chunkSize` parameters `unwrapClientProxy` reads only as a guard.
+    static func clientProxyParts(_ address: String) -> (inner: String, thread: Int, chunkSizeKB: Int)? {
+        let items = pluginProxyQuery(address)
+        guard items.contains(where: { $0.name == "thread" }), items.contains(where: { $0.name == "chunkSize" }),
+              let inner = items.first(where: { $0.name == "url" })?.value, !inner.isEmpty else { return nil }
+        let thread = items.first(where: { $0.name == "thread" })?.value.flatMap { Int($0) } ?? 0
+        let chunkSizeKB = items.first(where: { $0.name == "chunkSize" })?.value.flatMap { Int($0) } ?? 0
+        return (inner, thread, chunkSizeKB)
+    }
+    /// Registers an unwrapped address with the embedded host's multi-thread
+    /// proxy. The play headers travel over the authenticated service channel
+    /// and live only in Node; the returned URL carries just an opaque token.
+    /// A non-HTTP(S) or loopback inner address, and any registration failure,
+    /// returns nil so the caller keeps the direct address.
+    private static func mtProxyURL(_ parts: (inner: String, thread: Int, chunkSizeKB: Int), headers: [String: String]) async -> URL? {
+        guard let inner = URL(string: parts.inner), ["http", "https"].contains(inner.scheme?.lowercased() ?? ""),
+              let host = inner.host?.lowercased(), !["127.0.0.1", "localhost", "::1"].contains(host) else { return nil }
+        let params: [String: JSONValue] = ["url": .string(parts.inner),
+            "headers": .object(headers.mapValues(JSONValue.string)),
+            "thread": .number(Double(parts.thread)), "chunkSizeKB": .number(Double(parts.chunkSizeKB))]
+        guard let answer = try? await EmbeddedNodeHost.shared.mediaService("mt.register", params: params),
+              let address = answer.object?["url"]?.string, let url = URL(string: address) else { return nil }
+        return url
     }
 }

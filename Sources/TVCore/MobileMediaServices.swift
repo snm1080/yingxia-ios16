@@ -40,6 +40,10 @@ public enum MobileMediaServices {
             if descriptor.audioURL != nil { throw TVError.unsupported("当前分离音轨需要 HTTP/HTTPS 视频地址，请选择其他线路") }
             return original
         }
+        // An MT proxy address is already a local transport minted by the
+        // embedded host; preparing it would make the media cache fetch from
+        // the proxy (double proxying), so it plays as-is.
+        if url.path.hasPrefix("/mt/") { return original }
         let format = descriptor.format.lowercased().split(separator: ";", maxSplits: 1).first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var hls = ["m3u8", "application/vnd.apple.mpegurl", "application/x-mpegurl"].contains(format) || url.pathExtension.lowercased() == "m3u8"
         let dash = ["mpd", "application/dash+xml"].contains(format) || url.pathExtension.lowercased() == "mpd"

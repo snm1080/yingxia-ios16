@@ -441,6 +441,13 @@ async function call(instance, params, signal, searchOperation) {
 // playing when iOS suspended the app asks again there (#485). The address as it is when no bundle had its port.
 async function relocate(address) {
     const url = new URL(address);
+    // MT registrations live in the host isolate and survive a relisten; only
+    // the control port in a minted /mt/ address goes stale, so re-base it.
+    if (url.pathname.startsWith('/mt/')) {
+        const port = control.address()?.port;
+        if (port && Number(url.port) !== port) { url.port = String(port); return url.toString(); }
+        return address;
+    }
     for (const entry of bundles.values()) {
         const instance = await entry.pending.catch(() => null);
         if (!instance || instance.closed || !instance.ports.includes(Number(url.port))) continue;
@@ -469,7 +476,7 @@ async function sourcePlayback(address, pinned) {
 }
 
 const control = http.createServer(async (req, res) => {
-    if (req.url?.startsWith('/hls/') || req.url?.startsWith('/media-cache/') || req.url?.startsWith('/dash-cache/') || req.url?.startsWith('/playback/')) {
+    if (req.url?.startsWith('/hls/') || req.url?.startsWith('/media-cache/') || req.url?.startsWith('/dash-cache/') || req.url?.startsWith('/playback/') || req.url?.startsWith('/mt/')) {
         try { await mediaServices.handle(req, res); }
         catch { if (!res.headersSent) res.writeHead(502); res.end(); }
         return;

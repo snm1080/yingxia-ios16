@@ -12,6 +12,7 @@ import { AISubtitleService } from './parity/lib/ai-subtitles.mjs';
 import { OnlineSubtitles } from './parity/lib/online-subtitles.mjs';
 import { HlsProxy } from './parity/lib/hls-proxy.mjs';
 import { MediaCache } from './parity/lib/media-cache.mjs';
+import { MtProxy } from './parity/lib/mt-proxy.mjs';
 import { DashCache } from './parity/lib/dash-cache.mjs';
 import { panSearchDefaults, normalizePanOptions } from './parity/lib/pan-search-options.mjs';
 import { normalizeMobilePlayback } from './mobile-playback.mjs';
@@ -74,6 +75,7 @@ export class MobileServices {
     this.subtitles = new OnlineSubtitles(directory, this.settings, () => this.session);
     this.hls = new HlsProxy({ baseUrl: baseURL });
     this.cache = new MediaCache({ dataDirectory: directory, baseUrl: baseURL });
+    this.mt = new MtProxy({ baseUrl: baseURL });
     this.dashCache = new DashCache({ baseURL, cache: this.cache });
     this.cache.handleManifest = async (resource, request, response, upstream, preview = false) => {
       if (!resource.manifestURL) {
@@ -407,6 +409,7 @@ export class MobileServices {
         const session = { id: params.id || randomUUID(), isLive: params.isLive === true, qualities: [{ url: params.url, headers: params.headers || {}, format: params.format || 'm3u8' }] };
         return this.hls.prepare(session, { enabled: params.enabled === true }).qualities[0];
       }
+      case 'mt.register': return await this.mt.register(params);
       case 'cache.prepare': {
         const format = String(params.format || '').toLowerCase();
         if (params.enabled !== true || params.isLive === true || /^(?:m3u8|mpd|application\/dash\+xml)$/.test(format)
@@ -438,9 +441,10 @@ export class MobileServices {
       response.end(request.method === 'HEAD' ? undefined : manifest); return;
     }
     if (url.pathname.startsWith('/media-cache/')) return await this.cache.handle(request, response, url);
+    if (url.pathname.startsWith('/mt/')) return await this.mt.handle(request, response, url);
     if (url.pathname.startsWith('/dash-cache/')) return await this.dashCache.handle(request, response, url);
     if (!url.pathname.startsWith('/hls/')) return false;
     return await this.hls.handle(request, response, url);
   }
-  async close() { this.live.close(); this.ai.cancel(); this.subtitles.cancel(); this.hls.close(); this.dashCache.close(); this.playbackManifests.clear(); for (const job of this.operations.values()) job.abort(); await this.cache.close(); }
+  async close() { this.live.close(); this.ai.cancel(); this.subtitles.cancel(); this.hls.close(); this.dashCache.close(); this.mt.close(); this.playbackManifests.clear(); for (const job of this.operations.values()) job.abort(); await this.cache.close(); }
 }

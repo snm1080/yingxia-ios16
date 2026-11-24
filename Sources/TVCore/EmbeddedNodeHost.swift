@@ -42,7 +42,7 @@ public actor EmbeddedNodeHost {
         let input: [String: JSONValue] = ["service": .string(method), "params": .object(params), "operationId": .string(operationID)]
         let body = try JSONEncoder().encode(input)
         let control = try await start()
-        let serviceTimeout: TimeInterval = method == "playback.prepare" ? 8 : method == "playback.release" ? 3 : 150
+        let serviceTimeout: TimeInterval = method == "playback.prepare" || method == "mt.register" ? 8 : method == "playback.release" ? 3 : 150
         return try await withTaskCancellationHandler {
             let answer: Data
             do { answer = try await send(body, to: control, timeout: serviceTimeout) }

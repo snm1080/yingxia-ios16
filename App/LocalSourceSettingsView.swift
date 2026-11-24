@@ -14,7 +14,6 @@ struct LocalSourceSettingsView: View {
     @State private var preparingSelection = false
     @State private var importProgress = ""
     @State private var batchReport: LocalDocumentBatchReport?
-    @State private var selectedRemoval: SubscriptionEntry?
     @State private var confirmsDeleteAll = false
     @State private var websiteShown = false
     @State private var reorderSession = LocalSettingsReorderSession()
@@ -32,16 +31,6 @@ struct LocalSourceSettingsView: View {
                 }
             } cancelled: {
                 store.notice = "已取消文件选择"
-            }
-            .confirmationDialog("删除来源？", isPresented: Binding(get: { selectedRemoval != nil }, set: { if !$0 { selectedRemoval = nil } })) {
-                Button("删除", role: .destructive) { if let entry = selectedRemoval { store.removeSubscription(entry) }; selectedRemoval = nil }
-                Button("取消", role: .cancel) { selectedRemoval = nil }
-            }
-            .confirmationDialog("删除全部 Python？", isPresented: $confirmsDeleteAll, titleVisibility: .visible) {
-                Button("删除全部", role: .destructive) {
-                    store.removeSubscriptions(Set(store.managedSubscriptions(in: .python).map(\.address)))
-                }
-                Button("取消", role: .cancel) { }
             }
             .onAppear { store.importError = nil; store.notice = nil }
             .onDisappear { reorderSession.cancel() }
@@ -168,11 +157,17 @@ struct LocalSourceSettingsView: View {
                         }) {
                         ForEach(store.managedSubscriptions(in: group)) { entry in
                             ManagedLocalSourceRow(entry: entry, group: group, reorderEnabled: !preparingSelection,
-                                reorderSession: $reorderSession, remove: { selectedRemoval = entry })
+                                reorderSession: $reorderSession, remove: { store.removeSubscription(entry) })
                                 .disabled(preparingSelection)
                                 .localSettingsReorderRow(id: entry.address)
                         }
                     }
+                }
+                .confirmationDialog("删除全部 Python？", isPresented: $confirmsDeleteAll, titleVisibility: .visible) {
+                    Button("删除全部", role: .destructive) {
+                        store.removeSubscriptions(Set(store.managedSubscriptions(in: .python).map(\.address)))
+                    }
+                    Button("取消", role: .cancel) { }
                 }
         }
     }
@@ -220,6 +215,7 @@ private struct ManagedLocalSourceRow: View {
     let reorderEnabled: Bool
     @Binding var reorderSession: LocalSettingsReorderSession
     let remove: () -> Void
+    @State private var confirmsRemoval = false
     var body: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 6) {
@@ -231,10 +227,14 @@ private struct ManagedLocalSourceRow: View {
                     }, set: { enabled in Task { await store.setSubscription(entry, enabled: enabled) } }))
                         .labelsHidden().fixedSize()
                         .accessibilityIdentifier("sources.entry.\(entry.id).enabled")
-                    Button("删除", role: .destructive, action: remove)
+                    Button("删除", role: .destructive) { confirmsRemoval = true }
                         .frame(minWidth: 44, minHeight: 44)
                         .accessibilityLabel("删除 " + entry.title)
                         .accessibilityIdentifier("sources.entry.\(entry.id).delete")
+                        .confirmationDialog("删除来源？", isPresented: $confirmsRemoval) {
+                            Button("删除", role: .destructive, action: remove)
+                            Button("取消", role: .cancel) { }
+                        }
                     Button("更新") { Task { await store.refreshSource(entry) } }
                         .frame(minWidth: 44, minHeight: 44)
                         .accessibilityLabel("更新\(entry.title)")
