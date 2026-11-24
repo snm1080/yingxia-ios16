@@ -4,8 +4,14 @@ import Compression
 import zlib
 
 public enum LocalSourceGroup: String, Codable, Sendable, CaseIterable {
-    case subscription, python
-    public var title: String { self == .python ? "Python" : "订阅" }
+    case subscription, python, live
+    public var title: String {
+        switch self {
+        case .python: "Python"
+        case .live: "直播"
+        case .subscription: "订阅"
+        }
+    }
 }
 
 /// Portable identity addresses use a reserved host, never an app-container path.

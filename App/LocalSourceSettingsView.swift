@@ -48,6 +48,16 @@ struct LocalSourceSettingsView: View {
     private var sourceForm: some View {
         SettingsPage(title: group.title) { accountSection; importSection; entriesSection }
     }
+    private var importFooter: String {
+        switch group {
+        case .python:
+            "本地可多选 Python 文件或 ZIP，选完后点“打开”；有依赖的脚本请一起压缩为 ZIP。逐个导入并显示结果，失败文件不影响其它文件。支持远程 Python、脚本 JSON 和 MD5 地址。文件导入后保存副本，修改后请重新导入。Python 可同时启用多个，观看记录归入当前订阅。"
+        case .live:
+            "本地选择 M3U 或 TXT 播放列表文件，也可粘贴远程播放列表地址；TVBox 配置（JSON）只导入其中的直播列表，不会添加它的站点。文件导入后保存副本，修改后请重新导入。直播可同时启用多个，不影响当前订阅。"
+        case .subscription:
+            "本地选择 JSON 或 ZIP 文件；多文件接口包请把 index.js、index.config.js 和对应 MD5 一起压缩为 ZIP。支持远程订阅和 MD5 地址。文件导入后保存副本，修改后请重新导入。同时只启用一个订阅，Python 来源可独立启用。"
+        }
+    }
     @ViewBuilder private var accountSection: some View {
         if group == .subscription {
             WithPerceptionTracking {
@@ -64,19 +74,17 @@ struct LocalSourceSettingsView: View {
     }
     private var importSection: some View {
         WithPerceptionTracking {
-            SettingsGroup(title: "添加\(group.title)", footer: group == .python
-                ? "本地可多选 Python 文件或 ZIP，选完后点“打开”；有依赖的脚本请一起压缩为 ZIP。逐个导入并显示结果，失败文件不影响其它文件。支持远程 Python、脚本 JSON 和 MD5 地址。文件导入后保存副本，修改后请重新导入。Python 可同时启用多个，观看记录归入当前订阅。"
-                : "本地选择 JSON 或 ZIP 文件；多文件接口包请把 index.js、index.config.js 和对应 MD5 一起压缩为 ZIP。支持远程订阅和 MD5 地址。文件导入后保存副本，修改后请重新导入。同时只启用一个订阅，Python 来源可独立启用。") {
+            SettingsGroup(title: "添加\(group.title)", footer: importFooter) {
                 TextField("名称（可选，留空自动生成）", text: $name)
                     .accessibilityLabel("来源名称")
                     .accessibilityIdentifier("sources.\(group.rawValue).name")
                     .disabled(store.importing || preparingSelection)
                 HStack(spacing: 12) {
-                    TextField(group == .python ? "Python / MD5 地址" : "订阅 / MD5 地址", text: $address)
+                    TextField(group == .python ? "Python / MD5 地址" : group == .live ? "M3U / TXT 播放列表地址" : "订阅 / MD5 地址", text: $address)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
-                        .accessibilityLabel(group == .python ? "Python 地址" : "订阅地址")
+                        .accessibilityLabel(group == .python ? "Python 地址" : group == .live ? "直播地址" : "订阅地址")
                         .accessibilityIdentifier("sources.\(group.rawValue).address")
                         .disabled(store.importing || preparingSelection)
                         .onSubmit(importAddress)

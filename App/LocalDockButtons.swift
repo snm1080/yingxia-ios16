@@ -6,9 +6,9 @@ import TVCore
 /// One button of the local dock, in the settings page's terms. The dock itself
 /// renders `AppSection` pages; this enum is the configurable identity of a button.
 enum LocalDockButton: String, CaseIterable, Identifiable, Hashable {
-    case home, favorites, history, music, settings, search, push
+    case home, favorites, history, live, music, settings, search, push
     var id: String { rawValue }
-    static let defaultOrder: [LocalDockButton] = [.home, .favorites, .history, .music, .settings, .search, .push]
+    static let defaultOrder: [LocalDockButton] = [.home, .favorites, .history, .live, .music, .settings, .search, .push]
     /// Home and Settings can move but never hide: hiding Settings would lock the
     /// viewer out of the page that brings it back.
     var isLocked: Bool { self == .home || self == .settings }
@@ -17,6 +17,7 @@ enum LocalDockButton: String, CaseIterable, Identifiable, Hashable {
         case .home: "首页"
         case .favorites: "收藏"
         case .history: "历史"
+        case .live: "直播"
         case .music: "音乐"
         case .settings: "设置"
         case .search: "搜索"
@@ -28,6 +29,7 @@ enum LocalDockButton: String, CaseIterable, Identifiable, Hashable {
         case .home: .home
         case .favorites: .favorites
         case .history: .history
+        case .live: .live
         case .music: .music
         case .settings: .settings
         case .search: .search

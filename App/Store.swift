@@ -520,18 +520,20 @@ import TVCore
                 localSourceGroups[entry.address] = group
                 keep(copy, for: entry)
             }
-            let enabled = group == .python ? prepared.records : Array(prepared.records.prefix(1))
+            let enabled = group == .subscription ? Array(prepared.records.prefix(1)) : prepared.records
             for record in enabled {
                 subscriptions = LocalSourcePolicy.setting(record.address.absoluteString, enabled: true, in: subscriptions, groups: localSourceGroups)
             }
             saveSubscriptionList(); rebuildSubscription()
-            notice = "已导入 \(copies.reduce(0) { $0 + $1.sites.count }) 个来源"
+            notice = group == .live
+                ? "已导入 \(copies.reduce(0) { $0 + $1.lives.count }) 个直播列表"
+                : "已导入 \(copies.reduce(0) { $0 + $1.sites.count }) 个来源"
         } catch { importError = error.localizedDescription }
     }
     func importSourceAddresses(_ text: String, group: LocalSourceGroup, name: String? = nil) async {
         let addresses = text.split(whereSeparator: { $0.isNewline }).map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !addresses.isEmpty else { return }
-        if group == .python {
+        if group != .subscription {
             do { await importLocalSources(try addresses.map { try WebAddress.resolve($0) }, group: group, name: name) }
             catch { importError = error.localizedDescription }
         } else {
@@ -899,12 +901,16 @@ import TVCore
     /// Shows every enabled subscription that has a copy, merged in list order.
     private func rebuildSubscription(resetting: Bool = true) {
         if resetting { cancelResume(); searchModel.reset(); recommendationModel.reset() }
-        var enabledDocuments = subscriptions.filter(\.enabled).compactMap { documents[$0.address] }
+        var enabledDocuments = subscriptions.filter(\.enabled).compactMap { entry -> Subscription? in
+            guard let document = documents[entry.address] else { return nil }
+            // A document filed under Live merges as its playlists only, whatever else it carries.
+            return localSourceGroups[entry.address] == .live ? document.livesOnly() : document
+        }
         #if os(iOS)
         enabledDocuments = enabledDocuments.map(LocalEditionPolicy.importedCatalog)
         #endif
         let activeDanmakuSubscription = subscriptions.first {
-            $0.enabled && localSourceGroups[$0.address] != .python
+            $0.enabled && localSourceGroups[$0.address] == .subscription
         }.flatMap { documents[$0.address] }
         CatPawDanmaku.configure(subscriptions: enabledDocuments, activeSubscription: activeDanmakuSubscription)
         subscription = Subscription.merge(enabledDocuments)?.withCloudSources(extrasUnlocked ? cloudDocument : nil)

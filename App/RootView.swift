@@ -393,12 +393,7 @@ struct RootView: View {
             #endif
         case .discover: DiscoverView()
         case .search: GlobalSearchView()
-        case .live:
-            #if os(iOS)
-            DiscoverView()
-            #else
-            LiveView()
-            #endif
+        case .live: LiveView()
         case .music: MusicView()
         case .push:
             #if os(iOS)

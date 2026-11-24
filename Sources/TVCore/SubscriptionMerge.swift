@@ -86,6 +86,17 @@ extension Subscription {
                             sites: sites, lives: lives, raw: raw)
     }
 
+    /// The same document reduced to its live playlists: no sites, no spider, no parses.
+    /// A document imported through the Live section contributes only its playlists to
+    /// the merged library; the stored document itself is untouched.
+    public func livesOnly() -> Subscription {
+        var raw = raw
+        raw["sites"] = nil
+        raw["spider"] = nil
+        raw["parses"] = nil
+        return Subscription(origin: origin, importedAt: importedAt, sites: [], lives: lives, raw: raw)
+    }
+
     /// The MD5 the subscription declares for its spider archive.
     var spiderChecksum: String? { raw["spider"]?.string.flatMap(Site.declaredChecksum) }
 
