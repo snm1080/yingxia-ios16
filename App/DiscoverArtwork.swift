@@ -118,8 +118,8 @@ struct DiscoverBackdrop: View {
     let scrollY: CGFloat
     let trailer: TMDBMatch.Trailer?
     let playsTrailer: Bool
-    /// Fit the whole cover inside the hero instead of filling it: a portrait poster in a
-    /// wide hero would otherwise lose its top and bottom to the crop.
+    /// Width-driven cover: a portrait poster renders at its natural height for the hero's
+    /// full width (edge to edge, no side bars); a height-capped hero crops its lower part.
     var fitImage = false
     @State private var videoReady = false
     /// Mac: the floating sidebar's width, which the split view reports as a leading inset.
@@ -171,9 +171,18 @@ struct DiscoverBackdrop: View {
 
     private func poster(_ paint: DiscoverPaint) -> some View {
         let fade: CGFloat = max(0, 1 - max(0, scrollY - heroHeight * 0.45) / (heroHeight * 0.55))
+        // Fit mode is width-driven (MiraPlay-style): the poster renders at its natural
+        // height for the full hero width, so it always spans edge to edge. When the
+        // caller's height cap shortened the hero below that natural height, the
+        // top-aligned clipped frame below crops the poster's lower part — which the
+        // gradient mask fades into the page anyway — instead of pillarboxing the
+        // poster between paint-colour bars on both sides.
+        let imageHeight: CGFloat = (fitImage && paint.image.width > 0)
+            ? width * CGFloat(paint.image.height) / CGFloat(paint.image.width)
+            : heroHeight
         return Image(decorative: paint.image, scale: 1).resizable()
             .aspectRatio(contentMode: fitImage ? .fit : .fill)
-            .frame(width: width, height: heroHeight)
+            .frame(width: width, height: imageHeight)
             .scaleEffect((fitImage ? 1 : 1.2) + max(0, -scrollY) / max(heroHeight, 1), anchor: .center)
             .offset(y: -scrollY * 0.78)
             .opacity(Double(fade))
