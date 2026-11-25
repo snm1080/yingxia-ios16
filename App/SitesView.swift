@@ -2425,6 +2425,8 @@ struct VideoDetailView: View {
     @State private var detailArtworkSelection = 0
     @State private var detailArtworkPaused = false
     @State private var detailArtworkPaint: DiscoverPaint?
+    /// The measured height of the header block above the play bar (build 39's pin).
+    @State private var detailHeaderBlockHeight: CGFloat = 0
     @State private var choosingDetailArtwork = false
     @State private var choosingDetailMatch = false
     @State private var showingDetailOverview = false
@@ -3114,6 +3116,21 @@ struct VideoDetailView: View {
         }
         return width < 600 ? width * 1.5 : min(760, width * 0.7)
     }
+    /// Build 39: Sam's pin for the play bar. Measured on his reference screenshot, the
+    /// bar's top edge sits at 79.7% of the page height (816pt on his 1024pt iPad page);
+    /// a tall portrait hero otherwise pushes it to ~88%, half under the Dock. The pin
+    /// only ever raises the header: the hero frame and the title spacer shrink by this
+    /// same delta, so the title block keeps its exact place over the poster's faded
+    /// foot, the poster crops harder at the bottom, and the bar lands on the anchor.
+    /// Landscape artwork and the pre-load state keep build 38's layout untouched.
+    private func detailHeroPinDelta(width: CGFloat, pageHeight: CGFloat) -> CGFloat {
+        guard let aspect = detailArtworkAspect, aspect < 1, pageHeight > 0, detailHeaderBlockHeight > 0 else { return 0 }
+        let naturalSpacer = detailHeroHeight(width: width, pageHeight: pageHeight) * 0.78
+        // Bar top = spacer + the measured block above the bar + the two 16pt VStack
+        // gaps (spacer→block, block→playControl).
+        let pinnedSpacer = pageHeight * 0.797 - detailHeaderBlockHeight - 32
+        return min(max(naturalSpacer - pinnedSpacer, 0), naturalSpacer)
+    }
     private var mobileSourceMetadata: LocalCatalogSourceMetadata { LocalCatalogSourceMetadata(currentVideo()) }
     private var mobileDetailDark: Bool { detailArtworkPaint?.isDark ?? true }
     private var mobileDetailOverview: String {
@@ -3130,6 +3147,7 @@ struct VideoDetailView: View {
             WithPerceptionTracking {
                 let width = geometry.size.width
                 let height = detailHeroHeight(width: width, pageHeight: geometry.size.height)
+                    - detailHeroPinDelta(width: width, pageHeight: geometry.size.height)
                 ZStack(alignment: .top) {
                     (detailArtworkPaint?.color ?? Color.black).ignoresSafeArea()
                     LocalCatalogArtworkCarousel(video: currentVideo(), images: mobileDetailArtwork,
@@ -3164,21 +3182,30 @@ struct VideoDetailView: View {
                 // below the artwork itself, instead of across the poster's middle.
                 Color.clear.frame(height: detailArtworkAspect.map { $0 < 1 } == true
                     ? detailHeroHeight(width: containerWidth, pageHeight: containerHeight) * 0.78
+                        - detailHeroPinDelta(width: containerWidth, pageHeight: containerHeight)
                     : containerWidth < 600 ? containerWidth * 0.95 : containerWidth * 0.25)
                     .overlay(alignment: .top) {
                         mobileDetailTools.padding(.top, containerWidth < 600 ? 110 : 80)
                     }
-                if let original = tmdb.details?.originalName, !original.isEmpty, original != tmdb.details?.name {
-                    Text(original).font(.system(size: 17)).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                // The block above the play bar, grouped so build 39's pin can measure it
+                // and place the bar on its anchor whatever heights the title (text or
+                // logo), the pill flow and the synopsis (1–3 lines) happen to take.
+                VStack(alignment: .leading, spacing: 16) {
+                    if let original = tmdb.details?.originalName, !original.isEmpty, original != tmdb.details?.name {
+                        Text(original).font(.system(size: 17)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                    }
+                    LocalCatalogDetailTitle(title: tmdb.details?.name ?? currentVideo().name, logo: tmdb.details?.logo, width: containerWidth)
+                        .id(tmdb.details?.logo)
+                    LocalCatalogMetadataPills(details: tmdb.details, year: mobileSourceMetadata.year,
+                                              area: mobileSourceMetadata.area, remarks: mobileSourceMetadata.remarks,
+                                              calendar: { showingDetailCalendar = true })
+                    if !mobileDetailOverview.isEmpty {
+                        LocalCatalogSynopsisButton(overview: mobileDetailOverview) { showingDetailOverview = true }
+                    }
                 }
-                LocalCatalogDetailTitle(title: tmdb.details?.name ?? currentVideo().name, logo: tmdb.details?.logo, width: containerWidth)
-                    .id(tmdb.details?.logo)
-                LocalCatalogMetadataPills(details: tmdb.details, year: mobileSourceMetadata.year,
-                                          area: mobileSourceMetadata.area, remarks: mobileSourceMetadata.remarks,
-                                          calendar: { showingDetailCalendar = true })
-                if !mobileDetailOverview.isEmpty {
-                    LocalCatalogSynopsisButton(overview: mobileDetailOverview) { showingDetailOverview = true }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { blockHeight in
+                    if abs(blockHeight - detailHeaderBlockHeight) > 0.5 { detailHeaderBlockHeight = blockHeight }
                 }
                 playControl
                 playbackBanner
