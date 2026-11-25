@@ -58,6 +58,13 @@ import TVCore
     @PerceptionIgnored private var recoveryAttempts = 0
     @PerceptionIgnored private var decoderRecoveryAttempts = 0
     @PerceptionIgnored private var lastRecovery: Date?
+    /// Positions where the decoder already failed once in this episode, with
+    /// the forward jump last used to get past each. A rebuild that lands on
+    /// the same frames fails identically, so a repeat failure near a
+    /// recorded spot reopens past it instead of looping on it. Cleared when
+    /// playback runs well past the furthest spot, and per episode.
+    @PerceptionIgnored private var decoderBadSpots: [(position: Double, skip: Double)] = []
+    @PerceptionIgnored private var decoderBadSpotsEpisode: String?
     /// Whether the current failure chain already spent its one escalation
     /// to a fresh source resolve, and the episode it was spent on. The flag
     /// is keyed to the episode so the restart the re-resolve itself causes
@@ -289,6 +296,9 @@ import TVCore
         if Self.episodeKey(channel) != reresolveEscalatedEpisode {
             reresolveEscalated = false; reresolveEscalatedEpisode = nil
         }
+        if (Self.episodeKey(channel) ?? channel.id) != decoderBadSpotsEpisode {
+            decoderBadSpots.removeAll(); decoderBadSpotsEpisode = Self.episodeKey(channel) ?? channel.id
+        }
         error = nil; loading = true; showsPicture = false; buffering = false; steps = ["正在解析播放地址"]
         preparationStarted = Date()
         transfer = Transfer(); transfer.host = channel.url.host()
@@ -401,6 +411,9 @@ import TVCore
             reresolveEscalated = false; reresolveEscalatedEpisode = nil
         }
         showsPicture = engine.hasPicture
+        // Playback running well past a recorded bad spot retires it: a
+        // failure further along is a new spot, not a repeat of this one.
+        if let furthest = decoderBadSpots.map({ $0.position }).max(), position > furthest + 45 { decoderBadSpots.removeAll() }
     }
     private func startSampler(generation active: UUID) {
         sampler?.cancel()
@@ -477,6 +490,11 @@ import TVCore
         if let failure {
             Diagnostics.shared.record(.warning, "player.recovery", "event=failure code=\(PlaybackFailureDiagnostics.codes(failure)) attempts=\(recoveryAttempts) decoderAttempts=\(decoderRecoveryAttempts) \(engine.failureDiagnostic)")
             if failure is KSPlaybackFailure {
+                // A spot that already failed once after a rebuild fails
+                // identically on every rebuild: reopen past it instead of
+                // looping on it.
+                if engine.hasPresentedPicture, !isLive, let skip = decoderBadSpotSkip(at: position),
+                   recoverPlayback(reusePrepared: true, skipForward: skip) { return }
                 // First-open incompatibility needs another line/decoder. Only a
                 // decoder that already presented this input may be rebuilt once.
                 if engine.hasPresentedPicture, decoderRecoveryAttempts == 0,
@@ -670,6 +688,7 @@ import TVCore
         saveHistory()
         generation = UUID()
         recovery?.cancel(); recovery = nil; recoveryAttempts = 0; decoderRecoveryAttempts = 0; lastRecovery = nil
+        decoderBadSpots.removeAll(); decoderBadSpotsEpisode = nil
         enhancementTicker?.cancel(); enhancementTicker = nil; selectingDiscTitle = false
         preparation?.cancel(); preparation = nil; sampler?.cancel(); sampler = nil
         transferTicker?.cancel(); transferTicker = nil
@@ -728,7 +747,25 @@ import TVCore
         guard !paused else { return }
         if prepared.disc?.isAvailable == false || error != nil { _ = recoverPlayback() }
     }
-    @discardableResult private func recoverPlayback(reusePrepared: Bool = false) -> Bool {
+    /// The forward jump that carries playback past a position whose frames
+    /// the decoder cannot decode, or nil when this position has not failed
+    /// before — the caller then spends the plain on-the-spot rebuild, and
+    /// this records the spot. A repeat failure near a recorded spot doubles
+    /// the previous jump (5 s first, capped at 30 s); a jump that would land
+    /// in the episode's last second is not offered.
+    private func decoderBadSpotSkip(at failurePosition: Double) -> Double? {
+        guard failurePosition.isFinite, failurePosition >= 0 else { return nil }
+        if let index = decoderBadSpots.firstIndex(where: { abs($0.position - failurePosition) <= 20 }) {
+            let skip = decoderBadSpots[index].skip <= 0 ? 5 : min(decoderBadSpots[index].skip * 2, 30)
+            if duration > 0, failurePosition + skip >= duration - 1 { return nil }
+            decoderBadSpots[index] = (failurePosition, skip)
+            Diagnostics.shared.record(.warning, "player.recovery", "event=badspot-skip at=\(failurePosition) skip=\(skip)")
+            return skip
+        }
+        decoderBadSpots.append((failurePosition, 0))
+        return nil
+    }
+    @discardableResult private func recoverPlayback(reusePrepared: Bool = false, skipForward: Double = 0) -> Bool {
         guard recovery == nil, recoveryAttempts < 2, !selectingDiscTitle,
               preparation == nil || engine.mediaID == generation.uuidString,
               let selected = playing ?? sourceChannel else { return false }
@@ -742,7 +779,7 @@ import TVCore
         preparation?.cancel(); preparation = nil; discardUpcoming()
         recoveryAttempts += 1; lastRecovery = Date()
         Diagnostics.shared.record(.info, "player.recovery", "event=begin reuseInput=\(reusePrepared) attempt=\(recoveryAttempts) \(engine.failureDiagnostic)")
-        let savedPosition = pendingResume ?? position, savedTimeline = engine.timelineRevision
+        let savedPosition = (pendingResume ?? position) + skipForward, savedTimeline = engine.timelineRevision
         generation = UUID(); let active = generation
         restoringPosition = false; seekingSegment = false; pendingResume = nil
         preparationStarted = Date()
