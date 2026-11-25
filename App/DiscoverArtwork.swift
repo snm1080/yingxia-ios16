@@ -118,6 +118,9 @@ struct DiscoverBackdrop: View {
     let scrollY: CGFloat
     let trailer: TMDBMatch.Trailer?
     let playsTrailer: Bool
+    /// Fit the whole cover inside the hero instead of filling it: a portrait poster in a
+    /// wide hero would otherwise lose its top and bottom to the crop.
+    var fitImage = false
     @State private var videoReady = false
     /// Mac: the floating sidebar's width, which the split view reports as a leading inset.
     @State private var leadingInset: CGFloat = 0
@@ -168,9 +171,10 @@ struct DiscoverBackdrop: View {
 
     private func poster(_ paint: DiscoverPaint) -> some View {
         let fade: CGFloat = max(0, 1 - max(0, scrollY - heroHeight * 0.45) / (heroHeight * 0.55))
-        return Image(decorative: paint.image, scale: 1).resizable().scaledToFill()
+        return Image(decorative: paint.image, scale: 1).resizable()
+            .aspectRatio(contentMode: fitImage ? .fit : .fill)
             .frame(width: width, height: heroHeight)
-            .scaleEffect(1.2 + max(0, -scrollY) / max(heroHeight, 1), anchor: .center)
+            .scaleEffect((fitImage ? 1 : 1.2) + max(0, -scrollY) / max(heroHeight, 1), anchor: .center)
             .offset(y: -scrollY * 0.78)
             .opacity(Double(fade))
             .opacity(videoReady ? 0 : 1)

@@ -1026,8 +1026,11 @@ import TVCore
         if resetting { cancelResume(); searchModel.reset(); recommendationModel.reset() }
         var enabledDocuments = subscriptions.filter(\.enabled).compactMap { entry -> Subscription? in
             guard let document = documents[entry.address] else { return nil }
+            // A bare playlist's only live carries the generic placeholder name from parsing;
+            // the merged library shows the name the viewer gave the entry instead.
+            let named = document.namingBarePlaylist(after: entry.title)
             // A document filed under Live merges as its playlists only, whatever else it carries.
-            return localSourceGroups[entry.address] == .live ? document.livesOnly() : document
+            return localSourceGroups[entry.address] == .live ? named.livesOnly() : named
         }
         #if os(iOS)
         enabledDocuments = enabledDocuments.map(LocalEditionPolicy.importedCatalog)

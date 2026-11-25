@@ -86,6 +86,18 @@ extension Subscription {
                             sites: sites, lives: lives, raw: raw)
     }
 
+    /// A bare playlist document holds a single live named with the generic placeholder, at
+    /// the document's own address (see `Subscription.parse`). Give that live the name the
+    /// viewer knows the entry by, so live lists and channel pages show it instead of the
+    /// placeholder. Lives a configuration named itself are never touched.
+    public func namingBarePlaylist(after name: String) -> Subscription {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, lives.count == 1, let live = lives.first,
+              live.url == origin, live.name == L10n.text("Live TV") else { return self }
+        return Subscription(origin: origin, importedAt: importedAt, sites: sites,
+                            lives: [LiveSource(name: name, url: live.url, headers: live.headers)], raw: raw)
+    }
+
     /// The same document reduced to its live playlists: no sites, no spider, no parses.
     /// A document imported through the Live section contributes only its playlists to
     /// the merged library; the stored document itself is untouched.

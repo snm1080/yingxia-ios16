@@ -30,6 +30,7 @@ import TVCore
         #if os(iOS)
         _ = MusicRemoteControl.shared
         DownloadsLifecycle.install()
+        MainThreadWatchdog.shared.start()
         #endif
         SubtitleTranslationSetup.install()
     }

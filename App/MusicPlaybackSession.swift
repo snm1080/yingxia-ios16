@@ -6,6 +6,15 @@ import TVCore
 /// AVFoundation brings AudioToolbox's `MusicTrack` (a sequencer track) into scope too; in this app the name means the song.
 typealias MusicTrack = TVCore.MusicTrack
 
+/// Build 37 probe: logs a main-actor segment that overruns 250 ms (category music.perf),
+/// so one mini-player repro can name the operation that wedged the main thread.
+func musicPerfSignpost(_ what: String, since start: ContinuousClock.Instant) {
+    let elapsed = start.duration(to: ContinuousClock.now)
+    guard elapsed > .milliseconds(250) else { return }
+    let ms = elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000
+    Diagnostics.shared.record(.warning, "music.perf", "\(what) took \(ms)ms on the main actor")
+}
+
 /// Plays a queue of songs, apart from the video player and its history, skipping and danmaku.
 /// Each song's channel comes from `MusicResolver`; when playback fails the channel is resolved
 /// once more, then another is tried, continuing at the same second only on a stream of the same
@@ -369,9 +378,11 @@ typealias MusicTrack = TVCore.MusicTrack
             do {
                 var chosen = try await resolver.refresh(candidate, track: track, preference: preference, cache: cache)
                 guard self.generation == run else { return }
+                let wave = ContinuousClock.now
                 chosen.untried = self.alternatives.filter { $0 != candidate }
                 self.record(chosen.attempts)
                 self.start(chosen, at: previous.flatMap { MusicRecovery.canResume(from: $0, to: chosen.probe) ? at : nil }, run: run)
+                musicPerfSignpost("resolver wave completion (choose)", since: wave)
             } catch {
                 guard self.generation == run else { return }
                 let failure = MusicProviderError(error)
@@ -492,11 +503,13 @@ typealias MusicTrack = TVCore.MusicTrack
             do {
                 let selection = try await resolver.select(track, preference: preference, cache: cache)
                 guard self.generation == run else { return }
+                let wave = ContinuousClock.now
                 self.attempts = selection.attempts
                 // A saved position only applies to a stream as long as the song, well before its end.
                 let length = selection.probe.duration ?? track.duration
                 let at = resumeAt.flatMap { seconds in length.map { seconds < $0 - 5 } == true ? seconds : nil }
                 self.start(selection, at: at, run: run)
+                musicPerfSignpost("resolver wave completion (play)", since: wave)
             } catch {
                 guard self.generation == run else { return }
                 self.songFailed(MusicProviderError(error), run: run)
@@ -729,6 +742,7 @@ typealias MusicTrack = TVCore.MusicTrack
                 do {
                     var chosen = try await resolver.refresh(candidate, track: track, preference: preference, cache: cache)
                     guard self.generation == next else { return }
+                    let wave = ContinuousClock.now
                     chosen.untried = self.alternatives.filter { $0 != candidate }
                     self.record(chosen.attempts)
                     if candidate == selection.candidate || MusicRecovery.canResume(from: previous, to: chosen.probe) {
@@ -739,6 +753,7 @@ typealias MusicTrack = TVCore.MusicTrack
                         self.fail(MusicProviderError.differentRecording(chosen.probe.duration ?? 0),
                                   message: L10n.text("The other channel has a different version. Choose a channel to continue."))
                     }
+                    musicPerfSignpost("resolver wave completion (recovery)", since: wave)
                 } catch {
                     guard self.generation == next else { return }
                     self.record([MusicAttempt(candidate: candidate, outcome: .failed(MusicProviderError(error)), seconds: 0)])
@@ -882,6 +897,7 @@ typealias MusicTrack = TVCore.MusicTrack
                 else { selection = try await resolver.select(nextTrack, preference: quality) }
                 guard let self, !Task.isCancelled, self.generation == run, self.preparationID == request,
                       self.wantsPlayback, let current = self.player.currentItem else { return }
+                let wave = ContinuousClock.now
                 let stream = selection.stream
                 guard stream.expiresAt.map({ $0.timeIntervalSinceNow > max(30, (self.duration ?? 0) - self.position + 15) }) ?? true else {
                     return
@@ -894,6 +910,7 @@ typealias MusicTrack = TVCore.MusicTrack
                 self.player.insert(item, after: current)
                 self.player.actionAtItemEnd = .advance
                 Diagnostics.shared.record(.info, "music", "prepared one next media item")
+                musicPerfSignpost("resolver wave completion (prepare next)", since: wave)
             } catch {
                 // EOF will use the ordinary resolver/recovery path. A failed preparation
                 // must neither skip the current song nor start a second playback task.

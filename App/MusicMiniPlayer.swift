@@ -34,7 +34,14 @@ struct MusicMiniPlayer: View {
                 // A real label-wide button owns the artwork, text and empty space.
                 // A parent tap/drag gesture around transport buttons can lose the
                 // initial touch to the covered song list on iOS 16.
-                Button { music.presentsPlayer = true } label: {
+                Button {
+                    // Build 37 probe: a received tap logs here even when the cover then
+                    // fails to appear, which separates dead hit-testing from a wedged
+                    // main thread or a dropped presentation (category music.ui).
+                    Diagnostics.shared.record(.info, "music.ui", "strip open tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                    music.presentsPlayer = true
+                    Diagnostics.shared.record(.info, "music.ui", "strip open applied presentsPlayer=\(music.presentsPlayer)")
+                } label: {
                     HStack(spacing: inline ? 10 : 12) {
                         MusicArtwork(url: music.track?.artwork, size: inline ? 28 : 34)
                         VStack(alignment: .leading, spacing: 1) {
@@ -58,7 +65,11 @@ struct MusicMiniPlayer: View {
                     if music.failure != nil {
                         button("arrow.clockwise", label: "Retry") { music.retry() }
                     } else if music.busy && !music.isPlaying {
-                        Button { music.presentsPlayer = true } label: {
+                        Button {
+                            Diagnostics.shared.record(.info, "music.ui", "strip open tap (busy) phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                            music.presentsPlayer = true
+                            Diagnostics.shared.record(.info, "music.ui", "strip open applied presentsPlayer=\(music.presentsPlayer)")
+                        } label: {
                             ProgressView().frame(width: 44, height: 44).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).accessibilityLabel(L10n.text("Now Playing"))
@@ -90,7 +101,13 @@ struct MusicMiniPlayer: View {
     }
 
     private func button(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            // Build 37 probe: tap receipt for the strip's transport actions (music.ui).
+            let music = store.music
+            Diagnostics.shared.record(.info, "music.ui", "strip \(label) tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+            action()
+            Diagnostics.shared.record(.info, "music.ui", "strip \(label) applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+        } label: {
             Image(systemName: symbol).frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)

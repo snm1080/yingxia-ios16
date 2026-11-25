@@ -375,74 +375,101 @@ private struct LocalSourceEditor: View {
 
     var body: some View {
         WithPerceptionTracking {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("名称").font(.caption).foregroundStyle(.secondary)
-                    TextField("名称（可选，留空自动生成）", text: $name)
-                        .accessibilityLabel("来源名称")
-                        .accessibilityIdentifier("sources.editor.name")
-                        .padding(.horizontal, 10).frame(minHeight: 40)
-                        .localGlassInputSurface()
-                }
-                if originURL != nil {
+            // Every other interactive glass dialog scrolls its content (the synopsis sheet,
+            // the history actions, the settings forms); a bare fitted VStack left this
+            // editor's footer buttons dead on device. Keep the proven shape: a ScrollView
+            // whose inner stack reports the dialog's content height.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("地址").font(.caption).foregroundStyle(.secondary)
-                        TextField("地址", text: $address)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                            .accessibilityLabel("来源地址")
-                            .accessibilityIdentifier("sources.editor.address")
+                        Text("名称").font(.caption).foregroundStyle(.secondary)
+                        TextField("名称（可选，留空自动生成）", text: $name)
+                            .accessibilityLabel("来源名称")
+                            .accessibilityIdentifier("sources.editor.name")
                             .padding(.horizontal, 10).frame(minHeight: 40)
                             .localGlassInputSurface()
                     }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("来源").font(.caption).foregroundStyle(.secondary)
-                        Text(originLabel).font(.callout).lineLimit(2).truncationMode(.middle)
-                        Button("重新选择文件") { showsPicker = true }
-                            .frame(minHeight: 44)
+                    if originURL != nil {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("地址").font(.caption).foregroundStyle(.secondary)
+                            TextField("地址", text: $address)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.URL)
+                                .accessibilityLabel("来源地址")
+                                .accessibilityIdentifier("sources.editor.address")
+                                .padding(.horizontal, 10).frame(minHeight: 40)
+                                .localGlassInputSurface()
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("来源").font(.caption).foregroundStyle(.secondary)
+                            Text(originLabel).font(.callout).lineLimit(2).truncationMode(.middle)
+                            Button { showsPicker = true } label: {
+                                Text("重新选择文件").frame(minHeight: 44).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                             .accessibilityLabel("重新选择文件")
                             .accessibilityIdentifier("sources.editor.repick")
                             .disabled(store.importing || preparing)
+                        }
                     }
-                }
-                if preparing || store.importing { ProgressView("正在导入或更新") }
-                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
-                HStack {
-                    Spacer()
-                    Button("取消", action: close)
-                        .frame(minWidth: 44, minHeight: 44)
-                    Button("保存", action: save)
-                        .frame(minWidth: 44, minHeight: 44)
+                    if preparing || store.importing { ProgressView("正在导入或更新") }
+                    if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+                    HStack {
+                        Spacer()
+                        Button { dismiss("cancel") } label: {
+                            Text("取消").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("sources.editor.cancel")
+                        Button { save() } label: {
+                            Text("保存").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                         .accessibilityIdentifier("sources.editor.save")
                         .disabled(store.importing || preparing
                             || (originURL != nil && address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .localDialogContentHeight()
             }
-            .padding(20)
-            .localDialogContentHeight()
             .localDocumentImporter(isPresented: $showsPicker, kind: group == .python ? .pythonFiles : .subscriptionFile) { result in
                 switch result {
                 case .success(let selection): replaceWithSelection(selection)
                 case .failure(let error): self.error = error.localizedDescription
                 }
             } cancelled: { }
+            .onAppear {
+                Diagnostics.shared.record(.info, "sources.editor",
+                    "open group=\(group.rawValue) entry=\(entry.address) remote=\(originURL != nil)")
+            }
         }
+    }
+
+    /// Every way out of the editor goes through here, so a diagnostics export shows
+    /// whether a tap reached the editor at all (build 37 probe for the dead buttons).
+    private func dismiss(_ why: String) {
+        Diagnostics.shared.record(.info, "sources.editor", "dismiss \(why) entry=\(entry.address)")
+        close()
     }
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        Diagnostics.shared.record(.info, "sources.editor",
+            "save tapped entry=\(entry.address) nameChanged=\(trimmedName != entry.name) addressChanged=\(originURL.map { address.trimmingCharacters(in: .whitespacesAndNewlines) != $0.absoluteString } ?? false)")
         guard let originURL else {
             // A file-backed entry's origin changes through 重新选择文件; saving here renames only.
             if trimmedName != entry.name { store.renameSubscription(entry, to: trimmedName) }
-            close()
+            dismiss("save-rename")
             return
         }
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedAddress == originURL.absoluteString {
             if trimmedName != entry.name { store.renameSubscription(entry, to: trimmedName) }
-            close()
+            dismiss("save-unchanged")
             return
         }
         let url: URL
@@ -457,7 +484,7 @@ private struct LocalSourceEditor: View {
                 await store.replaceSubscriptionAddress(entry, with: url, name: trimmedName)
             }
             if let message = store.importError { error = message; store.importError = nil }
-            else { close() }
+            else { dismiss("save-replaced") }
         }
     }
 
@@ -484,7 +511,7 @@ private struct LocalSourceEditor: View {
                 }
                 return store.notice ?? "已保存"
             }
-            if report.successCount > 0 { close() }
+            if report.successCount > 0 { dismiss("save-repicked") }
             else { error = report.details.isEmpty ? report.summary : report.details }
         }
     }

@@ -254,7 +254,8 @@ struct LocalCatalogArtworkCarousel: View {
             GeometryReader { geometry in
                 WithPerceptionTracking {
                     DiscoverBackdrop(paint: paint, width: geometry.size.width, heroHeight: geometry.size.height,
-                                     scrollY: 0, trailer: nil, playsTrailer: false)
+                                     scrollY: 0, trailer: nil, playsTrailer: false,
+                                     fitImage: paint.map { $0.image.width < $0.image.height } ?? false)
                         .allowsHitTesting(false)
                 }
             }
@@ -478,11 +479,11 @@ struct LocalCatalogSynopsisSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(title).font(.title2.bold())
-                Text(overview).lineSpacing(5).selectable()
+                Text(title).font(.system(size: 24, weight: .bold))
+                Text(overview).font(.system(size: 19)).lineSpacing(5).selectable()
                 if !sourceOverview.isEmpty {
-                    Text("来源资料").font(.headline)
-                    Text(sourceOverview).foregroundStyle(.secondary).lineSpacing(5).selectable()
+                    Text("来源资料").font(.system(size: 19, weight: .semibold))
+                    Text(sourceOverview).font(.system(size: 19)).foregroundStyle(.secondary).lineSpacing(5).selectable()
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
                 .localDialogContentHeight()

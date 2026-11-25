@@ -288,8 +288,16 @@ public struct MusicHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     }
 
     private func saveNow(to file: URL) {
+        // Build 37 probe: encoding the whole library runs on the main actor; log a save
+        // that overruns 250 ms, with the payload size (category music.perf).
+        let signpost = ContinuousClock.now
         guard let data = try? JSONEncoder().encode(Saved(history: history, resumePoint: resumePoint, favoriteCollections: favoriteCollections)) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
+        let elapsed = signpost.duration(to: ContinuousClock.now)
+        if elapsed > .milliseconds(250) {
+            let ms = elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000
+            Diagnostics.shared.record(.warning, "music.perf", "MusicLibrary.saveNow took \(ms)ms bytes=\(data.count)")
+        }
     }
 }

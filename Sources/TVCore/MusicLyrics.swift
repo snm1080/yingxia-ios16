@@ -34,6 +34,20 @@ public struct MusicLyrics: Hashable, Codable, Sendable {
     /// Parses LRC text: one or more `[mm:ss.xx]` stamps per line, an `[offset:ms]` tag, metadata
     /// tags skipped. Text without stamps becomes unsynced lyrics. Nil when there are no words.
     public static func parse(_ lrc: String, translation: String? = nil, romanization: String? = nil, platform: MusicPlatform) -> MusicLyrics? {
+        // Build 37 probe: this parse runs on the main actor in the play-start window;
+        // log it when a single parse overruns 250 ms (category music.perf).
+        let signpost = ContinuousClock.now
+        defer {
+            let elapsed = signpost.duration(to: ContinuousClock.now)
+            if elapsed > .milliseconds(250) {
+                let ms = elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000
+                Diagnostics.shared.record(.warning, "music.perf", "lyrics parse took \(ms)ms chars=\(lrc.count)")
+            }
+        }
+        return parseTimed(lrc, translation: translation, romanization: romanization, platform: platform)
+    }
+
+    private static func parseTimed(_ lrc: String, translation: String? = nil, romanization: String? = nil, platform: MusicPlatform) -> MusicLyrics? {
         guard let normalized = MusicLyricPayload.text(.string(lrc)), !MusicLyricPayload.isURL(normalized) else { return nil }
         let (timed, plain, offset) = lines(of: normalized)
         if timed.isEmpty {

@@ -2417,6 +2417,7 @@ struct VideoDetailView: View {
     /// Play takes over focus from the loading placeholder; otherwise nothing is focused once details load.
     @FocusState private var playFocused: Bool
     @State private var containerWidth: CGFloat = 0
+    @State private var containerHeight: CGFloat = 0
     /// The cover's width over height once it loads; landscape covers are common (Bilibili, short dramas).
     @State private var artAspect: CGFloat?
     @State private var titleLogoAspect: CGFloat?
@@ -2491,7 +2492,7 @@ struct VideoDetailView: View {
             #else
             .safeAreaInset(edge: .bottom) { WithPerceptionTracking { loadingCard } }
             #endif
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { containerWidth = $0 }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { containerWidth = $0.width; containerHeight = $0.height }
             #if os(macOS)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { WithPerceptionTracking { DetailAurora(poster: video.poster, headers: video.posterHeaders) } }
@@ -2529,7 +2530,7 @@ struct VideoDetailView: View {
                     LocalCatalogPosterPicker(images: mobileDetailArtwork, video: currentVideo(), selection: $detailArtworkSelection, paused: $detailArtworkPaused)
                 }
             }
-            .localGlassDialog(isPresented: $showingDetailOverview, title: "剧情简介", layout: .centered) {
+            .localGlassDialog(isPresented: $showingDetailOverview, title: "剧情简介", maxHeight: 680, layout: .centered) {
                 WithPerceptionTracking {
                     LocalCatalogSynopsisSheet(title: tmdb.details?.name ?? currentVideo().name, overview: mobileDetailOverview, sourceOverview: mobileSourceOverview)
                 }
@@ -3098,6 +3099,21 @@ struct VideoDetailView: View {
     }
     #if os(iOS)
     private var mobileDetailArtwork: [URL] { LocalCatalogDetailArtwork.images(video: currentVideo(), details: tmdb.details) }
+    /// The shown artwork's width over height, once it has loaded.
+    private var detailArtworkAspect: CGFloat? {
+        guard let image = detailArtworkPaint?.image, image.height > 0 else { return nil }
+        return CGFloat(image.width) / CGFloat(image.height)
+    }
+    /// The hero's height. A portrait cover drives it from its own aspect — fit the width at
+    /// the natural height, capped so the page below stays within reach — instead of the
+    /// fixed banner a landscape cover gets, whose fill crop kept only the poster's middle.
+    private func detailHeroHeight(width: CGFloat, pageHeight: CGFloat) -> CGFloat {
+        if let aspect = detailArtworkAspect, aspect < 1 {
+            let natural = width / aspect
+            return pageHeight > 0 ? min(natural, pageHeight * 0.88) : natural
+        }
+        return width < 600 ? width * 1.5 : min(760, width * 0.7)
+    }
     private var mobileSourceMetadata: LocalCatalogSourceMetadata { LocalCatalogSourceMetadata(currentVideo()) }
     private var mobileDetailDark: Bool { detailArtworkPaint?.isDark ?? true }
     private var mobileDetailOverview: String {
@@ -3113,7 +3129,7 @@ struct VideoDetailView: View {
         GeometryReader { geometry in
             WithPerceptionTracking {
                 let width = geometry.size.width
-                let height = width < 600 ? width * 1.5 : min(760, width * 0.7)
+                let height = detailHeroHeight(width: width, pageHeight: geometry.size.height)
                 ZStack(alignment: .top) {
                     (detailArtworkPaint?.color ?? Color.black).ignoresSafeArea()
                     LocalCatalogArtworkCarousel(video: currentVideo(), images: mobileDetailArtwork,
@@ -3144,7 +3160,11 @@ struct VideoDetailView: View {
     private var mobileDetailHeader: some View {
         WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 16) {
-                Color.clear.frame(height: containerWidth < 600 ? containerWidth * 0.95 : containerWidth * 0.25)
+                // A portrait hero is tall: the title block starts in its faded lower part,
+                // below the artwork itself, instead of across the poster's middle.
+                Color.clear.frame(height: detailArtworkAspect.map { $0 < 1 } == true
+                    ? detailHeroHeight(width: containerWidth, pageHeight: containerHeight) * 0.78
+                    : containerWidth < 600 ? containerWidth * 0.95 : containerWidth * 0.25)
                     .overlay(alignment: .top) {
                         mobileDetailTools.padding(.top, containerWidth < 600 ? 110 : 80)
                     }

@@ -86,7 +86,7 @@ struct DiscoverDetailView: View {
                     DiscoverBroadcastCalendarView(item: item, seasons: seasons, details: details)
                 }
             }
-            .localGlassDialog(isPresented: $overviewShown, title: "剧情简介", maxWidth: 560, layout: .centered) {
+            .localGlassDialog(isPresented: $overviewShown, title: "剧情简介", maxWidth: 560, maxHeight: 680, layout: .centered) {
                 WithPerceptionTracking {
                     LocalCatalogSynopsisSheet(title: details?.name ?? item.name, overview: detailOverview)
                 }

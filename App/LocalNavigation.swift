@@ -186,7 +186,12 @@ struct LocalAppNavigation: View {
                 .toolbarBackground(.hidden, for: .navigationBar)
             }
             .onDisappear { revealDock() }
-            .fullScreenCover(isPresented: Binding(get: { store.music.presentsPlayer }, set: { store.music.presentsPlayer = $0 })) {
+            .fullScreenCover(isPresented: Binding(get: { store.music.presentsPlayer }, set: { value in
+                // Build 37 probe: every cover binding write, so a diagnostics export can
+                // tell a tap that set the flag from a presentation that never followed.
+                Diagnostics.shared.record(.info, "music.ui", "player cover set \(store.music.presentsPlayer) -> \(value)")
+                store.music.presentsPlayer = value
+            })) {
                 MusicNowPlayingScreen().environment(store)
             }
         }
