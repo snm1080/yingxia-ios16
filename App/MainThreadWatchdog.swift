@@ -9,7 +9,9 @@ import TVCore
 /// round trip over 250 ms bracketed by missing heartbeats; clean heartbeats during
 /// dead taps would clear the main thread and point at hit testing instead.
 /// Logging only; it never touches playback or the strip.
-final class MainThreadWatchdog {
+/// `@unchecked Sendable`: `start()` runs once from the app's init, and `ticks` is only
+/// touched from the timer source's own serial event handler.
+final class MainThreadWatchdog: @unchecked Sendable {
     static let shared = MainThreadWatchdog()
     private var timer: DispatchSourceTimer?
     private var ticks = 0
