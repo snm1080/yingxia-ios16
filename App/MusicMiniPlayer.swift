@@ -30,88 +30,94 @@ struct MusicMiniPlayer: View {
     var body: some View {
         WithPerceptionTracking {
             let music = store.music
-            HStack(spacing: 0) {
-                // A real label-wide button owns the artwork, text and empty space.
-                // A parent tap/drag gesture around transport buttons can lose the
-                // initial touch to the covered song list on iOS 16.
-                Button {
-                    // Build 37 probe: a received tap logs here even when the cover then
-                    // fails to appear, which separates dead hit-testing from a wedged
-                    // main thread or a dropped presentation (category music.ui).
-                    Diagnostics.shared.record(.info, "music.ui", "strip open tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
-                    music.presentsPlayer = true
-                    Diagnostics.shared.record(.info, "music.ui", "strip open applied presentsPlayer=\(music.presentsPlayer)")
-                } label: {
-                    HStack(spacing: inline ? 10 : 12) {
-                        MusicArtwork(url: music.track?.artwork, size: inline ? 28 : 34)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(music.track?.title ?? "").font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                            if let failure = music.failure {
-                                Text(failure).font(.system(size: 14)).foregroundStyle(Brand.amber).lineLimit(1)
-                            } else if !inline {
-                                Text(music.track?.artistLine ?? "").font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.leading, inline ? 6 : 10).padding(.trailing, inline ? 4 : 6)
-                    .frame(maxWidth: .infinity, minHeight: 44, maxHeight: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint(L10n.text("Now Playing"))
-                .accessibilityIdentifier("music.miniPlayer.open")
-                HStack(spacing: inline ? 0 : 2) {
-                    if music.failure != nil {
-                        button("arrow.clockwise", label: "Retry") { music.retry() }
-                    } else if music.busy && !music.isPlaying {
-                        Button {
+            ZStack {
+                labels(music).allowsHitTesting(false).accessibilityHidden(true)
+                // Ported from lmentor build06: a single native responder owns
+                // both the painted empty space and the controls, so the strip's
+                // taps cannot be lost to SwiftUI hit-testing on iOS 16 (the
+                // SwiftUI Buttons this replaces had a history of dead taps).
+                // The build 37 tap-receipt probes (category music.ui) are kept
+                // in the action closures.
+                MusicMiniPlayerTouchSurface(inline: inline,
+                    title: [music.track?.title, music.track?.artistLine, music.failure].compactMap { $0 }.joined(separator: ", "),
+                    transportLabel: L10n.text(music.failure != nil ? "Retry" : music.busy && !music.isPlaying ? "Now Playing" : music.isPlaying ? "Pause" : "Play"),
+                    canAdvance: music.canAdvance,
+                    open: {
+                        Diagnostics.shared.record(.info, "music.ui", "strip open tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                        music.presentsPlayer = true
+                        Diagnostics.shared.record(.info, "music.ui", "strip open applied presentsPlayer=\(music.presentsPlayer)")
+                    },
+                    transport: {
+                        if music.failure != nil {
+                            Diagnostics.shared.record(.info, "music.ui", "strip Retry tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                            music.retry()
+                            Diagnostics.shared.record(.info, "music.ui", "strip Retry applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                        } else if music.busy && !music.isPlaying {
                             Diagnostics.shared.record(.info, "music.ui", "strip open tap (busy) phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
                             music.presentsPlayer = true
                             Diagnostics.shared.record(.info, "music.ui", "strip open applied presentsPlayer=\(music.presentsPlayer)")
-                        } label: {
-                            ProgressView().frame(width: 44, height: 44).contentShape(Rectangle())
+                        } else {
+                            let label = music.isPlaying ? "Pause" : "Play"
+                            Diagnostics.shared.record(.info, "music.ui", "strip \(label) tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                            music.toggle()
+                            Diagnostics.shared.record(.info, "music.ui", "strip \(label) applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
                         }
-                        .buttonStyle(.plain).accessibilityLabel(L10n.text("Now Playing"))
-                    } else {
-                        button(music.isPlaying ? "pause.fill" : "play.fill", label: music.isPlaying ? "Pause" : "Play") { music.toggle() }
-                            .modifier(MusicPlayPauseTransition())
-                    }
-                    if !inline {
-                        button("forward.fill", label: "Next") { music.next() }.disabled(!music.canAdvance)
-                        // Closes the strip without opening Now Playing first; Continue Playing keeps the song.
-                        button("xmark", label: "Stop") { music.stop() }.font(.body).foregroundStyle(.secondary)
-                    }
-                }
-                .font(.title3)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.trailing, inline ? 4 : 8)
+                    },
+                    next: {
+                        Diagnostics.shared.record(.info, "music.ui", "strip Next tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                        music.next()
+                        Diagnostics.shared.record(.info, "music.ui", "strip Next applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                    },
+                    stop: {
+                        Diagnostics.shared.record(.info, "music.ui", "strip Stop tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                        music.stop()
+                        Diagnostics.shared.record(.info, "music.ui", "strip Stop applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
+                    })
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .contextMenu {
-                WithPerceptionTracking {
-                    Button(role: .destructive) { music.stop() } label: { Label(L10n.text("Stop"), systemImage: "xmark") }
-                }
-            }
+            .contentShape(Capsule())
             .accessibilityElement(children: .contain)
-            .accessibilityAction(named: L10n.text("Now Playing")) { music.presentsPlayer = true }
-            .accessibilityAction(named: L10n.text("Stop")) { music.stop() }
         }
     }
 
-    private func button(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button {
-            // Build 37 probe: tap receipt for the strip's transport actions (music.ui).
-            let music = store.music
-            Diagnostics.shared.record(.info, "music.ui", "strip \(label) tap phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
-            action()
-            Diagnostics.shared.record(.info, "music.ui", "strip \(label) applied phase=\(music.phase) presentsPlayer=\(music.presentsPlayer)")
-        } label: {
-            Image(systemName: symbol).frame(width: 44, height: 44).contentShape(Rectangle())
+    private func labels(_ music: MusicPlaybackSession) -> some View {
+        HStack(spacing: 0) {
+            HStack(spacing: inline ? 10 : 12) {
+                MusicArtwork(url: music.track?.artwork, size: inline ? 28 : 34)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(music.track?.title ?? "").font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                    if let failure = music.failure {
+                        Text(failure).font(.system(size: 14)).foregroundStyle(Brand.amber).lineLimit(1)
+                    } else if !inline {
+                        Text(music.track?.artistLine ?? "").font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, inline ? 6 : 10).padding(.trailing, inline ? 4 : 6)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: .infinity, alignment: .leading)
+            HStack(spacing: MusicMiniPlayerLayout.spacing(inline: inline)) {
+                if music.failure != nil {
+                    symbol("arrow.clockwise")
+                } else if music.busy && !music.isPlaying {
+                    ProgressView().frame(width: MusicMiniPlayerLayout.buttonWidth, height: 44)
+                } else {
+                    symbol(music.isPlaying ? "pause.fill" : "play.fill")
+                        .modifier(MusicPlayPauseTransition())
+                }
+                if !inline {
+                    symbol("forward.fill")
+                    symbol("xmark").font(.body).foregroundStyle(.secondary)
+                }
+            }
+            .font(.title3)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.trailing, MusicMiniPlayerLayout.trailing(inline: inline))
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(L10n.text(label))
+    }
+
+    private func symbol(_ name: String) -> some View {
+        Image(systemName: name).frame(width: MusicMiniPlayerLayout.buttonWidth, height: 44)
     }
 }
 
