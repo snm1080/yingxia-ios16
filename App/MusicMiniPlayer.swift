@@ -45,11 +45,11 @@ struct MusicMiniPlayer: View {
                     HStack(spacing: inline ? 10 : 12) {
                         MusicArtwork(url: music.track?.artwork, size: inline ? 28 : 34)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(music.track?.title ?? "").font(.subheadline.weight(.semibold)).lineLimit(1)
+                            Text(music.track?.title ?? "").font(.system(size: 17, weight: .semibold)).lineLimit(1)
                             if let failure = music.failure {
-                                Text(failure).font(.caption).foregroundStyle(Brand.amber).lineLimit(1)
+                                Text(failure).font(.system(size: 14)).foregroundStyle(Brand.amber).lineLimit(1)
                             } else if !inline {
-                                Text(music.track?.artistLine ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text(music.track?.artistLine ?? "").font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)

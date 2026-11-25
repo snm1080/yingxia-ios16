@@ -204,7 +204,7 @@ struct HomeView: View {
     /// the page's 16 pt margin left the copy small and pressed against the edge of a large, empty screen.
     private var heroTitle: CGFloat {
         #if os(iOS)
-        sizeClass == .regular ? 52 : Layout.heroTitle
+        sizeClass == .regular ? 54 : Layout.heroTitle
         #else
         Layout.heroTitle
         #endif
@@ -222,7 +222,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 16) {
                 AppMark(size: heroTitle * 1.4)
-                Text(L10n.text("Yingxia")).font(.title3.weight(.semibold)).foregroundStyle(.secondary)
+                Text(L10n.text("Yingxia")).font(.system(size: 22, weight: .semibold)).foregroundStyle(.secondary)
             }
             .padding(.bottom, 32)
             Text(L10n.text("Your cinema,\non every screen."))
@@ -230,7 +230,7 @@ struct HomeView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 18)
             Text(L10n.text("Connect your subscription to watch on Mac, iPhone, iPad, and Apple TV."))
-                .font(.title3).foregroundStyle(.secondary)
+                .font(.system(size: 22)).foregroundStyle(.secondary)
                 .frame(maxWidth: heroTitle * 10, alignment: .leading)
                 .padding(.bottom, 40)
             Group {
@@ -518,8 +518,8 @@ private struct HomeFavoriteCard: View {
         HStack(spacing: 14) {
             art
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(title).font(.system(size: 19, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                Text(subtitle).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
         }

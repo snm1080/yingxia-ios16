@@ -16,7 +16,7 @@ struct FavoriteHeartButton: View {
             let shown = store.favorites.isEnabled && (on || !onArtwork || revealed)
             Button { store.favorites.toggle(item) } label: {
                 Image(systemName: on ? "heart.fill" : "heart")
-                    .font(onArtwork ? .system(size: 13, weight: .semibold) : .title3)
+                    .font(onArtwork ? .system(size: 15, weight: .semibold) : .system(size: 22))
                     .foregroundStyle(on ? Brand.rose : (onArtwork ? Color.white : Color.secondary))
                     .appSymbolReplaceTransition()
                     .artworkBadge(onArtwork)

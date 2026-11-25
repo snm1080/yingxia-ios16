@@ -60,8 +60,8 @@ struct DiscoverHomeSearchView: View {
             if !model.history.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("最近搜索").font(.headline); Spacer()
-                        Button("全部清除") { model.clearHistory() }.font(.subheadline).frame(minHeight: 44)
+                        Text("最近搜索").font(.system(size: 19, weight: .semibold)); Spacer()
+                        Button("全部清除") { model.clearHistory() }.font(.system(size: 17)).frame(minHeight: 44)
                             .accessibilityIdentifier("discover.homeSearch.clearHistory")
                     }
                     DiscoverMetadataFlow(spacing: 8) {
@@ -70,18 +70,18 @@ struct DiscoverHomeSearchView: View {
                                 Button { submit(title) } label: { Text(title).lineLimit(1).padding(.leading, 14).padding(.trailing, 4).frame(minHeight: 44) }
                                 Button { model.removeHistory(title) } label: { Image(systemName: "xmark").font(.caption).frame(width: 44, height: 44) }
                                     .accessibilityLabel("删除首页搜索记录 \(title)")
-                            }.font(.subheadline).buttonStyle(.plain).background(.primary.opacity(0.06), in: Capsule())
+                            }.font(.system(size: 17)).buttonStyle(.plain).background(.primary.opacity(0.06), in: Capsule())
                         }
                     }
                 }
             }
             if !featured.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("热门搜索").font(.headline)
+                    Text("热门搜索").font(.system(size: 19, weight: .semibold))
                     DiscoverMetadataFlow(spacing: 8) {
                         ForEach(Array(featured.prefix(8)), id: \.key) { item in
                             Button { submit(item.name) } label: {
-                                Label(item.name, systemImage: "magnifyingglass").font(.subheadline)
+                                Label(item.name, systemImage: "magnifyingglass").font(.system(size: 17))
                                     .padding(.horizontal, 14).frame(minHeight: 44).background(.primary.opacity(0.06), in: Capsule())
                             }.buttonStyle(.plain)
                         }
@@ -89,23 +89,23 @@ struct DiscoverHomeSearchView: View {
                 }
             }
             if model.history.isEmpty && featured.isEmpty {
-                Text("输入片名，搜索首页电影和剧集资料。").font(.subheadline).foregroundStyle(.secondary).padding(.top, 16)
+                Text("输入片名，搜索首页电影和剧集资料。").font(.system(size: 17)).foregroundStyle(.secondary).padding(.top, 16)
             }
         }
     }
 
     private var suggestions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("搜索联想").font(.headline)
+            Text("搜索联想").font(.system(size: 19, weight: .semibold))
             if model.suggesting { ProgressView("正在查找相关片名…") }
             ForEach(model.suggestions, id: \.self) { title in
                 Button { submit(title) } label: {
                     HStack { Image(systemName: "magnifyingglass"); Text(title); Spacer(); Image(systemName: "arrow.up.left") }
-                        .font(.subheadline).frame(minHeight: 48).contentShape(Rectangle())
+                        .font(.system(size: 17)).frame(minHeight: 48).contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
             if !model.suggesting && model.suggestions.isEmpty {
-                Text("点击搜索，查找「\(keyword)」").font(.subheadline).foregroundStyle(.secondary)
+                Text("点击搜索，查找「\(keyword)」").font(.system(size: 17)).foregroundStyle(.secondary)
             }
         }
     }
@@ -113,13 +113,13 @@ struct DiscoverHomeSearchView: View {
     private var results: some View {
         Group {
             HStack {
-                Text("「\(model.submittedQuery)」").font(.headline)
+                Text("「\(model.submittedQuery)」").font(.system(size: 19, weight: .semibold))
                 Spacer()
-                if !model.loading { Text("\(model.items.count) 个结果").font(.caption).foregroundStyle(.secondary) }
+                if !model.loading { Text("\(model.items.count) 个结果").font(.system(size: 14)).foregroundStyle(.secondary) }
             }
             if model.loading { ProgressView("正在搜索…").frame(maxWidth: .infinity).padding(30) }
             if let error = model.error {
-                Text(error).font(.subheadline).foregroundStyle(.secondary)
+                Text(error).font(.system(size: 17)).foregroundStyle(.secondary)
                 Button("重试") { submit(model.submittedQuery) }.frame(minHeight: 44)
             } else if !model.loading && model.items.isEmpty {
                 EmptyResults(symbol: "magnifyingglass", title: "暂无搜索结果", message: "试试其他电影或剧集名称。")

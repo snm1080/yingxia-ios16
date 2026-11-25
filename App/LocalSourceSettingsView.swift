@@ -93,6 +93,7 @@ struct LocalSourceSettingsView: View {
                     .disabled(store.importing || preparingSelection)
                 HStack(spacing: 12) {
                     TextField(group == .python ? "Python / MD5 地址" : group == .live ? "M3U / TXT 播放列表地址" : "订阅 / MD5 地址", text: $address)
+                        .font(.system(size: 21))
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -134,14 +135,14 @@ struct LocalSourceSettingsView: View {
                             .accessibilityIdentifier("sources.subscription.autoUpdate.\(frequency.rawValue)")
                         }
                         Text("进入前台时按所选频率检查已启用订阅，仅在内容变化时更新；本地文件请重新导入。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                 }
                 if preparingSelection { ProgressView(importProgress.isEmpty ? "正在读取所选文件" : importProgress) }
                 else if store.importing { ProgressView("正在导入或更新") }
                 if let report = batchReport {
                     Text(report.summary).foregroundStyle(report.failureCount > 0 ? .red : .secondary)
-                    Text(report.details).font(.caption).foregroundStyle(.secondary)
+                    Text(report.details).font(.system(size: 14)).foregroundStyle(.secondary)
                         .accessibilityIdentifier("sources.\(group.rawValue).import.results")
                 }
                 if let message = store.importError { Text(message).foregroundStyle(.red) }
@@ -316,13 +317,13 @@ private struct ManagedLocalSourceRow: View {
                 .buttonStyle(.borderless)
                 .disabled(store.importing || store.restoringBackup)
                 Text(caption)
-                    .font(captionIsURL ? .system(.caption2, design: .monospaced) : .caption2)
+                    .font(captionIsURL ? .system(size: 15, design: .monospaced) : .system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel("来源地址 \(caption)")
                 if let failure = store.subscriptionErrors[entry.address] {
-                    Text(failure).font(.footnote).foregroundStyle(.red)
+                    Text(failure).font(.system(size: 15)).foregroundStyle(.red)
                 }
             }
             .padding(.vertical, 3)
@@ -382,7 +383,7 @@ private struct LocalSourceEditor: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("名称").font(.caption).foregroundStyle(.secondary)
+                        Text("名称").font(.system(size: 14)).foregroundStyle(.secondary)
                         TextField("名称（可选，留空自动生成）", text: $name)
                             .accessibilityLabel("来源名称")
                             .accessibilityIdentifier("sources.editor.name")
@@ -391,8 +392,9 @@ private struct LocalSourceEditor: View {
                     }
                     if originURL != nil {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("地址").font(.caption).foregroundStyle(.secondary)
+                            Text("地址").font(.system(size: 14)).foregroundStyle(.secondary)
                             TextField("地址", text: $address)
+                                .font(.system(size: 21))
                                 .autocorrectionDisabled()
                                 .textInputAutocapitalization(.never)
                                 .keyboardType(.URL)
@@ -403,8 +405,8 @@ private struct LocalSourceEditor: View {
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("来源").font(.caption).foregroundStyle(.secondary)
-                            Text(originLabel).font(.callout).lineLimit(2).truncationMode(.middle)
+                            Text("来源").font(.system(size: 14)).foregroundStyle(.secondary)
+                            Text(originLabel).font(.system(size: 20)).lineLimit(2).truncationMode(.middle)
                             Button { showsPicker = true } label: {
                                 Text("重新选择文件").frame(minHeight: 44).contentShape(Rectangle())
                             }
@@ -415,7 +417,7 @@ private struct LocalSourceEditor: View {
                         }
                     }
                     if preparing || store.importing { ProgressView("正在导入或更新") }
-                    if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+                    if let error { Text(error).font(.system(size: 15)).foregroundStyle(.red) }
                     HStack {
                         Spacer()
                         Button { dismiss("cancel") } label: {

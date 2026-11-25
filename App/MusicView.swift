@@ -394,8 +394,8 @@ private struct MusicHome: View {
                     Image(systemName: "music.note.list").font(.title2).foregroundStyle(Brand.accent)
                         .frame(width: MusicLayout.art, height: MusicLayout.art)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("我的歌单").font(.headline)
-                        Text("收藏的歌单与专辑 · \(library.favoriteCollections.count)").font(.subheadline).foregroundStyle(.secondary)
+                        Text("我的歌单").font(.system(size: 19, weight: .semibold))
+                        Text("收藏的歌单与专辑 · \(library.favoriteCollections.count)").font(.system(size: 17)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
@@ -412,7 +412,7 @@ private struct MusicHome: View {
                 Button { Task { await browse.load() } } label: {
                     Label(L10n.text("Some lists couldn't load. Try again."), systemImage: "arrow.clockwise")
                         #if !os(tvOS)
-                        .font(.subheadline).frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .font(.system(size: 17)).frame(maxWidth: .infinity).padding(.vertical, 8)
                         #endif
                 }
                 #if os(tvOS)
@@ -460,11 +460,11 @@ private struct MusicContinueCard: View {
                 HStack(spacing: MusicLayout.gap) {
                     MusicArtwork(url: track.artwork, size: MusicLayout.art * 1.4)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.text("Continue Playing")).font(.caption.weight(.semibold)).foregroundStyle(Brand.accent)
-                        Text(track.title).font(.headline).lineLimit(1)
+                        Text(L10n.text("Continue Playing")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.accent)
+                        Text(track.title).font(.system(size: 19, weight: .semibold)).lineLimit(1)
                         Text([track.artistLine, point.queue.source, L10n.text("Stopped at %@", MusicTime.text(point.position))]
                             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "play.circle.fill").font(.system(size: MusicLayout.art * 0.6)).foregroundStyle(Brand.accent)
@@ -493,16 +493,16 @@ struct MusicTrackRow: View {
             Button(action: action) {
                 HStack(spacing: MusicLayout.gap) {
                     if let number {
-                        Text("\(number)").font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                        Text("\(number)").font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                             .frame(width: MusicLayout.art * 0.6, alignment: .trailing)
                     } else {
                         MusicArtwork(url: track.artwork, size: MusicLayout.art)
                     }
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(track.title).font(.headline).lineLimit(1)
+                        Text(track.title).font(.system(size: 19, weight: .semibold)).lineLimit(1)
                             .foregroundStyle(current ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.primary))
                         Text([track.artistLine, number == nil ? track.album : nil].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 8)
                     ForEach(track.tags.sorted(), id: \.self) { tag in WithPerceptionTracking { Pill(text: tag.name) } }
@@ -524,7 +524,7 @@ struct MusicTrackRow: View {
                             Text(verbatim: "00:00").hidden()
                             Text(MusicTime.text(duration))
                         }
-                        .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                        .font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
                 .padding(.vertical, number == nil ? 6 : 10)
@@ -560,8 +560,8 @@ private struct MusicCollectionRow: View {
                     HStack(spacing: MusicLayout.gap) {
                         MusicArtwork(url: collection.artwork, size: MusicLayout.art, symbol: collection.kind == .album ? "square.stack" : "music.note.list")
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(collection.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                            Text(MusicCollectionView.details(collection)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            Text(collection.title).font(.system(size: 19, weight: .semibold)).lineLimit(1).foregroundStyle(.primary)
+                            Text(MusicCollectionView.details(collection)).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
@@ -648,9 +648,9 @@ struct MusicCollectionView: View {
             HStack(alignment: .center, spacing: MusicLayout.gap * 1.4) {
                 MusicArtwork(url: collection.artwork, size: MusicLayout.header, symbol: collection.kind == .album ? "square.stack" : "music.note.list")
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L10n.text(collection.kind == .album ? "Album" : "Playlist")).font(.caption.weight(.semibold)).foregroundStyle(Brand.accent)
-                    Text(collection.title).font(.title2.weight(.bold)).lineLimit(2)
-                    Text(Self.details(collection)).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                    Text(L10n.text(collection.kind == .album ? "Album" : "Playlist")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.accent)
+                    Text(collection.title).font(.system(size: 24, weight: .bold)).lineLimit(2)
+                    Text(Self.details(collection)).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(3)
                 }
             }
             Button { store.music.library.toggleFavorite(collection) } label: {
@@ -702,8 +702,8 @@ struct MusicLikedLink: View {
                             .accessibilityHidden(true)
                         #endif
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(MusicLikedView.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                            Text(L10n.text("%lld songs", count)).font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                            Text(MusicLikedView.title).font(.system(size: 19, weight: .semibold)).lineLimit(1).foregroundStyle(.primary)
+                            Text(L10n.text("%lld songs", count)).font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)
@@ -777,7 +777,7 @@ struct MusicLikedView: View {
             Text(Self.title).font(.largeTitle.weight(.bold))
             #endif
             Text(L10n.text("%lld songs", tracks.count))
-                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                .font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Group {
                     Button { store.music.play(MusicQueue(tracks: tracks, start: 0, source: Self.title)) } label: {

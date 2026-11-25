@@ -15,13 +15,13 @@ struct LocalMediaBadgeSettingsView: View {
                 TextField("HTTP / HTTPS 徽章地址", text: $address).keyboardType(.URL)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button(busy ? "正在导入…" : "添加地址", action: add).disabled(busy || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+                if !message.isEmpty { Text(message).font(.system(size: 14)).foregroundStyle(.secondary) }
             }
             SettingsGroup(title: "徽章方案", footer: "每次应用一个方案；删除当前方案后恢复内置徽章。") {
                 ForEach(store.sources) { source in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(source.name).font(.headline)
-                        Text("\(source.rules?.rules.count ?? 0) 枚徽章").font(.caption).foregroundStyle(.secondary)
+                        Text(source.name).font(.system(size: 19, weight: .semibold))
+                        Text("\(source.rules?.rules.count ?? 0) 枚徽章").font(.system(size: 14)).foregroundStyle(.secondary)
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
                                 ForEach(Array((source.rules?.rules.map(\.row) ?? []).prefix(8))) { badge in
@@ -29,7 +29,7 @@ struct LocalMediaBadgeSettingsView: View {
                                 }
                             }.frame(minHeight: 26)
                         }
-                        if !source.address.isEmpty { Text(source.address).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                        if !source.address.isEmpty { Text(source.address).font(.system(size: 16)).foregroundStyle(.secondary).lineLimit(2) }
                         HStack {
                             Button("预览") { preview = source }.buttonStyle(.bordered).frame(minHeight: 44)
                             Spacer(minLength: 0)
@@ -52,7 +52,7 @@ struct LocalMediaBadgeSettingsView: View {
                         ForEach(source.rules?.rules.map(\.row) ?? []) { badge in
                             VStack(spacing: 7) {
                                 LocalMediaBadgeImage(badge: badge, builtin: source.isBuiltin).frame(height: 24)
-                                Text(badge.name).font(.caption).lineLimit(2)
+                                Text(badge.name).font(.system(size: 14)).lineLimit(2)
                             }.frame(minHeight: 62)
                         }
                     }.padding()
@@ -93,7 +93,7 @@ struct LocalMediaBadgeImage: View {
         } else {
             AsyncImage(url: URL(string: badge.imageURL)) { phase in
                 if let image = phase.image { image.resizable().scaledToFit() }
-                else { Text(badge.name).font(.caption2).padding(.horizontal, 5).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4)) }
+                else { Text(badge.name).font(.system(size: 13)).padding(.horizontal, 5).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4)) }
             }.frame(maxWidth: 110, minHeight: 22, maxHeight: 22).accessibilityLabel(badge.name)
         }
     }

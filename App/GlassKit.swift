@@ -269,7 +269,7 @@ enum Layout {
     static let heroTitle: CGFloat = 48, detailPoster: CGFloat = 210, episodeMin: CGFloat = 120
     #else
     static let gutter: CGFloat = 16, posterMin: CGFloat = 104, cardMin: CGFloat = 280, tileMin: CGFloat = 160
-    static let heroTitle: CGFloat = 34, detailPoster: CGFloat = 130, episodeMin: CGFloat = 90
+    static let heroTitle: CGFloat = 36, detailPoster: CGFloat = 130, episodeMin: CGFloat = 90
     #endif
     /// Poster grid gaps: three columns on a phone need tighter spacing than a TV wall.
     #if os(tvOS)

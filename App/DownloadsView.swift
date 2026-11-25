@@ -156,7 +156,7 @@ struct DownloadsView: View {
         return VStack(alignment: .leading, spacing: Layout.headerSpacing) {
             HStack(alignment: .center, spacing: 12) {
                 SectionHeader(title: L10n.text("Downloading"))
-                Text("\(pending.count)").font(.headline).monospacedDigit().foregroundStyle(.secondary)
+                Text("\(pending.count)").font(.system(size: 19, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
                 Spacer(minLength: 12)
                 Menu {
                     WithPerceptionTracking {
@@ -328,15 +328,15 @@ private struct StorageCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: "internaldrive.fill").foregroundStyle(Brand.accent).accessibilityHidden(true)
-                    Text(L10n.text("Storage")).font(.headline)
+                    Text(L10n.text("Storage")).font(.system(size: 19, weight: .semibold))
                     Spacer(minLength: 8)
                     if usage.available != nil {
-                        Text(L10n.text("%@ free", DownloadFormat.size(free))).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                        Text(L10n.text("%@ free", DownloadFormat.size(free))).font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(DownloadFormat.size(downloads)).font(.system(.title, design: .rounded).weight(.bold)).monospacedDigit()
-                    Text(L10n.text("used by downloads")).font(.subheadline).foregroundStyle(.secondary)
+                    Text(DownloadFormat.size(downloads)).font(.system(size: 30, design: .rounded).weight(.bold)).monospacedDigit()
+                    Text(L10n.text("used by downloads")).font(.system(size: 17)).foregroundStyle(.secondary)
                 }
                 if capacity > 0 {
                     GeometryReader { proxy in
@@ -358,7 +358,7 @@ private struct StorageCard: View {
                         legend(Color.primary.opacity(0.28), L10n.text("Other"), other)
                         legend(Color.primary.opacity(0.12), L10n.text("Free"), free)
                     }
-                    .font(.caption)
+                    .font(.system(size: 14))
                 }
                 #if os(tvOS)
                 Text(L10n.text("tvOS may remove downloads when Apple TV runs low on storage.")).font(.caption).foregroundStyle(.secondary)
@@ -478,8 +478,8 @@ private struct QueueRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(item.title).font(.headline).lineLimit(1)
-                    Text(item.episode).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    Text(item.title).font(.system(size: 19, weight: .semibold)).lineLimit(1)
+                    Text(item.episode).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                     if let quality = item.quality { Pill(text: quality) }
                 }
                 ProgressView(value: item.fraction)
@@ -489,7 +489,7 @@ private struct QueueRow: View {
                     Text(status(compact: false)).fixedSize()
                     Text(status(compact: true)).lineLimit(item.status == .failed ? 2 : 1)
                 }
-                .font(.caption).monospacedDigit()
+                .font(.system(size: 14)).monospacedDigit()
                 .foregroundStyle(item.status == .failed ? AnyShapeStyle(Brand.rose) : AnyShapeStyle(.secondary))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -554,16 +554,16 @@ private struct ShowPanel: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(show.title).font(.headline).lineLimit(2)
+                        Text(show.title).font(.system(size: 19, weight: .semibold)).lineLimit(2)
                         Text([SourceLabel(show.sourceName).text, show.items.count == 1 ? L10n.text("1 episode") : L10n.text("%lld episodes", show.items.count), DownloadFormat.size(show.size)].joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     EpisodeGrid(minimum: DownloadMetrics.episodeMin, spacing: 8, rowSpacing: DownloadMetrics.thumb > 60 ? 12 : 4).callAsFunction {
                         ForEach(show.items) { item in WithPerceptionTracking { episode(item) } }
                     }
                     .tvFocusSection()
                     Button(role: .destructive, action: delete) {
-                        Label(L10n.text("Delete Downloads"), systemImage: "trash").font(.subheadline)
+                        Label(L10n.text("Delete Downloads"), systemImage: "trash").font(.system(size: 17))
                     }
                     .controlButton()
                 }
@@ -581,8 +581,8 @@ private struct ShowPanel: View {
                 Image(systemName: "play.fill").font(.system(size: DownloadMetrics.thumb > 60 ? 18 : 10)).foregroundStyle(.secondary)
                 Text(item.episode).lineLimit(1)
                 Spacer(minLength: 8)
-                if let quality = item.quality { Text(quality).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
-                Text(DownloadFormat.size(item.size)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                if let quality = item.quality { Text(quality).font(.system(size: 14, weight: .semibold)).foregroundStyle(.secondary) }
+                Text(DownloadFormat.size(item.size)).font(.system(size: 14)).monospacedDigit().foregroundStyle(.secondary)
             }
             #if !os(tvOS)
             .padding(.horizontal, 10).frame(minHeight: 34)
@@ -737,9 +737,9 @@ struct DownloadPicker: View {
                     .overlay { WithPerceptionTracking { PosterImage(url: video.poster, headers: video.posterHeaders) } }
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.text("Download Episodes")).font(.title2.weight(.bold))
-                    Text(video.name).font(.headline).lineLimit(2)
-                    if !flag.isEmpty { Text(SourceLabel(flag).text).font(.subheadline).foregroundStyle(.secondary).lineLimit(1) }
+                    Text(L10n.text("Download Episodes")).font(.system(size: 24, weight: .bold))
+                    Text(video.name).font(.system(size: 19, weight: .semibold)).lineLimit(2)
+                    if !flag.isEmpty { Text(SourceLabel(flag).text).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1) }
                 }
                 Spacer(minLength: 0)
             }
@@ -751,7 +751,7 @@ struct DownloadPicker: View {
                 .controlButton().disabled(available.isEmpty)
                 Spacer(minLength: 8)
                 if let free = library.usage.available {
-                    Text(L10n.text("%@ free", DownloadFormat.size(free))).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    Text(L10n.text("%@ free", DownloadFormat.size(free))).font(.system(size: 14)).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
             .tvFocusSection()
@@ -970,7 +970,7 @@ struct DownloadPicker: View {
                 Text(episode.name).lineLimit(1)
                 Spacer(minLength: 6)
                 if let existing, locked {
-                    Text(existing.status == .completed ? L10n.text("Downloaded") : L10n.text("In Queue")).font(.caption).foregroundStyle(.secondary)
+                    Text(existing.status == .completed ? L10n.text("Downloaded") : L10n.text("In Queue")).font(.system(size: 14)).foregroundStyle(.secondary)
                 }
             }
             #if !os(tvOS)

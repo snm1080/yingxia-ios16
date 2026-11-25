@@ -81,7 +81,7 @@ private struct MusicSectionLink<Destination: View>: View {
             RouteLink(destination: destination) {
                 WithPerceptionTracking {
                     HStack(spacing: 5) {
-                        Text(title).font(.title3.weight(.bold)).foregroundStyle(.primary)
+                        Text(title).font(.system(size: 22, weight: .bold)).foregroundStyle(.primary)
                         Image(systemName: "chevron.right").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
                     }
                     .contentShape(.rect)
@@ -130,9 +130,9 @@ struct MusicCollectionTile: View {
     #if os(tvOS)
     private static let titleFont = Font.system(size: 24, weight: .semibold), subtitleFont = Font.system(size: 20)
     #elseif os(iOS)
-    private static let titleFont = Font.subheadline.weight(.medium), subtitleFont = Font.caption
+    private static let titleFont = Font.system(size: 17, weight: .medium), subtitleFont = Font.system(size: 14)
     #else
-    private static let titleFont = Font.system(size: 12, weight: .medium), subtitleFont = Font.system(size: 11)
+    private static let titleFont = Font.system(size: 14, weight: .medium), subtitleFont = Font.system(size: 13)
     #endif
 }
 

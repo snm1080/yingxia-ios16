@@ -17,7 +17,7 @@ struct MusicNowPlayingLyrics: View {
     #if os(macOS)
     private let baseSize: CGFloat = 32, baseTranslation: CGFloat = 18, baseSpacing: CGFloat = 30
     #else
-    private let baseSize: CGFloat = 24, baseTranslation: CGFloat = 14, baseSpacing: CGFloat = 20
+    private let baseSize: CGFloat = 26, baseTranslation: CGFloat = 16, baseSpacing: CGFloat = 20
     #endif
     private var size: CGFloat { compact ? baseSize - 3 : baseSize }
     private var lineSpacing: CGFloat { compact ? 16 : baseSpacing }
@@ -41,7 +41,7 @@ struct MusicNowPlayingLyrics: View {
                                             }.id(index)
                                         }
                                     }
-                                    Text(L10n.text("Lyrics from %@", lyrics.platform.name)).font(.caption2).foregroundStyle(.white.opacity(0.3)).padding(.top, 8)
+                                    Text(L10n.text("Lyrics from %@", lyrics.platform.name)).font(.system(size: 13)).foregroundStyle(.white.opacity(0.3)).padding(.top, 8)
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, centered ? max(20, geometry.size.height / 2 - 30) : 28)
@@ -94,7 +94,7 @@ struct MusicNowPlayingLyrics: View {
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "music.note").font(.system(size: 25)).foregroundStyle(.white.opacity(0.4))
-                    Text(L10n.text("No Lyrics")).font(.system(size: 16, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                    Text(L10n.text("No Lyrics")).font(.system(size: 18, weight: .medium)).foregroundStyle(.white.opacity(0.6))
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -106,12 +106,12 @@ struct MusicNowPlayingLyrics: View {
             Text(line.text.isEmpty ? "♪" : line.text).font(.system(size: size, weight: selected ? .bold : .medium))
                 .fixedSize(horizontal: false, vertical: true)
             if showsTranslation, let translation = line.translation, !translation.isEmpty {
-                Text(translation).font(.system(size: compact ? 12 : baseTranslation, weight: .medium)).foregroundStyle(.white.opacity(selected ? 0.72 : 0.46))
+                Text(translation).font(.system(size: compact ? 14 : baseTranslation, weight: .medium)).foregroundStyle(.white.opacity(selected ? 0.72 : 0.46))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if showsTranslation, let romanization = line.romanization, !romanization.isEmpty,
                romanization != line.text, romanization != line.translation {
-                Text(romanization).font(.system(size: compact ? 11 : baseTranslation, weight: .regular))
+                Text(romanization).font(.system(size: compact ? 13 : baseTranslation, weight: .regular))
                     .foregroundStyle(.white.opacity(selected ? 0.64 : 0.4))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -147,19 +147,19 @@ struct MusicUpNext: View {
                     WithPerceptionTracking {
                         LazyVStack(alignment: .leading, spacing: 2) {
                             WithPerceptionTracking {
-                                Text(L10n.text("Up Next")).font(.headline).padding(.bottom, 6)
+                                Text(L10n.text("Up Next")).font(.system(size: 19, weight: .semibold)).padding(.bottom, 6)
                                 ForEach(upcoming, id: \.offset) { index, track in
                                     WithPerceptionTracking {
                                         Button { music.jump(to: index) } label: {
                                             HStack(spacing: 12) {
                                                 MusicArtwork(url: track.artwork, size: 44)
                                                 VStack(alignment: .leading, spacing: 2) {
-                                                    Text(track.title).font(.body.weight(.medium)).lineLimit(1)
-                                                    Text(track.artistLine).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                                    Text(track.title).font(.system(size: 19, weight: .medium)).lineLimit(1)
+                                                    Text(track.artistLine).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                                                 }
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                                 if let duration = track.duration {
-                                                    Text(MusicTime.text(duration)).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                                                    Text(MusicTime.text(duration)).font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                                                 }
                                             }
                                             .padding(.vertical, 6)

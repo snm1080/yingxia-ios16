@@ -41,7 +41,7 @@ struct LocalPushView: View {
                     if mode == "file" {
                         Button("选择本地视频文件") { localError = nil; filePicker = true }.disabled(readingFile)
                         if readingFile { ProgressView("正在复制所选视频…") }
-                        if let localFile { Text(localFile.lastPathComponent).font(.footnote) }
+                        if let localFile { Text(localFile.lastPathComponent).font(.system(size: 15)) }
                     } else { TextField(mode == "push" ? "分享 / 磁力链接" : mode == "sniff" ? "网页地址" : "视频地址", text: $input, axis: .vertical).autocorrectionDisabled().textInputAutocapitalization(.never) }
                     TextField("影片名称（可选）", text: $title)
                     if mode != "push" && mode != "file" {
@@ -57,7 +57,7 @@ struct LocalPushView: View {
                             Picker("选择站点", selection: $selectedSource) {
                                 ForEach(sources) { Text($0.name).tag($0.id) }
                             }
-                            Text("先检查所选站点是否支持，再读取真实资源和播放线路。").font(.footnote).foregroundStyle(.secondary)
+                            Text("先检查所选站点是否支持，再读取真实资源和播放线路。").font(.system(size: 15)).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -193,7 +193,7 @@ struct PanShareResolveView: View {
             Group {
                 if let selection = destination {
                     VStack(spacing: 0) {
-                        if let localError { Text(localError).font(.footnote).foregroundStyle(.red).padding() }
+                        if let localError { Text(localError).font(.system(size: 15)).foregroundStyle(.red).padding() }
                         if selection.video.isFolder {
                             SiteView(site: selection.client.site, origin: selection.client.origin, jarURL: selection.client.jarURL, folder: selection.video)
                         } else {

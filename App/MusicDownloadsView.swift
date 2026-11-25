@@ -141,7 +141,7 @@ struct MusicDownloadsView: View {
             if !embedded { Text(Self.title).font(.largeTitle.weight(.bold)) }
             #endif
             Text([L10n.text("%lld songs", tracks.count), DownloadFormat.size(library.size)].joined(separator: " · "))
-                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                .font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Group {
                     Button { store.music.play(MusicQueue(tracks: tracks, start: 0, source: Self.title)) } label: {
@@ -250,10 +250,10 @@ struct MusicDownloadedCollectionView: View {
             HStack(alignment: .center, spacing: MusicLayout.gap * 1.4) {
                 MusicArtwork(url: collection.artwork, size: MusicLayout.header, symbol: collection.kind == .album ? "square.stack" : "music.note.list")
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L10n.text(collection.kind == .album ? "Album" : "Playlist")).font(.caption.weight(.semibold)).foregroundStyle(Brand.accent)
-                    Text(collection.title).font(.title2.weight(.bold)).lineLimit(2)
+                    Text(L10n.text(collection.kind == .album ? "Album" : "Playlist")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.accent)
+                    Text(collection.title).font(.system(size: 24, weight: .bold)).lineLimit(2)
                     Text([collection.subtitle, L10n.text("%lld songs", tracks.count)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                        .font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
             HStack(spacing: 10) {
@@ -321,7 +321,7 @@ private struct MusicDownloadedTile: View {
     #if os(tvOS)
     private static let titleFont = Font.system(size: 24, weight: .semibold), subtitleFont = Font.system(size: 20)
     #else
-    private static let titleFont = Font.subheadline.weight(.medium), subtitleFont = Font.caption
+    private static let titleFont = Font.system(size: 17, weight: .medium), subtitleFont = Font.system(size: 14)
     #endif
 }
 
@@ -352,7 +352,7 @@ private struct MusicPendingActions: View {
             #if os(tvOS)
             .controlButton()
             #else
-            .font(.subheadline.weight(.semibold))
+            .font(.system(size: 17, weight: .semibold))
             .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
             #endif
             .fixedSize()
@@ -387,8 +387,8 @@ private struct MusicPendingRow: View {
         HStack(spacing: MusicLayout.gap) {
             MusicArtwork(url: item.track.artwork, size: MusicLayout.art)
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.track.title).font(.headline).lineLimit(1)
-                Text(status).font(.subheadline).monospacedDigit().lineLimit(2)
+                Text(item.track.title).font(.system(size: 19, weight: .semibold)).lineLimit(1)
+                Text(status).font(.system(size: 17)).monospacedDigit().lineLimit(2)
                     .foregroundStyle(item.status == .failed ? AnyShapeStyle(Brand.rose) : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 8)
@@ -451,8 +451,8 @@ struct MusicDownloadsLink: View {
                             .accessibilityHidden(true)
                         #endif
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(MusicDownloadsView.title).font(.headline).lineLimit(1).foregroundStyle(.primary)
-                            Text(details(library)).font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                            Text(MusicDownloadsView.title).font(.system(size: 19, weight: .semibold)).lineLimit(1).foregroundStyle(.primary)
+                            Text(details(library)).font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 8)
                         Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).foregroundStyle(.tertiary)

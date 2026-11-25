@@ -32,16 +32,16 @@ struct EpisodeSkipSettingsView: View {
                                 .settingsSwitch()
                                 .accessibilityIdentifier("player.skip.enabled")
                             Text(L10n.text("Times apply to this series and all its episodes. Automatic skipping is a global switch. The outro is remembered as time remaining."))
-                                .font(.footnote).foregroundStyle(.secondary)
+                                .font(.system(size: 15)).foregroundStyle(.secondary)
                         }
                         #if os(iOS)
                         Section("匹配结果") {
                             Text(session.remoteSkip.status.isEmpty ? "等待视频信息" : session.remoteSkip.status)
-                                .font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("player.skip.remoteStatus")
+                                .font(.system(size: 15)).foregroundStyle(.secondary).accessibilityIdentifier("player.skip.remoteStatus")
                             ForEach(Array(session.remoteSkip.segments.enumerated()), id: \.offset) { _, segment in
                                 LabeledContent(segment.kind == "opening" ? "片头" : "片尾") {
                                     Text(EpisodeSkipSettings.formatTime(segment.start) + "–" + EpisodeSkipSettings.formatTime(segment.end) + " · " + segment.source)
-                                        .font(.footnote)
+                                        .font(.system(size: 15))
                                 }
                             }
                         }
@@ -69,7 +69,7 @@ struct EpisodeSkipSettingsView: View {
                             #endif
                             #if os(iOS)
                             Text("留空采用章节或远程匹配；手动记录优先。时间格式：分:秒。")
-                                .font(.footnote).foregroundStyle(.secondary)
+                                .font(.system(size: 15)).foregroundStyle(.secondary)
                             #else
                             Text(L10n.text("Leave a time empty to keep that segment. Format: minutes:seconds."))
                                 .font(.footnote).foregroundStyle(.secondary)

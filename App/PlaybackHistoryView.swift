@@ -68,13 +68,13 @@ struct PlaybackHistoryView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             ViewThatFits(in: .horizontal) {
-                HStack { Text("观看 · \(entries.count) 条").font(.title3.bold()); Spacer(); actions }
-                VStack(alignment: .leading, spacing: 10) { Text("观看 · \(entries.count) 条").font(.title3.bold()); HStack { actions } }
+                HStack { Text("观看 · \(entries.count) 条").font(.system(size: 22, weight: .bold)); Spacer(); actions }
+                VStack(alignment: .leading, spacing: 10) { Text("观看 · \(entries.count) 条").font(.system(size: 22, weight: .bold)); HStack { actions } }
             }
             Text(store.historySubscriptions.first.map { "当前订阅：\($0.title)" } ?? "未启用订阅期间")
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(.system(size: 17)).foregroundStyle(.secondary)
             Text(store.historyScope == nil ? "显示未启用订阅期间的观看记录，包含已启用的 Python 来源。" : "显示当前订阅及所有已启用 Python 来源在此订阅下的观看进度。")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.system(size: 15)).foregroundStyle(.secondary)
         }
     }
     private var actions: some View {
@@ -100,12 +100,12 @@ struct PlaybackHistoryView: View {
                     HistoryPoster(entry: entry)
                         .frame(width: 54, height: 78).clipped().clipShape(RoundedRectangle(cornerRadius: 7))
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(entry.context.displayTitle).font(.headline).foregroundStyle(.primary).lineLimit(2)
+                        Text(entry.context.displayTitle).font(.system(size: 19, weight: .semibold)).foregroundStyle(.primary).lineLimit(2)
                         Text([SourceLabel(entry.context.sourceName).text, entry.context.episodeFlag, entry.context.episodeName].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        Text(HistoryFormat.status(entry)).font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2)
+                        Text(HistoryFormat.status(entry)).font(.system(size: 14)).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading)
-                    Text(entry.updatedAt, style: .date).font(.caption2).foregroundStyle(.secondary)
+                    Text(entry.updatedAt, style: .date).font(.system(size: 13)).foregroundStyle(.secondary)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
             HStack(spacing: 12) {
@@ -117,7 +117,7 @@ struct PlaybackHistoryView: View {
                     history.remove(historyEntryIDs(of: entry, in: store.visibleHistory))
                 } label: { Image(systemName: "xmark") }
                     .accessibilityLabel("移除 \(entry.context.displayTitle) 的观看记录")
-            }.font(.subheadline).buttonStyle(.borderless)
+            }.font(.system(size: 17)).buttonStyle(.borderless)
         }.padding(14).background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
     }
 }
@@ -258,16 +258,16 @@ struct HistoryCardLabel: View {
                     }
                 }
                 .posterClip(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            Text(entry.context.displayTitle).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+            Text(entry.context.displayTitle).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                 .cardCaption()
             if details {
                 Text("\(episodeLabel) · \(SourceLabel(entry.context.sourceName).text)")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).cardCaption()
-                Text(HistoryFormat.status(entry)).font(.caption).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
+                    .font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1).cardCaption()
+                Text(HistoryFormat.status(entry)).font(.system(size: 14)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                     .cardCaption()
             } else {
                 // The bar on the poster already says how far; the line names the episode.
-                Text(episodeLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1).cardCaption()
+                Text(episodeLabel).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1).cardCaption()
             }
         }
         .frame(width: details ? nil : HistoryMetrics.card)

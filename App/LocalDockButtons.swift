@@ -113,12 +113,12 @@ struct LocalDockButtonsSettingsView: View {
                         WithPerceptionTracking {
                             HStack(spacing: 12) {
                                 Image(systemName: button.dockIcon)
-                                    .font(.system(size: 19, weight: .semibold))
-                                    .frame(width: 30)
-                                Text(button.title).font(.body.weight(.medium)).lineLimit(1)
+                                    .font(.system(size: 21, weight: .semibold))
+                                    .frame(width: 32)
+                                Text(button.title).font(.system(size: 19, weight: .medium)).lineLimit(1)
                                 Spacer(minLength: 8)
                                 if button.isLocked {
-                                    Text("常驻").font(.caption).foregroundStyle(.secondary)
+                                    Text("常驻").font(.system(size: 14)).foregroundStyle(.secondary)
                                 } else {
                                     Toggle("显示", isOn: visibility(of: button))
                                         .tint(systemAccent)

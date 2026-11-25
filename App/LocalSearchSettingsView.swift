@@ -63,7 +63,7 @@ struct LocalSearchSettingsView: View {
                     }.pickerStyle(.segmented)
                     #endif
                     Text(preferences.mode == .all ? "查询所有支持搜索的站点，不受默认开关影响。" : preferences.mode == .default ? "勾选默认搜索的站点；关闭的站点仍可在全部模式中搜索。" : "按分组选择站点；同一站点加入多个分组只查询一次，首先显示第一个分组。")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.system(size: 15)).foregroundStyle(.secondary)
                 }.listRowBackground(Color.clear)
                 if preferences.mode == .groups {
                     Section("搜索分组") {

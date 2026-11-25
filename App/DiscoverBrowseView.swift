@@ -191,8 +191,8 @@ struct DiscoverBrowseView: View {
     private func tile(_ item: TMDBCatalog.Item) -> some View {
         VStack(spacing: 5) {
             PosterImage(url: item.poster).aspectRatio(2.0 / 3.0, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 9))
-            Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            Text(item.date ?? item.year.map(String.init) ?? "—").font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            Text(item.name).font(.system(size: 14, weight: .medium)).lineLimit(1)
+            Text(item.date ?? item.year.map(String.init) ?? "—").font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
         }.frame(maxWidth: .infinity)
     }
     private var sortMenu: some View {

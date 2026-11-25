@@ -98,10 +98,10 @@ struct LiveSourceCard: View {
             HStack(spacing: padding) {
                 MonogramIcon(seed: source.name, label: label, size: icon)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(label.parts[0]).font(.headline).lineLimit(1)
+                    Text(label.parts[0]).font(.system(size: 19, weight: .semibold)).lineLimit(1)
                         .foregroundStyle(focused ? Color.black : Color.primary)
                     if !detail.isEmpty {
-                        Text(detail).font(.subheadline).lineLimit(1)
+                        Text(detail).font(.system(size: 17)).lineLimit(1)
                             .foregroundStyle(focused ? Color.black.opacity(0.6) : Color.secondary)
                     }
                 }
@@ -209,7 +209,7 @@ struct ChannelListView: View {
                     }
                 }.padding(.vertical, 4)
             }
-            Text(L10n.text("Channels: %lld", filtered.count)).font(.caption).foregroundStyle(.secondary)
+            Text(L10n.text("Channels: %lld", filtered.count)).font(.system(size: 14)).foregroundStyle(.secondary)
         }
     }
     private func load() async {
@@ -474,12 +474,12 @@ struct FavoritesView: View {
                 WithPerceptionTracking {
                     VStack(alignment: .leading, spacing: Layout.headerSpacing) {
                         HStack {
-                            Text("收藏 · \(store.favorites.titleVideos.count) 部").font(.title3.bold())
+                            Text("收藏 · \(store.favorites.titleVideos.count) 部").font(.system(size: 22, weight: .bold))
                             Spacer()
                             Button { confirmsClear = true } label: { Label("清空收藏", systemImage: "trash") }
                                 .controlButton().disabled(store.favorites.titleVideos.isEmpty)
                         }
-                        Text("喜欢的故事，随时回来看看。").font(.subheadline).foregroundStyle(.secondary)
+                        Text("喜欢的故事，随时回来看看。").font(.system(size: 17)).foregroundStyle(.secondary)
                         if let error = store.favorites.persistenceError { StatusNotice(text: L10n.text("Unable to save favorites: %@", error)) }
                         if store.favorites.titleVideos.isEmpty {
                             EmptyPage(symbol: AppSection.favorites.icon, title: "把喜欢的内容留在这里",
@@ -563,7 +563,7 @@ private struct FavoriteFilmCard: View {
                     if let listing = video.listingVideo() {
                         PosterCard(video: listing)
                     } else {
-                        Text(video.videoName).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                        Text(video.videoName).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                     }
                 }
                 .favoriteMenu(.video(video), name: video.videoName)
@@ -602,9 +602,9 @@ private struct FavoriteEpisodeCard: View {
                         if let listing = episode.video.listingVideo() {
                             PosterCard(video: listing)
                         } else {
-                            Text(episode.video.videoName).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                            Text(episode.video.videoName).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                         }
-                        Text(episode.episodeName).font(.caption).foregroundStyle(.secondary).lineLimit(1).cardCaption()
+                        Text(episode.episodeName).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1).cardCaption()
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -714,8 +714,8 @@ struct ChannelCard: View {
                     HStack(spacing: 14) {
                         ChannelLogo(channel: channel)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(channel.name).font(.headline).foregroundStyle(.primary).lineLimit(1)
-                            Text(channel.displayGroup).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(channel.name).font(.system(size: 19, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                            Text(channel.displayGroup).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer(minLength: 0)
                     }.contentShape(Rectangle())

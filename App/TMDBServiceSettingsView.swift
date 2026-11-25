@@ -26,24 +26,27 @@ struct TMDBServiceSettingsView: View {
                     TextField("语言", text: $config.language, prompt: Text("zh-CN"))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("API 地址", text: $config.apiBase, prompt: Text(TMDBServiceSettings.defaultAPIBase))
+                        .font(.system(size: 21))
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     TextField("图片地址", text: $config.imageBase, prompt: Text(TMDBServiceSettings.defaultImageBase))
+                        .font(.system(size: 21))
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Toggle("使用代理", isOn: $config.proxyEnabled)
                     if config.proxyEnabled {
                         TextField("代理地址", text: $config.proxyUrl, prompt: Text("http://127.0.0.1:7890"))
+                            .font(.system(size: 21))
                             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         TextField("代理账号（可选）", text: $config.proxyUsername)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                         SecureField("代理密码（可选）", text: $config.proxyPassword)
                         if !config.proxyPassword.isEmpty { Button("清除已保存的代理密码") { config.proxyPassword = ""; message = "代理密码将在保存后清除" } }
                         Text("支持 HTTP、HTTPS、SOCKS5；TMDB API 与图片使用相同代理。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                     Button("保存 TMDB 设置", action: save).settingsButton(prominent: true)
                 }
             }
-            if let message { SettingsGroup { Text(message).font(.footnote).foregroundStyle(.secondary) } }
+            if let message { SettingsGroup { Text(message).font(.system(size: 15)).foregroundStyle(.secondary) } }
         }
     }
     private var credential: Binding<String> {

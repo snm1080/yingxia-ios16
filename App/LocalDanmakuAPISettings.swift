@@ -21,12 +21,12 @@ struct LocalDanmakuAPISettings: View {
                             Image(systemName: "trash").frame(width: 44, height: 44)
                         }.buttonStyle(.plain).accessibilityLabel("删除 " + api.name)
                     }
-                    Text(api.url).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(api.url).font(.system(size: 16)).foregroundStyle(.secondary).lineLimit(2)
                 }.padding(.vertical, 3).accessibilityElement(children: .contain).accessibilityIdentifier("settings.danmaku.api." + api.name)
             }
             if model.isEditing {
                 TextField("API 名称", text: $model.name).accessibilityIdentifier("settings.danmaku.api.name")
-                TextField("HTTP / HTTPS API 地址", text: $model.address).keyboardType(.URL)
+                TextField("HTTP / HTTPS API 地址", text: $model.address).font(.system(size: 21)).keyboardType(.URL)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .accessibilityIdentifier("settings.danmaku.api.address")
                 HStack {
@@ -39,9 +39,9 @@ struct LocalDanmakuAPISettings: View {
                 Button("添加 API") { model.beginAdding() }.settingsButton(prominent: true)
                     .accessibilityIdentifier("settings.danmaku.api.add")
             }
-            if !model.message.isEmpty { Text(model.message).font(.caption).foregroundStyle(.secondary) }
+            if !model.message.isEmpty { Text(model.message).font(.system(size: 14)).foregroundStyle(.secondary) }
             Text("自动匹配只使用已启用的 API，按列表顺序尝试。支持 Dandanplay 兼容的搜索、分集与弹幕协议。自建服务（如 LogVar）需要 token 时，请填写带 token 的完整地址，例如 https://example.com:88/你的token，否则服务器会返回 401 未授权。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 14)).foregroundStyle(.secondary)
         }
     }
 }

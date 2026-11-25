@@ -298,7 +298,7 @@ struct LocalHTMLHomeSettingsSection: View {
             }) {
                 ForEach(store.sources) { source in sourceRow(source) }
             }
-            if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.secondary) }
+            if !message.isEmpty { Text(message).font(.system(size: 14)).foregroundStyle(.secondary) }
         }
         .localDocumentImporter(isPresented: $importFile, kind: .htmlFile) { result in
             switch result {
@@ -339,7 +339,7 @@ struct LocalHTMLHomeSettingsSection: View {
     }
     private func sourceRow(_ source: LocalHTMLHomeSource) -> some View {
         HStack(spacing: 8) {
-            Text(source.name).font(.subheadline.weight(.medium)).lineLimit(1)
+            Text(source.name).font(.system(size: 17, weight: .medium)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel(source.name)
             Button(role: .destructive) { mutate { try $0.remove(source.id) } } label: {
                 Text("删除").lineLimit(1).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())

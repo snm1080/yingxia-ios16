@@ -270,31 +270,31 @@ private struct WatchNowPhoneHero: View {
         let dark = state.paints[entry.id]?.isDark ?? true
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
-            Text(L10n.text("Up Next")).font(.system(size: 13, weight: .semibold)).opacity(0.7)
+            Text(L10n.text("Up Next")).font(.system(size: 15, weight: .semibold)).opacity(0.7)
                 .padding(.bottom, 10)
             Group {
                 if let logo = details?.logo {
                     TMDBArtwork(url: logo, maxPixels: 1000, fill: false).accessibilityLabel(entry.context.videoName)
                 } else {
-                    Text(entry.context.videoName).font(.system(size: 34, weight: .bold))
+                    Text(entry.context.videoName).font(.system(size: 36, weight: .bold))
                         .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6)
                 }
             }
             .frame(width: width * 0.8, height: 120, alignment: .bottom)
             .accessibilityAddTraits(.isHeader)
             Text([EpisodeLabels.historyLabel(entry.context.episodeName, showsDetails: showsFileDetails), SourceLabel(entry.context.sourceName).text].filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.system(size: 14)).lineLimit(1).padding(.top, 14)
+                .font(.system(size: 16)).lineLimit(1).padding(.top, 14)
             if entry.duration > 0 {
                 HStack(spacing: 8) {
                     Capsule().fill(.primary.opacity(0.25)).frame(width: 90, height: 4)
                         .overlay(alignment: .leading) { WithPerceptionTracking { Capsule().fill(.primary).frame(width: 90 * entry.progress) } }
-                    Text(HistoryFormat.status(entry)).font(.system(size: 12).monospacedDigit()).opacity(0.75)
+                    Text(HistoryFormat.status(entry)).font(.system(size: 14).monospacedDigit()).opacity(0.75)
                 }
                 .padding(.top, 8)
             }
             Button { resume(entry) } label: {
                 Label(L10n.text("Resume"), systemImage: store.resumingHistoryID == entry.id ? "hourglass" : "play.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .padding(.horizontal, 28).frame(height: 44)
                     .foregroundStyle(dark ? Color.black : Color.white)
                     .background(dark ? Color.white : Color.black, in: Capsule())

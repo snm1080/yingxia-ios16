@@ -86,7 +86,7 @@ struct DiscoverSearchView: View {
 
     private var topChrome: some View {
         VStack(spacing: 19) {
-            Text(L10n.text("Search")).font(.system(size: 17, weight: .semibold)).frame(height: 44).frame(maxWidth: .infinity)
+            Text(L10n.text("Search")).font(.system(size: 19, weight: .semibold)).frame(height: 44).frame(maxWidth: .infinity)
             ScrollView(.horizontal) {
                 WithPerceptionTracking {
                     GlassGroup(spacing: 8) { HStack(spacing: 8) {
@@ -166,7 +166,7 @@ struct DiscoverSearchView: View {
     private var history: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(L10n.text("Recent Searches")).font(.system(size: 16, weight: .semibold)); Spacer()
+                Text(L10n.text("Recent Searches")).font(.system(size: 18, weight: .semibold)); Spacer()
                 Button { model.clearHistory() } label: { Image(systemName: "trash").font(.system(size: 13)).foregroundStyle(.secondary) }
                     .accessibilityLabel(L10n.text("Clear Search History"))
             }.padding(.horizontal, 16)
@@ -175,7 +175,7 @@ struct DiscoverSearchView: View {
                     HStack(spacing: 8) {
                         ForEach(model.history, id: \.self) { text in
                             WithPerceptionTracking {
-                                Button { query = text; focused = false } label: { Text(text).font(.system(size: 13)).padding(.horizontal, 14).frame(height: 34).glassSurface(.regular, in: Capsule()).iosTouchTarget() }
+                                Button { query = text; focused = false } label: { Text(text).font(.system(size: 15)).padding(.horizontal, 14).frame(height: 34).glassSurface(.regular, in: Capsule()).iosTouchTarget() }
                             }
                         }
                     }.padding(.horizontal, 16)
@@ -234,7 +234,7 @@ struct DiscoverSearchView: View {
                 }
             } label: {
                 HStack(spacing: 5) {
-                    Text(filter == nil ? kind.title : L10n.text("Filtered Results")).font(.system(size: 16, weight: .semibold))
+                    Text(filter == nil ? kind.title : L10n.text("Filtered Results")).font(.system(size: 18, weight: .semibold))
                     if kind != .person && filter == nil {
                         Image(systemName: expanded.contains(kind) ? "rectangle.split.2x1" : "list.bullet")
                             .font(.system(size: 15, weight: .medium))
@@ -259,9 +259,9 @@ struct DiscoverSearchRow: View {
             HStack(spacing: 10) {
                 PosterImage(url: item.poster).frame(width: 80, height: 120).clipShape(RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(item.name).font(.system(size: 17, weight: .bold)).lineLimit(1)
+                    Text(item.name).font(.system(size: 19, weight: .bold)).lineLimit(1)
                     Text(([L10n.text(item.mediaType == .tv ? "Series" : "Movies"), item.year.map(String.init), item.genreNames.isEmpty ? nil : item.genreNames.replacingOccurrences(of: " / ", with: " · ")]).compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.system(size: 15)).foregroundStyle(.secondary).lineLimit(1)
                     if let rating = item.rating {
                         HStack(spacing: 5) {
                             HStack(spacing: 1) {
@@ -272,10 +272,10 @@ struct DiscoverSearchRow: View {
                                     }
                                 }
                             }
-                            Text(rating, format: .number.precision(.fractionLength(1))).font(.system(size: 13)).foregroundStyle(.yellow)
+                            Text(rating, format: .number.precision(.fractionLength(1))).font(.system(size: 15)).foregroundStyle(.yellow)
                         }.frame(height: 18).accessibilityElement(children: .ignore).accessibilityLabel("TMDB \(rating.formatted(.number.precision(.fractionLength(1))))")
                     }
-                    Text(item.overview.isEmpty ? " " : item.overview).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2).lineSpacing(2)
+                    Text(item.overview.isEmpty ? " " : item.overview).font(.system(size: 15)).foregroundStyle(.secondary).lineLimit(2).lineSpacing(2)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, 4)
             }.padding(8).frame(height: 136)
                 .background(.white.opacity(colorScheme == .dark ? 0.10 : 0.54), in: RoundedRectangle(cornerRadius: 20))
@@ -290,9 +290,9 @@ private struct DiscoverSearchPersonRow: View {
         WithPerceptionTracking {
             VStack(spacing: 0) {
                 PosterImage(url: person.profile, symbol: "person.fill").frame(width: 83, height: 83).clipShape(Circle())
-                Text(person.name).font(.system(size: 13)).lineLimit(1).padding(.top, 8)
+                Text(person.name).font(.system(size: 15)).lineLimit(1).padding(.top, 8)
                 Text(L10n.text(person.department == "Acting" ? "Actor" : person.department ?? "People"))
-                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).padding(.top, 2)
+                    .font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1).padding(.top, 2)
             }.frame(width: 83)
         }
     }

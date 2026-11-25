@@ -16,10 +16,10 @@ struct NativeLocalASRModelSettings: View {
                 LocalGlassChoicePicker(title: "音频语言", selection: $locale,
                     options: models.models.map { .init($0.id, "\($0.name) · \(bytes($0.bytes))") })
                 Text("只需下载所选语言包。离线识别无需密钥，音频留在设备上。切换语言不会中断其他语言包的下载。")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if let error = models.catalogError { Text(error).font(.caption).foregroundStyle(.red) }
+                    .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let error = models.catalogError { Text(error).font(.system(size: 14)).foregroundStyle(.red) }
                 if selected == nil && models.catalogError == nil {
-                    Text("请选择音频对应的语言。").font(.caption).foregroundStyle(.secondary)
+                    Text("请选择音频对应的语言。").font(.system(size: 14)).foregroundStyle(.secondary)
                 }
                 ForEach(visibleModels) { model in
                     modelRow(model)
@@ -37,18 +37,18 @@ struct NativeLocalASRModelSettings: View {
             VStack(alignment: .leading, spacing: 12) {
                 ViewThatFits(in: .horizontal) {
                     HStack {
-                        Text(model.name).font(.headline)
+                        Text(model.name).font(.system(size: 19, weight: .semibold))
                         Spacer(minLength: 8)
-                        Text("\(model.files.count) 个文件 · \(bytes(model.bytes))").font(.caption).foregroundStyle(.secondary)
+                        Text("\(model.files.count) 个文件 · \(bytes(model.bytes))").font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(model.name).font(.headline)
-                        Text("\(model.files.count) 个文件 · \(bytes(model.bytes))").font(.caption).foregroundStyle(.secondary)
+                        Text(model.name).font(.system(size: 19, weight: .semibold))
+                        Text("\(model.files.count) 个文件 · \(bytes(model.bytes))").font(.system(size: 14)).foregroundStyle(.secondary)
                     }
                 }
                 stateContent(model)
                 if let notice = models.notices[model.id] {
-                    Text(notice).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(notice).font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -60,41 +60,41 @@ struct NativeLocalASRModelSettings: View {
     @ViewBuilder private func stateContent(_ model: LocalASRModel) -> some View {
         switch models.state(model) {
         case .missing:
-            Label("尚未下载", systemImage: "arrow.down.circle").font(.subheadline).foregroundStyle(.secondary)
+            Label("尚未下载", systemImage: "arrow.down.circle").font(.system(size: 17)).foregroundStyle(.secondary)
             Button("下载语音包") { models.download(model) }.settingsButton(prominent: true)
         case .checking:
             ProgressView("正在检查已下载文件…")
             cancel(model)
         case let .downloading(received, total):
             progress(title: "下载进度", received: received, total: total)
-            Text(fileDescription(model, completed: received)).font(.caption).foregroundStyle(.secondary)
+            Text(fileDescription(model, completed: received)).font(.system(size: 14)).foregroundStyle(.secondary)
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 if let last = models.progressDates[model.id], context.date.timeIntervalSince(last) >= 10 {
                     Text("已 \(Int(context.date.timeIntervalSince(last))) 秒未收到新数据，正在等待网络；可取消后重试。")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             cancel(model, title: "取消下载")
         case let .verifying(verified, total):
             progress(title: "文件校验", received: verified, total: total)
             Text("按实际读取的字节校验完整性，完成后再检查是否可用。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             cancel(model)
         case .loading:
             ProgressView("文件完整，正在检查是否可用…")
             Text("首次加载可能需要一些时间，最多等待 60 秒。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.system(size: 14)).foregroundStyle(.secondary)
             cancel(model)
         case .downloaded:
-            Label("文件完整，尚未检查加载", systemImage: "checkmark.circle").font(.subheadline)
+            Label("文件完整，尚未检查加载", systemImage: "checkmark.circle").font(.system(size: 17))
             Text("下载已完成。检查通过后可在播放器开启 AI 生成字幕。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("检查是否可用") { models.verify(model) }.settingsButton(prominent: true)
             delete(model)
         case .ready:
             Label("可离线使用", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             Text("已完成下载、文件校验和本机加载检查。保存语言设置后，在播放器开启「AI 生成字幕」。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("重新检查") { models.verify(model) }.settingsButton()
             delete(model)
         case .cancelling:
@@ -103,23 +103,23 @@ struct NativeLocalASRModelSettings: View {
             ProgressView("正在释放并删除语音包…")
         case let .unavailable(message):
             Label("已下载，暂时无法加载", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-            Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(message).font(.system(size: 14)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("重新检查") { models.verify(model) }.settingsButton(prominent: true)
             delete(model)
         case let .failed(message):
-            Text(message).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            Text(message).font(.system(size: 14)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             Button("重试下载") { models.download(model) }.settingsButton(prominent: true)
             delete(model)
         }
     }
     private func progress(title: String, received: Int64, total: Int64) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.subheadline.weight(.medium))
+            Text(title).font(.system(size: 17, weight: .medium))
             if total > 0 {
                 ProgressView(value: Double(min(max(0, received), total)), total: Double(total))
                 Text("\(Int(Double(min(max(0, received), total)) / Double(total) * 100))% · \(bytes(received)) / \(bytes(total))")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            } else { ProgressView(); Text("正在等待文件大小…").font(.caption).foregroundStyle(.secondary) }
+                    .font(.system(size: 14)).monospacedDigit().foregroundStyle(.secondary)
+            } else { ProgressView(); Text("正在等待文件大小…").font(.system(size: 14)).foregroundStyle(.secondary) }
         }
     }
     private func fileDescription(_ model: LocalASRModel, completed: Int64) -> String {

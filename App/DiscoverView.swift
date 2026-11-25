@@ -210,7 +210,7 @@ struct DiscoverView: View {
                                             Button { Task { await model.load() } } label: {
                                                 Label(L10n.text("Some lists couldn't load. Try again."), systemImage: "arrow.clockwise")
                                                     #if !os(tvOS)
-                                                    .font(.subheadline).frame(maxWidth: .infinity).padding()
+                                                    .font(.system(size: 17)).frame(maxWidth: .infinity).padding()
                                                     #endif
                                             }
                                             #if os(tvOS)
@@ -228,7 +228,7 @@ struct DiscoverView: View {
                                         Button { editing = true } label: {
                                             Label(L10n.text("Edit Layout"), systemImage: "slider.horizontal.3")
                                                 #if !os(tvOS)
-                                                .font(.subheadline).padding(18).glassSurface(.regular, in: Capsule())
+                                                .font(.system(size: 17)).padding(18).glassSurface(.regular, in: Capsule())
                                                 #endif
                                         }
                                         // On tvOS .plain lays its focus platter under the glass capsule; one glass control instead.
@@ -241,7 +241,7 @@ struct DiscoverView: View {
                                         HStack(spacing: 8) {
                                             TMDBBadge()
                                             Text(L10n.text("This product uses the TMDB API but is not endorsed or certified by TMDB."))
-                                                .font(.caption2).foregroundStyle(.white.opacity(0.5))
+                                                .font(.system(size: 13)).foregroundStyle(.white.opacity(0.5))
                                         }.padding(.horizontal, DiscoverLayout.gutter).padding(.vertical, 20)
                                     }
                                 }
@@ -634,7 +634,7 @@ struct DiscoverView: View {
                                                 }
                                             }
                                         }.frame(width: 72, height: 80)
-                                        Text(feed.title).font(.system(size: 19, weight: .semibold))
+                                        Text(feed.title).font(.system(size: 21, weight: .semibold))
                                     }
                                     .frame(width: 197, height: 92).background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 22))
                                 }
@@ -1299,7 +1299,7 @@ private struct DiscoverHero: View {
                                 TMDBArtwork(url: logo, maxPixels: 1000, fill: false)
                                     .accessibilityLabel(item.name)
                             } else {
-                                Text(item.name).font(.system(size: 40, weight: .semibold))
+                                Text(item.name).font(.system(size: 42, weight: .semibold))
                                     .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6)
                             }
                         }
@@ -1307,16 +1307,16 @@ private struct DiscoverHero: View {
                         .padding(.bottom, 15)
                         Text([details?.genres.prefix(2).joined(separator: " / ") ?? item.genreNames,
                               details?.date ?? item.year.map(String.init) ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 14)).lineLimit(1).frame(height: 17)
+                            .font(.system(size: 16)).lineLimit(1).frame(height: 20)
                         Text("「\(item.name)」" + item.overview)
-                            .font(.system(size: 12)).lineLimit(2).multilineTextAlignment(.center)
-                            .frame(height: 34, alignment: .top).padding(.top, 5)
+                            .font(.system(size: 14)).lineLimit(2).multilineTextAlignment(.center)
+                            .frame(height: 40, alignment: .top).padding(.top, 5)
                         HStack(spacing: 4) {
                             if let rating = item.rating {
                                 TMDBBadge()
-                                Text(rating, format: .number.precision(.fractionLength(1))).font(.system(size: 11))
+                                Text(rating, format: .number.precision(.fractionLength(1))).font(.system(size: 13))
                             }
-                        }.frame(height: 14).padding(.top, 5)
+                        }.frame(height: 17).padding(.top, 5)
                     }
                     .padding(.horizontal, 30).padding(.bottom, 42)
                     .frame(width: proxy.size.width, height: proxy.size.height)
@@ -1375,8 +1375,8 @@ private struct DiscoverCollection: View {
                                     HStack(spacing: 12) {
                                         Image(systemName: "laurel.leading").font(.system(size: 38))
                                         VStack(spacing: 4) {
-                                            Text(feed.collectionTitle).font(.system(size: 34, weight: .semibold))
-                                            Text(items.first?.name ?? "").font(.system(size: 14)).opacity(0.8)
+                                            Text(feed.collectionTitle).font(.system(size: 36, weight: .semibold))
+                                            Text(items.first?.name ?? "").font(.system(size: 16)).opacity(0.8)
                                         }
                                         Image(systemName: "laurel.trailing").font(.system(size: 38))
                                     }.padding(.horizontal, 16).padding(.bottom, 24)
@@ -1759,7 +1759,7 @@ private struct DiscoverBrandCard: View {
                     AsyncImage(url: brand.logo) { phase in
                         WithPerceptionTracking {
                             if let image = phase.image { image.renderingMode(.template).resizable().scaledToFit() }
-                            else { Text(brand.name).font(.system(size: 24, weight: .semibold)) }
+                            else { Text(brand.name).font(.system(size: 26, weight: .semibold)) }
                         }
                     }.frame(width: width * 0.44, height: 64)
                     Spacer(minLength: 0)
@@ -1796,7 +1796,7 @@ private struct DiscoverRankingCard: View {
                     }
                 }.frame(width: width, height: width, alignment: .top)
                 LinearGradient(stops: [.init(color: .clear, location: 0.4), .init(color: .black.opacity(0.85), location: 0.88)], startPoint: .top, endPoint: .bottom)
-                Text(feed.title).font(.system(size: 31, weight: .semibold)).padding(.bottom, 28)
+                Text(feed.title).font(.system(size: 33, weight: .semibold)).padding(.bottom, 28)
             }
             .frame(width: width, height: width).foregroundStyle(.white)
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -2168,9 +2168,9 @@ private struct DoubanTitleView: View {
             WithPerceptionTracking {
                 VStack(spacing: 16) {
                     PosterImage(url: item.cover).frame(width: 220, height: 330).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    Text(item.title).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
-                    if !item.caption.isEmpty { Text(item.caption).font(.headline).opacity(0.7) }
-                    if !item.subtitle.isEmpty { Text(item.subtitle).font(.subheadline).opacity(0.6).multilineTextAlignment(.center) }
+                    Text(item.title).font(.system(size: 24, weight: .semibold)).multilineTextAlignment(.center)
+                    if !item.caption.isEmpty { Text(item.caption).font(.system(size: 19, weight: .semibold)).opacity(0.7) }
+                    if !item.subtitle.isEmpty { Text(item.subtitle).font(.system(size: 17)).opacity(0.6).multilineTextAlignment(.center) }
                     DiscoverFindSourcesButton(title: item.title).padding(.top, 8).accessibilityIdentifier("discover.douban.findSources")
                 }.padding(40).frame(maxWidth: .infinity)
             }

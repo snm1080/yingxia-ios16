@@ -66,10 +66,10 @@ struct LocalHomeSourcePanel: View {
                 }
             }
             .localGlassBackdrop()
-            // The whole panel reads one Dynamic Type step larger; the tab row and the
+            // The whole panel reads two Dynamic Type steps larger (build 38: was one); the tab row and the
             // subscription row use the same subheadline as the site names, so they
             // stay exactly as large as the names below them at any size.
-            .dynamicTypeSize(.xLarge)
+            .dynamicTypeSize(.xxxLarge)
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in keyboardVisible = false }
             .toolbar(.hidden, for: .navigationBar)
@@ -95,7 +95,7 @@ struct LocalHomeSourcePanel: View {
         HStack(spacing: 0) {
             ForEach(LocalHomeSourceKind.allCases) { option in
                 Button { kind = option } label: {
-                    Text(option.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(option.title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
                         .frame(maxWidth: .infinity, minHeight: 34)
                         .background {
                             if kind == option {
@@ -135,7 +135,7 @@ struct LocalHomeSourcePanel: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text(activeSubscription?.title ?? "选择订阅")
-                                .font(.subheadline.weight(.semibold)).lineLimit(2)
+                                .font(.system(size: 17, weight: .semibold)).lineLimit(2)
                             Image(systemName: "chevron.down").font(.caption.weight(.semibold))
                         }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
                     }
@@ -165,7 +165,7 @@ struct LocalHomeSourcePanel: View {
                 .accessibilityLabel(kind == .html ? "HTML 首页设置" : kind == .python ? "python 设置" : "订阅设置")
                 .accessibilityIdentifier("home.source.settings." + (kind == .html ? "html" : kind == .python ? "python" : "subscription"))
             }
-            .buttonStyle(.plain).font(.system(size: 17, weight: .medium))
+            .buttonStyle(.plain).font(.system(size: 19, weight: .medium))
             .padding(.horizontal, 16).padding(.bottom, 4)
         }
     }
@@ -197,11 +197,11 @@ struct LocalHomeSourcePanel: View {
                     }
                     if htmlHomes.sources.isEmpty {
                         Text("添加在线地址或导入 HTML 文件后，可在这里切换。")
-                            .font(.footnote).foregroundStyle(.secondary).padding(.vertical, 12)
+                            .font(.system(size: 15)).foregroundStyle(.secondary).padding(.vertical, 12)
                     } else if matches.isEmpty {
-                        Text("没有匹配的 HTML 首页").font(.footnote).foregroundStyle(.secondary).padding(.vertical, 12)
+                        Text("没有匹配的 HTML 首页").font(.system(size: 15)).foregroundStyle(.secondary).padding(.vertical, 12)
                     }
-                    if !htmlFailure.isEmpty { Text(htmlFailure).font(.footnote).foregroundStyle(.secondary) }
+                    if !htmlFailure.isEmpty { Text(htmlFailure).font(.system(size: 15)).foregroundStyle(.secondary) }
                 }.padding(.horizontal, 16).padding(.bottom, 16)
             }
         }
@@ -212,7 +212,7 @@ struct LocalHomeSourcePanel: View {
         Button { chooseHome(id) } label: {
             HStack(spacing: 9) {
                 MonogramIcon(seed: title, label: SourceLabel(title), size: 34, systemImage: symbol)
-                Text(title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if homeSelected && htmlHomes.activeID == id {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.accent)

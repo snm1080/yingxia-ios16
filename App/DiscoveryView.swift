@@ -44,7 +44,7 @@ private struct SearchSiteRail: View {
                             }
                             if waiting, items.count == 1 {
                                 Text("等待站点返回结果…")
-                                    .font(.footnote).foregroundStyle(.secondary)
+                                    .font(.system(size: 15)).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                             }
                         }.padding(6)
@@ -63,7 +63,7 @@ private struct SearchSiteRail: View {
             VStack(alignment: .leading, spacing: compact ? 5 : 0) {
                 HStack(spacing: 8) {
                     Text(SourceLabel(item.name).text)
-                        .font(.subheadline.weight(selected ? .semibold : .regular))
+                        .font(.system(size: 17, weight: selected ? .semibold : .regular))
                         .lineLimit(2).multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if !compact { status(item) }
@@ -85,7 +85,7 @@ private struct SearchSiteRail: View {
     @ViewBuilder private func status(_ item: SearchSourceItem) -> some View {
         if let dot = item.dot { Circle().fill(dot).frame(width: 6, height: 6) }
         if let count = item.count {
-            Text(count, format: .number).font(.caption.weight(.medium)).monospacedDigit()
+            Text(count, format: .number).font(.system(size: 14, weight: .medium)).monospacedDigit()
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
         }
@@ -389,7 +389,7 @@ struct GlobalSearchView: View {
                             let selected = model.selectedGroup == group.id
                             Button { model.selectGroup(group.id) } label: {
                                 Text(group.name.isEmpty ? "分组" : group.name)
-                                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    .font(.system(size: 17, weight: .semibold)).lineLimit(1)
                                     .foregroundStyle(selected ? Brand.accent : Color.secondary)
                                     .padding(.horizontal, 14).frame(minHeight: 44)
                                     .overlay(alignment: .bottom) {
@@ -416,7 +416,7 @@ struct GlobalSearchView: View {
             Spacer(minLength: 0)
             Text("\(posters.count) 个结果").monospacedDigit().fixedSize()
         }
-        .font(.subheadline).foregroundStyle(.secondary)
+        .font(.system(size: 17)).foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("search.results.caption")
     }
@@ -437,7 +437,7 @@ struct GlobalSearchView: View {
             if model.busy && (model.selectedSource == nil || !model.results.contains(where: { $0.id == model.selectedSource })) {
                 #if os(iOS)
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("等待站点返回结果…").font(.subheadline).foregroundStyle(.secondary)
+                    Text("等待站点返回结果…").font(.system(size: 17)).foregroundStyle(.secondary)
                     if listed { ProgressView().frame(maxWidth: .infinity).padding(.vertical, 60) }
                     else { PosterSkeletonGrid() }
                 }
@@ -458,7 +458,7 @@ struct GlobalSearchView: View {
             }.appScrollTargetLayout().tvFocusSection()
             if !model.visiblePageErrors.isEmpty {
                 VStack(spacing: 10) {
-                    Text("部分来源下一页加载失败，可重试。").font(.footnote).foregroundStyle(.secondary)
+                    Text("部分来源下一页加载失败，可重试。").font(.system(size: 15)).foregroundStyle(.secondary)
                     Button("重试下一页") { model.loadMore(model.selectedSource, config: config) }.controlButton()
                 }.frame(maxWidth: .infinity)
             }
@@ -587,7 +587,7 @@ struct GlobalSearchView: View {
             searchSummary
             HStack(alignment: .center, spacing: 12) {
                 Text("“\(model.keyword)” 的搜索结果")
-                    .font(.headline).lineLimit(1).truncationMode(.tail)
+                    .font(.system(size: 19, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
                 searchActions(config)
@@ -681,8 +681,8 @@ struct GlobalSearchView: View {
         return HStack(alignment: .center, spacing: 8) {
             ProgressView().controlSize(.small).opacity(model.busy ? 1 : 0)
                 .accessibilityHidden(!model.busy)
-            Text("\(model.completed) / \(model.total)").font(.subheadline.weight(.semibold)).fixedSize()
-            Text(summaryDetail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text("\(model.completed) / \(model.total)").font(.system(size: 17, weight: .semibold)).fixedSize()
+            Text(summaryDetail).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
         }
         .monospacedDigit().fixedSize(horizontal: false, vertical: true)
@@ -759,7 +759,7 @@ struct GlobalSearchView: View {
                     .overlay(alignment: .topTrailing) {
                         if let count, count > 0 {
                             Text(count > 99 ? "99+" : String(count))
-                                .font(.system(size: 9, weight: .bold)).monospacedDigit()
+                                .font(.system(size: 11, weight: .bold)).monospacedDigit()
                                 .foregroundStyle(Color.white)
                                 .padding(.horizontal, 4).frame(height: 16)
                                 .background(Brand.rose, in: Capsule()).padding(2)
@@ -867,16 +867,16 @@ struct GlobalSearchView: View {
                 .overlay { WithPerceptionTracking { PosterImage(url: video.poster, headers: video.posterHeaders) } }
                 .posterClip(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
-                Text(video.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                Text(video.name).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary)
                     .lineLimit(3).multilineTextAlignment(.leading)
                 if !video.remarks.isEmpty {
-                    Text(video.remarks).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(video.remarks).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 if !detail.isEmpty {
-                    Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(detail).font(.system(size: 14)).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Text(SourceLabel(item.site.name).text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(SourceLabel(item.site.name).text).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -892,7 +892,7 @@ struct GlobalSearchView: View {
         return VStack(alignment: .leading, spacing: 4) {
             LocalSitePosterCard(video: item.video, landscape: false)
             Text([item.video.year, SourceLabel(item.site.name).text].compactMap { $0 }.joined(separator: " · "))
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
         }
         .accessibilityElement(children: .combine)
         #else
@@ -918,13 +918,13 @@ struct GlobalSearchView: View {
             if history.isEmpty {
                 VStack(spacing: 14) {
                     Image(systemName: "magnifyingglass").font(.system(size: 44, weight: .light)).foregroundStyle(.tertiary)
-                    Text(L10n.text("Search all available sources in your subscription.")).font(.title3.weight(.medium)).multilineTextAlignment(.center)
+                    Text(L10n.text("Search all available sources in your subscription.")).font(.system(size: 22, weight: .medium)).multilineTextAlignment(.center)
                 }.frame(maxWidth: .infinity).padding(.top, 80)
             } else {
                 HStack {
-                    Text(L10n.text("Recent Searches")).font(.title3.weight(.bold))
+                    Text(L10n.text("Recent Searches")).font(.system(size: 22, weight: .bold))
                     Spacer()
-                    Button(L10n.text("Clear")) { historyData = Data() }.buttonStyle(.plain).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).frame(minHeight: 44)
+                    Button(L10n.text("Clear")) { historyData = Data() }.buttonStyle(.plain).font(.system(size: 17, weight: .semibold)).foregroundStyle(.secondary).frame(minHeight: 44)
                 }
                 VStack(spacing: 0) {
                     ForEach(Array(history.enumerated()), id: \.element) { index, item in
@@ -933,7 +933,7 @@ struct GlobalSearchView: View {
                                 Button { useHistory(item) } label: {
                                     HStack(spacing: 14) {
                                         Image(systemName: "clock.arrow.circlepath").font(.body).foregroundStyle(.secondary).frame(width: 24)
-                                        Text(item).font(.body).lineLimit(1)
+                                        Text(item).font(.system(size: 19)).lineLimit(1)
                                         Spacer(minLength: 0)
                                     }
                                     .padding(.leading, 18).frame(minHeight: 48).frame(maxWidth: .infinity, alignment: .leading)
@@ -986,9 +986,9 @@ struct GlobalSearchView: View {
                             WithPerceptionTracking {
                                 VStack(alignment: .leading, spacing: 6) {
                                     let health = store.health(of: result.site)
-                                    HStack(spacing: 6) { Text(result.site.name).font(.headline); SourceHealthDot(status: health) }
-                                    Text(result.error ?? "").font(.caption).foregroundStyle(.secondary)
-                                    if health == .failing { Text(health.summary).font(.caption).foregroundStyle(Brand.rose) }
+                                    HStack(spacing: 6) { Text(result.site.name).font(.system(size: 19, weight: .semibold)); SourceHealthDot(status: health) }
+                                    Text(result.error ?? "").font(.system(size: 14)).foregroundStyle(.secondary)
+                                    if health == .failing { Text(health.summary).font(.system(size: 14)).foregroundStyle(Brand.rose) }
                                 }
                             }
                         }
@@ -996,8 +996,8 @@ struct GlobalSearchView: View {
                         ForEach(model.paused) { site in
                             WithPerceptionTracking {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack(spacing: 6) { Text(site.name).font(.headline); SourceHealthDot(status: .failing) }
-                                    Text(pauseNote(site)).font(.caption).foregroundStyle(Brand.rose)
+                                    HStack(spacing: 6) { Text(site.name).font(.system(size: 19, weight: .semibold)); SourceHealthDot(status: .failing) }
+                                    Text(pauseNote(site)).font(.system(size: 14)).foregroundStyle(Brand.rose)
                                 }
                             }
                         }
@@ -1143,7 +1143,7 @@ private struct SearchActivityList: View {
                             .transition(.opacity)
                         }
                     }
-                    .font(.subheadline)
+                    .font(.system(size: 17))
                     .accessibilityElement(children: .combine)
                     .animation(.appSmooth(duration: 0.25), value: active.map(\.id))
                 }
@@ -1232,7 +1232,7 @@ private struct QuietPillStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         WithPerceptionTracking {
             configuration.label
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12).frame(height: SourceStrip.controlSize - 2)
                 .background(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.07), in: Capsule())
@@ -1426,7 +1426,7 @@ struct RecommendationsView: View {
                 Text(site.name).lineLimit(1)
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
-            .font(.subheadline.weight(.semibold))
+            .font(.system(size: 17, weight: .semibold))
             .padding(.horizontal, 14).frame(height: SourceStrip.controlSize)
             .glassOrFill(.regular.interactive(), Color.primary.opacity(0.06), in: Capsule())
             .contentShape(Capsule())
@@ -1488,7 +1488,7 @@ struct RecommendationsView: View {
                 }
             } else {
                 HStack(spacing: 16) {
-                    Text(L10n.text("Recommendations")).font(.title3.weight(.bold))
+                    Text(L10n.text("Recommendations")).font(.system(size: 22, weight: .bold))
                     Spacer()
                     recommendationControls.fixedSize()
                 }
@@ -1516,7 +1516,7 @@ struct RecommendationsView: View {
             }
             if category == nil, !model.items.isEmpty, let loadedSite = model.site {
                 if (loadedSite.raw["indexs"]?.int ?? 0) == 1 {
-                    Text(L10n.text("Choose a title to find it across your sources.")).font(.subheadline).foregroundStyle(.secondary)
+                    Text(L10n.text("Choose a title to find it across your sources.")).font(.system(size: 17)).foregroundStyle(.secondary)
                 }
                 LazyVGrid(columns: Layout.posterColumns, spacing: Layout.gridRowSpacing) {
                     WithPerceptionTracking {
@@ -1682,7 +1682,7 @@ struct RecommendationsView: View {
             }
             if let error = model.error {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(error).font(.subheadline).foregroundStyle(.secondary)
+                    Text(error).font(.system(size: 17)).foregroundStyle(.secondary)
                     Button(L10n.text("Retry")) { forceRefresh = true; revision += 1 }.controlButton()
                 }
                 .padding(.horizontal, DiscoverLayout.gutter)
@@ -1707,7 +1707,7 @@ struct RecommendationsView: View {
                     .padding(.top, -16)
                 } else if !model.busy, model.error == nil, model.categories.isEmpty {
                     Text(L10n.text("This source has no recommendations. Choose another source or use Global Search."))
-                        .font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, DiscoverLayout.gutter)
+                        .font(.system(size: 17)).foregroundStyle(.secondary).padding(.horizontal, DiscoverLayout.gutter)
                 }
                 ForEach(model.categories.prefix(4)) { item in
                     WithPerceptionTracking {
@@ -1763,7 +1763,7 @@ struct RecommendationsView: View {
         }
         if !browser.videos.isEmpty {
             if isIndex {
-                Text(L10n.text("Choose a title to find it across your sources.")).font(.subheadline).foregroundStyle(.secondary)
+                Text(L10n.text("Choose a title to find it across your sources.")).font(.system(size: 17)).foregroundStyle(.secondary)
             }
             LazyVGrid(columns: Layout.posterColumns, spacing: Layout.gridRowSpacing) {
                 WithPerceptionTracking {
@@ -1793,7 +1793,7 @@ struct RecommendationsView: View {
             Group {
                 if let message = browser.moreError {
                     VStack(spacing: 12) {
-                        Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Text(message).font(.system(size: 17)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         Button(L10n.text("Try Again")) { Task { await browser.loadMore(client: client) } }
                             .controlButton()
                             .accessibilityIdentifier("recommendations.loadMore.retry")
@@ -2074,7 +2074,7 @@ struct ScrollStrip<Content: View>: View {
             }
         } label: {
             Image(systemName: forward ? "chevron.right" : "chevron.left")
-                .font(.system(size: overlayArrows ? 14 : 11, weight: .bold))
+                .font(.system(size: overlayArrows ? 16 : 13, weight: .bold))
                 .frame(width: overlayArrows ? 34 : 26, height: overlayArrows ? 34 : 26)
                 .background(Color.primary.opacity(0.07), in: Circle())
                 .glassSurface(overlayArrows ? .regular.interactive() : .identity, in: Circle())
@@ -2111,7 +2111,7 @@ private struct SourceChip: View {
                     if let count { Text("\(count)").monospacedDigit().opacity(0.55) }
                     if let dot { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(dot) }
                 }
-                .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                .font(.system(size: 15, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? Brand.onAccent : Color.primary.opacity(0.82))
                 .padding(.horizontal, 12)
                 .frame(height: SourceStrip.controlSize)

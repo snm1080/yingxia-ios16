@@ -210,7 +210,7 @@ struct DiscoverCalendarView: View {
     @ViewBuilder private func calendarChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         #if os(iOS)
         Button(action: action) {
-            Text(title).font(.subheadline.weight(selected ? .semibold : .medium))
+            Text(title).font(.system(size: 17, weight: selected ? .semibold : .medium))
                 .lineLimit(1).padding(.horizontal, 14).frame(minHeight: 44)
                 .foregroundStyle(selected ? Brand.onAccent : .primary)
                 .background {
@@ -235,7 +235,7 @@ struct DiscoverCalendarView: View {
         if let week {
             if week.stale {
                 Label(L10n.text("The schedule sources can't be reached right now, so this is an older copy."), systemImage: "clock.arrow.circlepath")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.system(size: 15)).foregroundStyle(.secondary)
             }
             if day?.items.isEmpty ?? true { EmptyResults(symbol: "calendar", title: L10n.text("Nothing Airing")) }
         } else if failed.contains(key) {
@@ -356,7 +356,7 @@ struct DiscoverAiringTile: View {
                 #if os(tvOS)
                 .font(.system(size: 20, weight: .bold)).padding(.horizontal, 12).padding(.vertical, 5)
                 #else
-                .font(.system(size: 10, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
+                .font(.system(size: 12, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
                 #endif
                 .foregroundStyle(Brand.onAccent).background(Brand.accent, in: Capsule())
         }
@@ -437,9 +437,9 @@ struct DiscoverAiringTitleView: View {
             WithPerceptionTracking {
                 VStack(spacing: 16) {
                     PosterImage(url: item.cover, symbol: "tv").frame(width: 220, height: 330).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    Text(item.title).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
-                    if item.originalTitle != item.title { Text(item.originalTitle).font(.headline).opacity(0.7) }
-                    Text(DiscoverAiring.caption(item)).font(.subheadline).opacity(0.6)
+                    Text(item.title).font(.system(size: 24, weight: .semibold)).multilineTextAlignment(.center)
+                    if item.originalTitle != item.title { Text(item.originalTitle).font(.system(size: 19, weight: .semibold)).opacity(0.7) }
+                    Text(DiscoverAiring.caption(item)).font(.system(size: 17)).opacity(0.6)
                     DiscoverFindSourcesButton(title: item.title).padding(.top, 8).accessibilityIdentifier("calendar.findSources")
                 }.padding(40).frame(maxWidth: .infinity)
             }
@@ -463,7 +463,7 @@ struct DiscoverFindSourcesButton: View {
                     #if os(tvOS)
                     .frame(width: 380)
                     #else
-                    .font(.system(size: 15, weight: .semibold)).frame(width: 260).frame(height: 50)
+                    .font(.system(size: 17, weight: .semibold)).frame(width: 260).frame(height: 50)
                     .foregroundStyle(Color.black).background(Color.white, in: Capsule()).contentShape(Capsule())
                     #endif
             }
@@ -494,7 +494,7 @@ struct DiscoverChip: View {
             }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
             #else
             Button(action: action) {
-                Text(title).font(.system(size: 15)).lineLimit(1)
+                Text(title).font(.system(size: 17)).lineLimit(1)
                     .padding(.horizontal, 16).frame(height: 36)
                     .foregroundStyle(selected ? Color.black : Color.primary)
                     .background { WithPerceptionTracking { if selected { Capsule().fill(Color.white) } } }
@@ -528,7 +528,7 @@ private struct DiscoverCalendarCredits: View {
                 #if os(tvOS)
                 .font(.system(size: 22))
                 #else
-                .font(.caption2)
+                .font(.system(size: 13))
                 #endif
                 .foregroundStyle(.secondary).padding(.top, 12)
             }

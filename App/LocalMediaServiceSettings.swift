@@ -58,7 +58,7 @@ struct LocalOnlineSubtitleSettingsView: View {
                 Button("保存在线字幕设置") {
                     do { try config.save(); status = "已保存" } catch { status = error.localizedDescription }
                 }.settingsButton(prominent: true).accessibilityIdentifier("settings.subtitles.save")
-                if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
+                if !status.isEmpty { Text(status).font(.system(size: 14)).foregroundStyle(.secondary) }
             }
         }
     }

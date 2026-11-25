@@ -25,11 +25,11 @@ struct SettingsGroup<Content: View>: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let title {
                     HStack {
-                        Text(title).font(.headline).foregroundStyle(.secondary)
+                        Text(title).font(.system(size: 19, weight: .semibold)).foregroundStyle(.secondary)
                         Spacer()
                         if let headerActionTitle, let headerAction {
                             Button(headerActionTitle, role: .destructive, action: headerAction)
-                                .font(.subheadline).frame(minHeight: 44)
+                                .font(.system(size: 17)).frame(minHeight: 44)
                                 .buttonStyle(.borderless).disabled(headerActionDisabled)
                                 .accessibilityIdentifier(headerActionIdentifier)
                         }
@@ -39,7 +39,7 @@ struct SettingsGroup<Content: View>: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
                     .localGlassSurface(cornerRadius: 22)
-                if let footer { Text(footer).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                if let footer { Text(footer).font(.system(size: 15)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             #else
@@ -169,10 +169,10 @@ struct SettingsPage<Content: View>: View {
                     .padding(16)
                     .frame(maxWidth: .infinity)
             }
-            // Settings text runs one Dynamic Type step larger than the app default:
-            // every settings subpage is built on this container, so the semantic
-            // fonts its rows use all follow from here.
-            .dynamicTypeSize(.xLarge)
+            // Settings text runs two Dynamic Type steps larger than the app default
+            // (build 38: was one step): every settings subpage is built on this
+            // container, so the implicit fonts its rows use all follow from here.
+            .dynamicTypeSize(.xxxLarge)
             .scrollDismissesKeyboard(.interactively)
             .localGlassSettingsCanvas()
             .navigationTitle(title)
@@ -268,7 +268,7 @@ struct FormLabel: View {
             Label {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                    if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+                    if let subtitle, !subtitle.isEmpty { Text(subtitle).font(.system(size: 14)).foregroundStyle(.secondary) }
                 }
             } icon: { SettingsIcon(symbol: symbol, tint: tint) }
         }
@@ -1280,13 +1280,13 @@ struct LicensesView: View {
             SettingsPage(title: L10n.text("Open Source Licenses")) {
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Yingxia \(Brand.copyright)").font(.headline)
-                        Link("www.getmegaportal.com", destination: Brand.website).font(.subheadline)
+                        Text("Yingxia \(Brand.copyright)").font(.system(size: 19, weight: .semibold))
+                        Link("www.getmegaportal.com", destination: Brand.website).font(.system(size: 19))
                     }
                 }
                 Section {
                     Text(notices)
-                        .font(.system(.footnote, design: .monospaced)).foregroundStyle(.secondary).selectable()
+                        .font(.system(size: 15, design: .monospaced)).foregroundStyle(.secondary).selectable()
                 }
             }
             #endif
@@ -1346,18 +1346,18 @@ struct DiagnosticsView: View {
                         Spacer()
                         Text("\(filtered.count) / \(entries.count)").monospacedDigit()
                     }
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, DiagnosticGrid.inset).padding(.vertical, 12)
+                    .font(.system(size: 14)).foregroundStyle(.secondary).padding(.horizontal, DiagnosticGrid.inset).padding(.vertical, 12)
                 }
                 .background(SettingsStyle.groupFill, in: RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous))
                 .overlay { WithPerceptionTracking { RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous).strokeBorder(Color.primary.opacity(0.06)) } }
                 .clipShape(RoundedRectangle(cornerRadius: SettingsStyle.radius, style: .continuous))
                 Text(L10n.text("Shows the latest 1,000 events from this run. Export includes retained log files."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
                 if dropped > 0 {
                     Label(L10n.text("Log overload: %lld events dropped", dropped), systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(Brand.amber)
+                        .font(.system(size: 14)).foregroundStyle(Brand.amber)
                 }
-                if let error { Text(error).font(.caption).foregroundStyle(Brand.rose).selectable() }
+                if let error { Text(error).font(.system(size: 14)).foregroundStyle(Brand.rose).selectable() }
             }
             .padding(Layout.gutter)
             .frame(maxWidth: Layout.maxWidth).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1376,9 +1376,9 @@ struct DiagnosticsView: View {
     private var heading: some View {
         VStack(alignment: .leading, spacing: 6) {
             #if !os(tvOS)
-            Text(L10n.text("Runtime Activity")).font(.title2.weight(.bold))
+            Text(L10n.text("Runtime Activity")).font(.system(size: 24, weight: .bold))
             #endif
-            Text(L10n.text("Inspect plugin requests and errors.")).font(.subheadline).foregroundStyle(.secondary)
+            Text(L10n.text("Inspect plugin requests and errors.")).font(.system(size: 17)).foregroundStyle(.secondary)
         }
     }
     private var actions: some View {
@@ -1456,7 +1456,7 @@ struct DiagnosticsView: View {
                 Text(title).fontWeight(.semibold)
                 Text("\(count)").monospacedDigit().foregroundStyle(.secondary).frame(minWidth: 26, alignment: .trailing)
             }
-            .font(.caption).padding(.horizontal, 12).padding(.vertical, 8)
+            .font(.system(size: 14)).padding(.horizontal, 12).padding(.vertical, 8)
             .background(level == value ? color.opacity(0.14) : .clear, in: Capsule())
             .overlay { WithPerceptionTracking { Capsule().strokeBorder(level == value ? color.opacity(0.35) : .clear, lineWidth: 1) } }
             .contentShape(Capsule())
@@ -1481,7 +1481,7 @@ struct DiagnosticsView: View {
                             Text(L10n.text("Log Message")).frame(maxWidth: .infinity, alignment: .leading)
                             Color.clear.frame(width: DiagnosticGrid.accessory, height: 1)
                         }
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
                         .padding(.horizontal, DiagnosticGrid.inset).frame(height: 36)
                         .background(Color.primary.opacity(0.025))
                         Divider()
@@ -1620,22 +1620,22 @@ private struct DiagnosticRow: View {
     }
     private var timestamp: some View {
         Text(entry.date, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
-            .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            .font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
             .lineLimit(1)
     }
     private var badge: some View {
-        Text(entry.level.rawValue.uppercased()).font(.system(size: 10, weight: .semibold, design: .monospaced))
+        Text(entry.level.rawValue.uppercased()).font(.system(size: 12, weight: .semibold, design: .monospaced))
             .foregroundStyle(entry.level.tint).frame(width: 60, height: 20)
             .background(entry.level.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
     }
     private var module: some View {
-        Text(entry.category).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+        Text(entry.category).font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
     }
     private var message: some View {
         let preview = entry.message.split(whereSeparator: \.isWhitespace).filter {
             !$0.hasPrefix("session=") && !$0.hasPrefix("request=") && !$0.hasPrefix("command=")
         }.joined(separator: " ")
-        return Text(preview).font(.system(size: 12, design: .monospaced)).foregroundStyle(.primary.opacity(0.88))
+        return Text(preview).font(.system(size: 14, design: .monospaced)).foregroundStyle(.primary.opacity(0.88))
             .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -1648,14 +1648,14 @@ private struct DiagnosticDetail: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
                     Pill(text: entry.level.title, tint: entry.level.tint)
-                    Text(entry.category).font(.headline)
+                    Text(entry.category).font(.system(size: 19, weight: .semibold))
                     Spacer()
                     Button(L10n.text("OK")) { dismiss() }.controlButton()
                 }
-                Text(entry.date.formatted(date: .abbreviated, time: .standard)).font(.caption).foregroundStyle(.secondary)
+                Text(entry.date.formatted(date: .abbreviated, time: .standard)).font(.system(size: 14)).foregroundStyle(.secondary)
                 ScrollView {
                     WithPerceptionTracking {
-                        Text(entry.message).font(.system(.body, design: .monospaced)).selectable()
+                        Text(entry.message).font(.system(size: 19, design: .monospaced)).selectable()
                             .frame(maxWidth: .infinity, alignment: .leading).padding(18)
                     }
                 }.contentPanel(cornerRadius: 14)

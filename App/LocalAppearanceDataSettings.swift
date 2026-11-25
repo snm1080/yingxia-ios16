@@ -68,11 +68,11 @@ struct LocalBackupSettingsView: View {
                     }.disabled(busy)
                 }
                 if busy { ProgressView("正在处理备份…") }
-                if !status.isEmpty { Text(status).font(.footnote).foregroundStyle(.secondary) }
+                if !status.isEmpty { Text(status).font(.system(size: 15)).foregroundStyle(.secondary) }
             }
             if let value = preview {
                 SettingsGroup(title: "恢复预览", footer: "恢复会停止播放，并保存恢复前的数据以供撤回。未选择的分类保持现状；恢复的来源保持关闭，需手动启用。") {
-                    if let createdAt { Text(createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption) }
+                    if let createdAt { Text(createdAt.formatted(date: .abbreviated, time: .shortened)).font(.system(size: 14)) }
                     ForEach(LocalBackupCategory.allCases) { category in
                         Toggle(category.title + "（\(count(category, in: value)) 项）", isOn: Binding(get: { selected.contains(category) }, set: {
                             if $0 { selected.insert(category) } else { selected.remove(category) }

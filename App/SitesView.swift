@@ -220,7 +220,7 @@ struct SitesView: View {
                 builtinHome()
                 dismiss()
             } label: {
-                Text("首页").font(.headline).frame(maxWidth: .infinity, minHeight: 64)
+                Text("首页").font(.system(size: 19, weight: .semibold)).frame(maxWidth: .infinity, minHeight: 64)
                 .overlay(alignment: .leading) { MonogramIcon(seed: "首页", label: SourceLabel("首页"), size: 34, systemImage: "house.fill").padding(.leading, 14) }
                 .overlay(alignment: .trailing) {
                     if homeSelected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.accent).padding(.trailing, 14) }
@@ -315,8 +315,8 @@ struct SitesView: View {
             if pick == nil && query.isEmpty { UserDefaults.standard.set(collapsed.sorted(), forKey: Self.foldKey) }
         } label: {
             HStack(spacing: 8) {
-                Text(L10n.text(group.title)).font(.headline).lineLimit(1)
-                Text("\(group.sites.count)").font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                Text(L10n.text(group.title)).font(.system(size: 19, weight: .semibold)).lineLimit(1)
+                Text("\(group.sites.count)").font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 // One chevron that turns, rather than two symbols swapped.
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
@@ -489,17 +489,17 @@ struct SiteCard: View {
                     }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text(label.parts[0]).font(.headline).lineLimit(1)
+                        Text(label.parts[0]).font(.system(size: 19, weight: .semibold)).lineLimit(1)
                             .foregroundStyle(focused ? Color.black : runs ? Color.primary : Color.secondary)
                         if runs { SourceHealthDot(status: store.health(of: site)) }
                         if site.runtime == .python {
                             Text(store.health(of: site) == .failing ? "待重试" : store.health(of: site) == .healthy ? "就绪" : "待机")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.system(size: 14)).foregroundStyle(.secondary)
                         }
-                        if dimmed { Text(L10n.text("Hidden")).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        if dimmed { Text(L10n.text("Hidden")).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1) }
                     }
                     if !detail.isEmpty {
-                        Text(detail).font(.subheadline).lineLimit(1)
+                        Text(detail).font(.system(size: 17)).lineLimit(1)
                             .foregroundStyle(focused ? Color.black.opacity(0.6) : runs ? Color.secondary : Brand.amber)
                     }
                 }
@@ -670,8 +670,8 @@ struct SourceOrderCard: View {
                 HStack(spacing: 14) {
                     IconTile(symbol: "arrow.up.arrow.down", tint: Brand.indigo, size: 40)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(L10n.text("Custom Search Order")).font(.headline)
-                        Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(L10n.text("Custom Search Order")).font(.system(size: 19, weight: .semibold))
+                        Text(detail).font(.system(size: 17)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     Toggle(L10n.text("Custom Search Order"), isOn: enabled).labelsHidden().toggleStyle(.switch).settingsSwitch()
@@ -689,7 +689,7 @@ struct SourceOrderCard: View {
                         Spacer(minLength: 8)
                         Button(action: arrange) {
                             Label(L10n.text("Arrange"), systemImage: "arrow.up.arrow.down")
-                                .font(.subheadline.weight(.semibold)).foregroundStyle(Brand.onAccent)
+                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(Brand.onAccent)
                                 .lineLimit(1).fixedSize()
                                 .padding(.horizontal, 16).padding(.vertical, 7)
                                 .background(Brand.accent, in: Capsule())
@@ -730,7 +730,7 @@ struct SourceOrderPreview: View {
                     }
                 }
                 if sites.count > shown.count {
-                    Text(verbatim: "+\(sites.count - shown.count)").font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                    Text(verbatim: "+\(sites.count - shown.count)").font(.system(size: 17, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
                 }
             }
             // Room for the badges that stick out.
@@ -765,7 +765,7 @@ private struct SourceOrderRow: View {
     private let title = Font.system(size: 29, weight: .medium), caption = Font.system(size: 22)
     #else
     private let icon: CGFloat = 32, rankWidth: CGFloat = 26
-    private let title = Font.body.weight(.medium), caption = Font.caption
+    private let title = Font.system(size: 19, weight: .medium), caption = Font.system(size: 14)
     #endif
     var body: some View {
         WithPerceptionTracking {
@@ -950,12 +950,12 @@ struct HideSourcesCard: View {
                 HStack(spacing: 14) {
                     IconTile(symbol: "eye.slash", tint: Brand.teal, size: 40)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(L10n.text("Hide or Show Sources")).font(.headline).foregroundStyle(.primary)
-                        Text(L10n.text("Choose many sources at once, or a whole subscription.")).font(.subheadline).foregroundStyle(.secondary)
+                        Text(L10n.text("Hide or Show Sources")).font(.system(size: 19, weight: .semibold)).foregroundStyle(.primary)
+                        Text(L10n.text("Choose many sources at once, or a whole subscription.")).font(.system(size: 17)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
-                    if !value.isEmpty { Text(value).font(.subheadline).monospacedDigit().foregroundStyle(.secondary).lineLimit(1) }
+                    if !value.isEmpty { Text(value).font(.system(size: 17)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1) }
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
                 .padding(16)
@@ -1044,7 +1044,7 @@ struct HiddenSourcesEditor: View {
                         WithPerceptionTracking {
                             Section {
                                 Text(L10n.text("Ticked sources are shown. Hidden sources stay out of Watch Now and search."))
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                                    .font(.system(size: 17)).foregroundStyle(.secondary)
                                     #if os(iOS)
                                     .listRowBackground(Surface())
                                     #endif
@@ -1124,10 +1124,10 @@ private struct HiddenSourceRow: View {
                 Image(systemName: shown ? "checkmark.circle.fill" : "circle").font(.title3)
                     .foregroundStyle(shown ? AnyShapeStyle(Brand.accent) : AnyShapeStyle(.secondary))
                 SourceIcon(site: site, label: label, size: 32).opacity(shown ? 1 : 0.45)
-                Text(label.parts[0]).font(.body.weight(.medium)).lineLimit(1)
+                Text(label.parts[0]).font(.system(size: 19, weight: .medium)).lineLimit(1)
                     .foregroundStyle(shown ? Color.primary : Color.secondary)
                 Spacer(minLength: 8)
-                if !shown { Text(L10n.text("Hidden")).font(.caption).foregroundStyle(.secondary) }
+                if !shown { Text(L10n.text("Hidden")).font(.system(size: 14)).foregroundStyle(.secondary) }
             }
             .padding(.vertical, 3)
             .contentShape(Rectangle())
@@ -1319,7 +1319,7 @@ struct SiteView: View {
                                         }
                                         .accessibilityLabel("回到顶部").accessibilityIdentifier("site.top")
                                     }
-                                    .font(.headline).buttonStyle(.plain)
+                                    .font(.system(size: 19, weight: .semibold)).buttonStyle(.plain)
                                     .padding(6).background(.regularMaterial, in: Capsule())
                                     .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
                                     .localDockHitRegion()
@@ -1342,7 +1342,7 @@ struct SiteView: View {
             HStack(spacing: 4) {
                 Button { openHomeSources?() } label: {
                     HStack(spacing: 4) {
-                        Text(folder?.name ?? SourceLabel(site.name).text).font(.headline).lineLimit(2)
+                        Text(folder?.name ?? SourceLabel(site.name).text).font(.system(size: 19, weight: .semibold)).lineLimit(2)
                         Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
                     }
                     .frame(minWidth: 48, idealWidth: 86, maxWidth: 132, minHeight: 44, alignment: .leading)
@@ -1367,7 +1367,7 @@ struct SiteView: View {
                         query = value
                         if value.isEmpty && !browser.query.isEmpty { startRequest { await home() } }
                     }))
-                        .font(.subheadline).submitLabel(.search)
+                        .font(.system(size: 17)).submitLabel(.search)
                         .autocorrectionDisabled().textInputAutocapitalization(.never)
                         .onSubmit { startRequest { await search() } }
                         .accessibilityIdentifier("site.search")
@@ -1443,7 +1443,7 @@ struct SiteView: View {
         }
         #endif
         if isIndex && !browser.videos.isEmpty {
-            Text(L10n.text("Choose a title to find it across your sources.")).font(.subheadline).foregroundStyle(.secondary)
+            Text(L10n.text("Choose a title to find it across your sources.")).font(.system(size: 17)).foregroundStyle(.secondary)
         }
         if browser.busy {
             LoadingCard { .source(site, origin: origin, title: L10n.text("Loading source content…")) }
@@ -1606,7 +1606,7 @@ struct SiteView: View {
     @ViewBuilder private var loadMoreFooter: some View {
         if let message = browser.moreError {
             VStack(spacing: 12) {
-                Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Text(message).font(.system(size: 17)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button(L10n.text("Try Again")) { startRequest { await loadMore() } }
                     .controlButton()
                     .accessibilityIdentifier("site.loadMore.retry")
@@ -1841,7 +1841,7 @@ struct PluginActionPage: View {
                 WithPerceptionTracking {
                     if let notice {
                         Text(notice)
-                            .font(.callout)
+                            .font(.system(size: 18))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 18).padding(.vertical, 12)
                             .glassPanel(cornerRadius: 22)
@@ -2039,8 +2039,8 @@ private struct PluginWindowView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-                if let title = window.title { Text(title).font(.headline) }
-                if let message = window.message { Text(message).font(.body).fixedSize(horizontal: false, vertical: true) }
+                if let title = window.title { Text(title).font(.system(size: 19, weight: .semibold)) }
+                if let message = window.message { Text(message).font(.system(size: 19)).fixedSize(horizontal: false, vertical: true) }
                 if let header = window.header { PluginNodeView(node: header, context: context(painted)) }
                 if let root = window.root { PluginNodeView(node: root, context: context(painted)) }
                 if !window.items.isEmpty { items }

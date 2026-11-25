@@ -282,7 +282,7 @@ struct LiveSearchResults: View {
             if let rooms = found[platform] {
                 LiveRoomGrid(rooms: Array(rooms.prefix(8)))
             } else if let failure = failures[platform] {
-                Text(failure).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(failure).font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(2)
             } else {
                 ProgressView().frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
             }
@@ -307,7 +307,7 @@ struct LiveRoomCard: View {
                             WithPerceptionTracking {
                                 HStack(spacing: 5) {
                                     Image(systemName: "dot.radiowaves.left.and.right").font(.caption2.weight(.bold))
-                                    Text(L10n.text("LIVE")).font(.caption2.weight(.bold))
+                                    Text(L10n.text("LIVE")).font(.system(size: 13, weight: .bold))
                                 }
                                 .foregroundStyle(.white).padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(Brand.rose, in: Capsule()).padding(8)
@@ -317,7 +317,7 @@ struct LiveRoomCard: View {
                             WithPerceptionTracking {
                                 if room.online > 0 {
                                     Label(room.online.formatted(.number.notation(.compactName)), systemImage: "person.2.fill")
-                                        .font(.caption2.weight(.semibold)).foregroundStyle(.white).labelStyle(.titleAndIcon)
+                                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).labelStyle(.titleAndIcon)
                                         .padding(.horizontal, 7).padding(.vertical, 3)
                                         .glassSurface(.regular.tint(.black.opacity(0.45)), in: Capsule()).padding(8)
                                 }
@@ -331,9 +331,9 @@ struct LiveRoomCard: View {
                                 }
                             }
                         }
-                    Text(room.title.isEmpty ? room.host : room.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(room.title.isEmpty ? room.host : room.title).font(.system(size: 17, weight: .semibold)).foregroundStyle(.primary)
                         .lineLimit(1).truncationMode(.tail).cardCaption()
-                    Text([room.host, room.area].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text([room.host, room.area].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(1)
                         .cardCaption()
                 }
                 // Cards in a row share its height; a one-line title leaves the space below, not between.
@@ -398,7 +398,7 @@ struct LivePlatformCard: View {
     #else
     private let focused = false
     private let mark: CGFloat = 28, padding: CGFloat = 10, radius: CGFloat = 16
-    private let titleFont = Font.subheadline.weight(.semibold), detailFont = Font.caption2
+    private let titleFont = Font.system(size: 17, weight: .semibold), detailFont = Font.system(size: 13)
     #endif
     private var room: LiveRoom? { LivePreviews.shared.rooms[platform] }
     #if os(iOS)
@@ -476,7 +476,7 @@ struct LivePlatformCard: View {
             Image(systemName: "dot.radiowaves.left.and.right")
             Text(L10n.text("LIVE"))
         }
-        .font(.caption2.weight(.bold)).foregroundStyle(.white)
+        .font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Brand.rose, in: Capsule())
     }

@@ -33,7 +33,7 @@ struct LocalSettingsView: View {
         // One Dynamic Type step up, matching SettingsPage: the hub's cards scale,
         // and the size carries into destinations that are not SettingsPage-based
         // (the Dock buttons list, favorites).
-        .dynamicTypeSize(.xLarge)
+        .dynamicTypeSize(.xxxLarge)
         .localGlassSettingsCanvas().navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -54,7 +54,7 @@ private struct LocalSettingsCard<Destination: View>: View {
             HStack(spacing: 10) {
                 MonogramIcon(seed: title, label: SourceLabel(title), size: 36, systemImage: symbol)
                     .frame(width: 36, height: 48)
-                Text(title).font(.headline).lineLimit(1).minimumScaleFactor(0.8)
+                Text(title).font(.system(size: 19, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
@@ -112,7 +112,7 @@ private struct LocalDataSettingsView: View {
                 Toggle("iCloud 同步", isOn: $sync)
                     .appOnChange(of: sync) { _, enabled in store.cloudSync?.setEnabled(enabled) }
                 Text("同步订阅、收藏与观看记录。内置 TMDB 保持可用，自定义服务在 TMDB 页面设置。")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.system(size: 15)).foregroundStyle(.secondary)
             }
         }
     }

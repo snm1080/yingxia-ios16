@@ -105,9 +105,9 @@ struct MusicNowPlaying: View {
                         HStack(spacing: 14) {
                             MusicArtwork(url: music.track?.artwork, size: art)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(music.track?.title ?? "").font(.headline).lineLimit(1)
+                                Text(music.track?.title ?? "").font(.system(size: 19, weight: .semibold)).lineLimit(1)
                                 Text([music.track?.artistLine, music.queue.flatMap(queueLine)].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                    .font(.system(size: 17)).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                         .contentShape(Rectangle())
@@ -153,7 +153,7 @@ struct MusicNowPlaying: View {
         if let lyrics = music.lyrics, lyrics.synced, let index = music.currentLyric, !lyrics.lines[index].text.isEmpty {
             Button { showsLyrics = true } label: {
                 Text(lyrics.lines[index].text)
-                    .font(.subheadline.weight(.medium)).lineLimit(1)
+                    .font(.system(size: 17, weight: .medium)).lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .id(index)
                     .transition(.opacity)
@@ -185,16 +185,16 @@ struct MusicNowPlaying: View {
                 }
             }
         }
-        .font(.caption.weight(.medium)).monospacedDigit().lineLimit(2)
+        .font(.system(size: 14, weight: .medium)).monospacedDigit().lineLimit(2)
     }
 
     @ViewBuilder private func source(_ music: MusicPlaybackSession) -> some View {
         // Both services ask to be named when their audio plays.
         if music.failure == nil, let provider = music.selection?.candidate.provider {
             if provider == .gdstudio {
-                Text(L10n.text("Source: GD Music (music.gdstudio.xyz)")).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                Text(L10n.text("Source: GD Music (music.gdstudio.xyz)")).font(.system(size: 13)).foregroundStyle(.tertiary).lineLimit(1)
             } else if provider == .xinghai {
-                Text(L10n.text("Source: Xinghai (yy.zddyr.top)")).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                Text(L10n.text("Source: Xinghai (yy.zddyr.top)")).font(.system(size: 13)).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
     }
@@ -280,7 +280,7 @@ struct MusicNowPlaying: View {
     @ViewBuilder private func progress(_ music: MusicPlaybackSession) -> some View {
         let total = max(music.duration ?? 0, 1)
         HStack(spacing: 10) {
-            Text(MusicTime.text(scrubbing ?? music.seekingTo ?? music.position)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            Text(MusicTime.text(scrubbing ?? music.seekingTo ?? music.position)).font(.system(size: 14)).monospacedDigit().foregroundStyle(.secondary)
             #if os(tvOS)
             ProgressView(value: min(music.seekingTo ?? music.position, total), total: total).tint(Brand.accent)
             #else
@@ -295,7 +295,7 @@ struct MusicNowPlaying: View {
             .appOnChange(of: music.track?.id) { _, _ in scrubbing = nil }
             .appOnChange(of: music.canSeek) { _, canSeek in if !canSeek { scrubbing = nil } }
             #endif
-            Text(music.duration.map(MusicTime.text) ?? "--:--").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            Text(music.duration.map(MusicTime.text) ?? "--:--").font(.system(size: 14)).monospacedDigit().foregroundStyle(.secondary)
         }
     }
 }
@@ -401,7 +401,7 @@ struct MusicLyricLines: View {
                                             .id(index)
                                         }
                                     }
-                                    Text(L10n.text("Lyrics from %@", lyrics.platform.name)).font(.caption).foregroundStyle(.tertiary).padding(.top, 12)
+                                    Text(L10n.text("Lyrics from %@", lyrics.platform.name)).font(.system(size: 14)).foregroundStyle(.tertiary).padding(.top, 12)
                                 }
                             }
                             .padding(.horizontal, Layout.gutter * 1.5).padding(.vertical, 40)
@@ -456,8 +456,8 @@ struct MusicChannelsView: View {
                                                 .foregroundStyle(current ? Brand.accent : row.tint)
                                                 .frame(width: 26)
                                             VStack(alignment: .leading, spacing: 3) {
-                                                Text(row.candidate.name).font(.body.weight(.medium))
-                                                Text(row.detail).font(.caption).foregroundStyle(.secondary)
+                                                Text(row.candidate.name).font(.system(size: 19, weight: .medium))
+                                                Text(row.detail).font(.system(size: 14)).foregroundStyle(.secondary)
                                             }
                                             Spacer()
                                             if current { Image(systemName: "checkmark").foregroundStyle(Brand.accent) }
@@ -574,7 +574,7 @@ struct MusicSettingsView: View {
                                 Toggle(isOn: enabled(provider, music: music)) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(provider.name)
-                                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                                        Text(detail).font(.system(size: 14)).foregroundStyle(.secondary)
                                     }
                                 }
                                 .settingsSwitch()
@@ -686,7 +686,7 @@ struct MusicLyricsTiming: View {
                 Button { music.adjustLyrics(by: -0.5) } label: { Label(L10n.text("Lyrics Later"), systemImage: "minus") }
                     .controlButton()
                 Text(music.lyricsOffset == 0 ? L10n.text("Lyrics in sync") : String(format: "%+.1f s", music.lyricsOffset))
-                    .font(.callout.weight(.medium)).monospacedDigit().foregroundStyle(.secondary)
+                    .font(.system(size: 18, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
                     .frame(minWidth: 110)
                 Button { music.adjustLyrics(by: 0.5) } label: { Label(L10n.text("Lyrics Earlier"), systemImage: "plus") }
                     .controlButton()
@@ -738,7 +738,7 @@ struct MusicScrubber: View {
                     Spacer()
                     Text(total > 0 ? "-" + MusicTime.text(total - position) : "--:--")
                 }
-                .font(.caption2.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
+                .font(.system(size: 13, weight: .semibold)).monospacedDigit().foregroundStyle(.secondary)
             }
             .disabled(!music.canSeek || total == 0)
             .appOnChange(of: music.track?.id) { _, _ in dragging = nil }
@@ -892,7 +892,7 @@ struct MusicLXSourcesSection: View {
                             Toggle(isOn: model.enabled(source)) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(source.info.name)
-                                    Text(MusicLXSourcesModel.detail(source)).font(.caption).foregroundStyle(.secondary)
+                                    Text(MusicLXSourcesModel.detail(source)).font(.system(size: 14)).foregroundStyle(.secondary)
                                 }
                             }
                             .settingsSwitch()
@@ -914,7 +914,7 @@ struct MusicLXSourcesSection: View {
                 }
                 importButton
                 if let message = model.message {
-                    Text(message).font(.caption).foregroundStyle(model.failed ? Brand.amber : Color.secondary)
+                    Text(message).font(.system(size: 14)).foregroundStyle(model.failed ? Brand.amber : Color.secondary)
                 }
             } header: {
                 Text(L10n.text("LX Music Sources"))
@@ -1108,7 +1108,7 @@ struct MusicExtensionsSection: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.name)
                                     let detail = MusicExtensionsModel.detail(item)
-                                    if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                    if !detail.isEmpty { Text(detail).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2) }
                                 }
                             }
                             .settingsSwitch()
@@ -1130,7 +1130,7 @@ struct MusicExtensionsSection: View {
                 }
                 importButton
                 if let message = model.message {
-                    Text(message).font(.caption).foregroundStyle(model.failed ? Brand.amber : Color.secondary)
+                    Text(message).font(.system(size: 14)).foregroundStyle(model.failed ? Brand.amber : Color.secondary)
                 }
             } header: {
                 Text(L10n.text("Music Extensions"))

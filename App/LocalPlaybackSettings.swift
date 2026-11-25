@@ -19,7 +19,7 @@ struct LocalCacheSettingsView: View {
             SettingsGroup(title: "缓存使用情况") {
                 SettingsRow(symbol: "internaldrive", tint: Brand.cyan, title: "已缓存 \(ByteCountFormatter.string(fromByteCount: Int64(cachedBytes), countStyle: .file))")
                 SettingsRow(symbol: "arrow.triangle.2.circlepath", tint: .blue, title: "已复用 \(ByteCountFormatter.string(fromByteCount: Int64(reusedBytes), countStyle: .file))")
-                if let cacheStatus { Text(cacheStatus).font(.footnote).foregroundStyle(.secondary) }
+                if let cacheStatus { Text(cacheStatus).font(.system(size: 15)).foregroundStyle(.secondary) }
                 SettingsActionRow(title: clearing ? "清理中…" : "清理视频缓存", destructive: true) {
                     clearing = true
                     Task {

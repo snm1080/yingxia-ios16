@@ -127,8 +127,8 @@ struct MusicNowPlayingScreen: View {
     private func header(_ music: MusicPlaybackSession, short: Bool) -> some View {
         HStack(spacing: 4) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(music.track?.title ?? "").font(.system(size: short ? 16 : 18, weight: .bold)).lineLimit(1)
-                Text(music.track?.artistLine ?? "").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                Text(music.track?.title ?? "").font(.system(size: short ? 18 : 20, weight: .bold)).lineLimit(1)
+                Text(music.track?.artistLine ?? "").font(.system(size: 15)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .combine)
             HStack(spacing: 0) {
                 control("backward.fill", size: 18, label: "Previous") { music.previous() }
@@ -159,7 +159,7 @@ struct MusicNowPlayingScreen: View {
                     Text(selection.degraded ? format + " · " + L10n.text("Lossy quality") : format)
                 } else { Text(" ") }
             }
-            .font(.caption.weight(.semibold)).monospacedDigit().lineLimit(1).foregroundStyle(.secondary)
+            .font(.system(size: 14, weight: .semibold)).monospacedDigit().lineLimit(1).foregroundStyle(.secondary)
             .padding(.horizontal, 10).padding(.vertical, 4)
             .background(.white.opacity(music.selection == nil ? 0 : 0.1), in: Capsule())
         }.buttonStyle(.plain).frame(height: 26).padding(.top, 2)
@@ -274,7 +274,7 @@ private struct MusicMoreActions: View {
         Button(role: destructive ? .destructive : nil) { perform(work) } label: {
             HStack(spacing: 12) {
                 Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).frame(width: 24)
-                Text(L10n.text(title)).font(.body.weight(.medium))
+                Text(L10n.text(title)).font(.system(size: 19, weight: .medium))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(destructive ? Brand.rose : Color.primary)
@@ -327,7 +327,7 @@ struct MusicVolumeSlider: View {
                 .frame(height: 22)
                 Image(systemName: "speaker.wave.3.fill")
             }
-            .font(.caption)
+            .font(.system(size: 14))
             .foregroundStyle(.secondary)
             .frame(height: 40)
             .background { WithPerceptionTracking { HiddenVolumeView(system: system).frame(width: 1, height: 1).opacity(0.01) } }
