@@ -3121,7 +3121,7 @@ struct VideoDetailView: View {
     /// a tall portrait hero otherwise pushes it to ~88%, half under the Dock. The pin
     /// only ever raises the header: the hero frame and the title spacer shrink by this
     /// same delta, so the title block keeps its exact place over the poster's faded
-    /// foot, the poster crops harder at the bottom, and the bar lands on the anchor.
+    /// foot, the poster crops harder (centred: both ends), and the bar lands on the anchor.
     /// Landscape artwork and the pre-load state keep build 38's layout untouched.
     private func detailHeroPinDelta(width: CGFloat, pageHeight: CGFloat) -> CGFloat {
         guard let aspect = detailArtworkAspect, aspect < 1, pageHeight > 0, detailHeaderBlockHeight > 0 else { return 0 }

@@ -119,7 +119,8 @@ struct DiscoverBackdrop: View {
     let trailer: TMDBMatch.Trailer?
     let playsTrailer: Bool
     /// Width-driven cover: a portrait poster renders at its natural height for the hero's
-    /// full width (edge to edge, no side bars); a height-capped hero crops its lower part.
+    /// full width (edge to edge, no side bars); a height-capped hero crops it centred,
+    /// taking the overflow off the top and bottom equally.
     var fitImage = false
     @State private var videoReady = false
     /// Mac: the floating sidebar's width, which the split view reports as a leading inset.
@@ -174,9 +175,10 @@ struct DiscoverBackdrop: View {
         // Fit mode is width-driven (MiraPlay-style): the poster renders at its natural
         // height for the full hero width, so it always spans edge to edge. When the
         // caller's height cap shortened the hero below that natural height, the
-        // top-aligned clipped frame below crops the poster's lower part — which the
-        // gradient mask fades into the page anyway — instead of pillarboxing the
-        // poster between paint-colour bars on both sides.
+        // centred clipped frame below crops the overflow off both ends equally —
+        // top and bottom — instead of pillarboxing the poster between paint-colour
+        // bars on both sides (build 39: centred crop, Sam's call; build 38 cropped
+        // the bottom only).
         let imageHeight: CGFloat = (fitImage && paint.image.width > 0)
             ? width * CGFloat(paint.image.height) / CGFloat(paint.image.width)
             : heroHeight
@@ -187,7 +189,7 @@ struct DiscoverBackdrop: View {
             .offset(y: -scrollY * 0.78)
             .opacity(Double(fade))
             .opacity(videoReady ? 0 : 1)
-            .frame(width: width, height: heroHeight, alignment: .top).clipped()
+            .frame(width: width, height: heroHeight, alignment: fitImage ? .center : .top).clipped()
             .mask {
                 WithPerceptionTracking {
                     LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.72),
