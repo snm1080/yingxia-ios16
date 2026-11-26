@@ -68,8 +68,12 @@ class MetalRender {
         bitDepth > 8 ? dolbyPipeline10 : dolbyPipeline8
     }
 
+    /// Build 44: drawable geometry+format the one-shot `dv out-dump`
+    /// readback was last taken for; a change re-arms it (new session).
+    private var dolbyOutputDumpKey: String?
+
     @MainActor
-    @discardableResult func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable, dolbyVision: Data? = nil) -> Bool {
+    @discardableResult func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable, dolbyVision: Data? = nil, dolbyDiagnostic: ((String) -> Void)? = nil) -> Bool {
         guard submissionGate.begin() else { return false }
         let inputTextures = pixelBuffer.textures()
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture
@@ -77,37 +81,112 @@ class MetalRender {
             submissionGate.end()
             return false
         }
-        encoder.pushDebugGroup("RenderFrame")
         // Build 42: Dolby Vision frames (biplanar, plane display) take the
         // dedicated colour-stage pipeline; every other frame keeps the
         // existing pipeline and fragment buffers exactly.
         let useDolbyStage = dolbyVision != nil && display == .plane && pixelBuffer.planeCount == 2
-        let state = useDolbyStage ? dolbyPipelineState(bitDepth: pixelBuffer.bitDepth) : display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
-        encoder.setRenderPipelineState(state)
-        encoder.setFragmentSamplerState(samplerState, index: 0)
-        for (index, texture) in inputTextures.enumerated() {
-            texture.label = "texture\(index)"
-            encoder.setFragmentTexture(texture, index: index)
+        let encode: (MTLRenderCommandEncoder) -> Void = { encoder in
+            encoder.pushDebugGroup("RenderFrame")
+            let state = useDolbyStage ? self.dolbyPipelineState(bitDepth: pixelBuffer.bitDepth) : display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
+            encoder.setRenderPipelineState(state)
+            encoder.setFragmentSamplerState(self.samplerState, index: 0)
+            for (index, texture) in inputTextures.enumerated() {
+                texture.label = "texture\(index)"
+                encoder.setFragmentTexture(texture, index: index)
+            }
+            if useDolbyStage, let dolbyVision {
+                dolbyVision.withUnsafeBytes { rawBuffer in
+                    if let baseAddress = rawBuffer.baseAddress {
+                        encoder.setFragmentBytes(baseAddress, length: dolbyVision.count, index: 0)
+                    }
+                }
+            } else {
+                self.setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
+            }
+            display.set(encoder: encoder)
+            encoder.popDebugGroup()
         }
-        if useDolbyStage, let dolbyVision {
-            dolbyVision.withUnsafeBytes { rawBuffer in
-                if let baseAddress = rawBuffer.baseAddress {
-                    encoder.setFragmentBytes(baseAddress, length: dolbyVision.count, index: 0)
+        encode(encoder)
+        encoder.endEncoding()
+        // Build 44: one-shot readback of the Dolby stage's output. The
+        // drawable itself is framebuffer-only, so the same frame is
+        // rendered a second time into a shared offscreen texture and its
+        // RGB range is read back on completion — this splits shader-math
+        // faults from presentation faults in the diagnostics export.
+        var dumpTexture: MTLTexture?
+        if useDolbyStage, let dolbyDiagnostic {
+            let target = drawable.texture
+            let key = "\(target.width)x\(target.height)x\(target.pixelFormat.rawValue)"
+            if dolbyOutputDumpKey != key {
+                let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: target.pixelFormat, width: target.width, height: target.height, mipmapped: false)
+                descriptor.usage = [.renderTarget, .shaderRead]
+                descriptor.storageMode = .shared
+                if let offscreen = MetalRender.device.makeTexture(descriptor: descriptor) {
+                    let dumpPass = MTLRenderPassDescriptor()
+                    dumpPass.colorAttachments[0].texture = offscreen
+                    dumpPass.colorAttachments[0].loadAction = .dontCare
+                    dumpPass.colorAttachments[0].storeAction = .store
+                    if let dumpEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: dumpPass) {
+                        encode(dumpEncoder)
+                        dumpEncoder.endEncoding()
+                        dumpTexture = offscreen
+                        dolbyOutputDumpKey = key
+                    }
                 }
             }
-        } else {
-            setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
         }
-        display.set(encoder: encoder)
-        encoder.popDebugGroup()
-        encoder.endEncoding()
         commandBuffer.present(drawable)
         let resources = MetalFrameResources(pixelBuffer: pixelBuffer, textures: inputTextures)
         commandBuffer.addCompletedHandler { [resources, submissionGate] _ in
             withExtendedLifetime(resources) { submissionGate.end() }
         }
+        if let dumpTexture, let dolbyDiagnostic {
+            commandBuffer.addCompletedHandler { _ in
+                dolbyDiagnostic(Self.dolbyOutputStats(texture: dumpTexture))
+            }
+        }
         commandBuffer.commit()
         return true
+    }
+
+    /// Strided CPU readback of one rendered Dolby frame: per-channel
+    /// min/max in the texture's native code values (0...1023 for
+    /// bgr10a2Unorm, 0...255 for bgra8Unorm).
+    private static func dolbyOutputStats(texture: MTLTexture) -> String {
+        let width = texture.width
+        let height = texture.height
+        let bytesPerRow = width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
+        bytes.withUnsafeMutableBytes { pointer in
+            if let baseAddress = pointer.baseAddress {
+                texture.getBytes(baseAddress, bytesPerRow: bytesPerRow, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+            }
+        }
+        var lo = [UInt32](repeating: UInt32.max, count: 3)
+        var hi = [UInt32](repeating: 0, count: 3)
+        let isPacked10 = texture.pixelFormat == .bgr10a2Unorm
+        let stride = 16
+        var y = 0
+        while y < height {
+            var x = 0
+            while x < width {
+                let offset = y * bytesPerRow + x * 4
+                let components: [UInt32]
+                if isPacked10 {
+                    let word = UInt32(bytes[offset]) | UInt32(bytes[offset + 1]) << 8 | UInt32(bytes[offset + 2]) << 16 | UInt32(bytes[offset + 3]) << 24
+                    components = [word & 0x3FF, (word >> 10) & 0x3FF, (word >> 20) & 0x3FF] // r, g, b
+                } else {
+                    components = [UInt32(bytes[offset + 2]), UInt32(bytes[offset + 1]), UInt32(bytes[offset])] // r, g, b
+                }
+                for channel in 0 ..< 3 {
+                    lo[channel] = min(lo[channel], components[channel])
+                    hi[channel] = max(hi[channel], components[channel])
+                }
+                x += stride
+            }
+            y += stride
+        }
+        return "dv out-dump r=[\(lo[0]),\(hi[0])] g=[\(lo[1]),\(hi[1])] b=[\(lo[2]),\(hi[2])]"
     }
 
     private func setFragmentBuffer(pixelBuffer: PixelBufferProtocol, encoder: MTLRenderCommandEncoder) {

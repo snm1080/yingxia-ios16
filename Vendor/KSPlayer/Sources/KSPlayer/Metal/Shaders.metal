@@ -93,7 +93,13 @@ half3 shaderDeLinearize(half3 rgb) {
 // ---------------------------------------------------------------------------
 
 float doviPQToLinear(float e) {
-    float e1 = pow(max(e, 0.0), 2610.0 / 16384.0);
+    // ST 2084 EOTF: the first step raises the PQ signal to 1/m2
+    // (32/2523), exactly as shaderLinearize above does. Build 42 shipped
+    // this as m1 (2610/16384) — the exponent from the *inverse* EOTF —
+    // which maps the whole real picture range to ~1e-6..1e-10 linear
+    // (PQ 0.5 -> 1.8e-10 instead of 9.3e-3): a uniformly black picture
+    // with healthy decode, metadata and presentation. Fixed in build 44.
+    float e1 = pow(max(e, 0.0), 32.0 / 2523.0);
     return pow(max(e1 - 3424.0 / 4096.0, 0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * e1), 16384.0 / 2610.0);
 }
 

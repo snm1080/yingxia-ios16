@@ -149,5 +149,18 @@ shaders for the RPU):
   layer only), and `FFmpegDecode` emits one-shot `dv rpu-dump`
   (parsed RPU value ranges via `DolbyVisionFrameMetadata.diagnosticSummary`)
   and `dv frame-dump` (decoded-plane sample min/max) lines per session.
+- Build 44 (2026-11-27) fixes the black picture the build-43 dumps
+  localized: the decoded BL and the parsed RPU were both healthy
+  (frame-dump luma [57,824]/[65,1017], sane pivots/coefficients), and
+  the legacy bypass rendered the same frames fine, leaving the colour
+  stage itself. In `Shaders.metal`, `doviPQToLinear` raised the PQ
+  signal to m1 (2610/16384) — the inverse-EOTF exponent — where the
+  ST 2084 EOTF's first step is 1/m2 (32/2523), as the file's own
+  `shaderLinearize` already did; the wrong exponent maps the whole
+  real picture range to ~1e-6..1e-10 linear, i.e. black. One constant
+  corrected. Build 44 also adds a one-shot `dv out-dump` (per drawable
+  geometry): `MetalRender` re-renders the first Dolby frame of a
+  session into a shared offscreen texture and logs its RGB min/max,
+  splitting shader-math faults from presentation faults in the export.
 
 This deviation must be re-applied after every future Vendor sync.

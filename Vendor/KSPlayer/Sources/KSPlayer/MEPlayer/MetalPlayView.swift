@@ -360,6 +360,7 @@ extension MetalPlayView {
                 // legacy shader (base layer only) and keeps its EDR
                 // metadata like any other HDR frame.
                 let stageMetadata = options.dolbyVisionColorStageEnabled ? frame.dolbyVision : nil
+                metalView.dolbyDiagnostic = options.onPlaybackDiagnostic
                 #if !os(tvOS)
                 if #available(iOS 16, *) {
                     // Dolby frames are tone-mapped to SDR by the colour
@@ -420,6 +421,8 @@ class MetalView: UIView {
     private var clearEpoch: UInt64 = 0
     var onDrawableReady: (() -> Void)?
     var onClearRequested: (() -> Void)?
+    /// Build 44: diagnostics sink for the Dolby stage's `dv out-dump`.
+    var dolbyDiagnostic: ((String) -> Void)?
     #if canImport(UIKit)
     override public class var layerClass: AnyClass { CAMetalLayer.self }
     #endif
@@ -550,7 +553,7 @@ class MetalView: UIView {
             let texelDenominator: Float = depth > 8 ? 65535 : 255
             let inputScale = texelDenominator / Float(1 << storedShift) / Float(1 << dolbyVision.blBitDepth)
             let uniform = dolbyVision.uniformData(inputScale: inputScale)
-            return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable, dolbyVision: uniform)
+            return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable, dolbyVision: uniform, dolbyDiagnostic: dolbyDiagnostic)
         }
         guard let drawable = nextReadyDrawable() else { return false }
         return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)
