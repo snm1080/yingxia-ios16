@@ -10,6 +10,8 @@ import Foundation
 import FFmpegKit
 class FFmpegDecode: DecodeProtocol {
     private let options: KSOptions
+    private let assetTrack: FFmpegAssetTrack
+    private let hardwareDecodeOption: Bool?
     private var coreFrame: UnsafeMutablePointer<AVFrame>? = av_frame_alloc()
     private var codecContext: UnsafeMutablePointer<AVCodecContext>?
     private var bestEffortTimestamp = Int64(0)
@@ -20,8 +22,19 @@ class FFmpegDecode: DecodeProtocol {
     private var audioResynchronizationPackets = 8
     private var liveResynchronizationPackets = 8
     private var awaitingLiveVideoKeyFrame = false
+    // Build 42: decoder-level recovery. A VideoToolbox session behind the
+    // FFmpeg hwaccel can wedge the same way the native session does — it
+    // keeps accepting packets but returns no frames. Count consecutive
+    // frame-less video packets; at the build-29 threshold (120) rebuild the
+    // codec context here and resume at the next keyframe (the PlayKit
+    // pattern) instead of relying on the app-level wholesale reopen.
+    private var starvedVideoPackets = 0
+    private var awaitingRebuildKeyFrame = false
+    private var decoderRebuildCount = 0
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions, hardwareDecode: Bool? = nil) {
         self.options = options
+        self.assetTrack = assetTrack
+        hardwareDecodeOption = hardwareDecode
         seekByBytes = assetTrack.seekByBytes
         do {
             codecContext = try assetTrack.createContext(options: options, hardwareDecode: hardwareDecode)
@@ -39,6 +52,15 @@ class FFmpegDecode: DecodeProtocol {
     }
 
     func decodeFrame(from packet: Packet, completionHandler: @escaping (Result<MEFrame, Error>) -> Void) {
+        if awaitingRebuildKeyFrame {
+            // Drop packets silently (the prepareLivePacket precedent) until a
+            // keyframe lets the rebuilt context resume cleanly. If the
+            // rebuild failed, codecContext is nil and the guard below turns
+            // this keyframe into the terminal decoder error.
+            guard packet.isKeyFrame else { return }
+            rebuildCodecContext()
+            awaitingRebuildKeyFrame = false
+        }
         guard let codecContext else {
             completionHandler(.failure(NSError(description: "The media decoder could not be opened.")))
             return
@@ -69,11 +91,13 @@ class FFmpegDecode: DecodeProtocol {
             }
         }
 
+        var producedFrame = false
         while true {
             let result = avcodec_receive_frame(codecContext, coreFrame)
             if result == 0, let inputFrame = coreFrame {
                 guard acceptLiveFrame(mediaType: packet.assetTrack.mediaType,
                     corrupt: inputFrame.pointee.flags & AV_FRAME_FLAG_CORRUPT != 0) else { continue }
+                producedFrame = true
                 if packet.assetTrack.mediaType == .audio { audioResynchronizationPackets = 0 }
                 if packet.assetTrack.mediaType == .video {
                     let decoder = inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue ? "VideoToolbox (FFmpeg)" : "FFmpeg software"
@@ -212,6 +236,42 @@ class FFmpegDecode: DecodeProtocol {
                 }
             }
         }
+        noteDecodeProgress(mediaType: packet.assetTrack.mediaType, producedFrame: producedFrame)
+    }
+
+    /// Build 42: wedge detection for the FFmpeg decode path. A healthy
+    /// decoder emits a frame within a few packets of any packet (B-frame
+    /// reorder depth is far below this threshold); 120 consecutive
+    /// frame-less video packets means the session behind the hwaccel is
+    /// wedged. Arm a decoder-level rebuild at the next keyframe.
+    private func noteDecodeProgress(mediaType: AVMediaType, producedFrame: Bool) {
+        guard mediaType == .video else { return }
+        if producedFrame {
+            starvedVideoPackets = 0
+        } else if !awaitingRebuildKeyFrame {
+            starvedVideoPackets += 1
+            if starvedVideoPackets >= 120 {
+                awaitingRebuildKeyFrame = true
+                KSLog("FFmpegDecode: no frames for 120 consecutive packets; rebuilding codec context at next keyframe")
+                options.onPlaybackDiagnostic?("decoder starved packets=120 rebuild=armed")
+            }
+        }
+    }
+
+    private func rebuildCodecContext() {
+        avcodec_free_context(&codecContext)
+        do {
+            codecContext = try assetTrack.createContext(options: options, hardwareDecode: hardwareDecodeOption)
+            codecContext?.pointee.time_base = assetTrack.timebase.rational
+        } catch {
+            KSLog(error as CustomStringConvertible)
+            codecContext = nil
+        }
+        filter.flush()
+        starvedVideoPackets = 0
+        decoderRebuildCount += 1
+        KSLog("FFmpegDecode: codec context rebuilt (count \(decoderRebuildCount))")
+        options.onPlaybackDiagnostic?("decoder rebuild count=\(decoderRebuildCount) reason=starved")
     }
 
     private func prepareLivePacket(_ packet: Packet) -> Bool {
@@ -270,6 +330,8 @@ class FFmpegDecode: DecodeProtocol {
         audioResynchronizationPackets = 8
         liveResynchronizationPackets = 8
         awaitingLiveVideoKeyFrame = false
+        starvedVideoPackets = 0
+        awaitingRebuildKeyFrame = false
         bestEffortTimestamp = Int64(0)
         // seek之后要清空下，不然解码可能还会有缓存，导致返回的数据是之前seek的。
         avcodec_flush_buffers(codecContext)
@@ -287,6 +349,8 @@ class FFmpegDecode: DecodeProtocol {
         audioResynchronizationPackets = 8
         liveResynchronizationPackets = 8
         awaitingLiveVideoKeyFrame = false
+        starvedVideoPackets = 0
+        awaitingRebuildKeyFrame = false
         bestEffortTimestamp = Int64(0)
         filter.flush()
         if codecContext != nil {

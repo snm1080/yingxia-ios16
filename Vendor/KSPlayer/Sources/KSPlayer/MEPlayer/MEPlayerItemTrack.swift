@@ -322,7 +322,14 @@ final class AsyncPlayerItemTrack<Frame: MEFrame>: SyncPlayerItemTrack<Frame> {
     override var packetByteCount: Int64 { packetQueue.byteCount }
     override var loadedTime: TimeInterval { packetQueue.bufferedDuration + super.loadedTime }
     private static func makePacketQueue() -> CircularBuffer<Packet> {
-        CircularBuffer<Packet>(sizeOf: { Int64($0.size) }, durationOf: { packet in
+        // Build 42: hard-bound the demux -> decode packet queue. It used to
+        // expand without limit, so while a decoder session was wedged the
+        // reader kept flooding it until the process was jetsammed (the
+        // failure mode behind the build-29 VideoToolbox guard). With
+        // expanding off, push blocks the reader once full; pop signals it
+        // again at half capacity, and seek/shutdown flush() broadcasts wake
+        // it immediately, so the bound cannot deadlock those paths.
+        CircularBuffer<Packet>(initialCapacity: 1024, expanding: false, sizeOf: { Int64($0.size) }, durationOf: { packet in
             let duration = packet.timebase.cmtime(for: packet.duration).seconds
             if duration.isFinite, duration > 0 { return duration }
             let fps = packet.assetTrack.nominalFrameRate
