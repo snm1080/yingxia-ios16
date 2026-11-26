@@ -256,7 +256,7 @@ class FFmpegDecode: DecodeProtocol {
     /// reorder depth is far below this threshold); 120 consecutive
     /// frame-less video packets means the session behind the hwaccel is
     /// wedged. Arm a decoder-level rebuild at the next keyframe.
-    private func noteDecodeProgress(mediaType: AVMediaType, producedFrame: Bool) {
+    private func noteDecodeProgress(mediaType: AVFoundation.AVMediaType, producedFrame: Bool) {
         guard mediaType == .video else { return }
         if producedFrame {
             starvedVideoPackets = 0
