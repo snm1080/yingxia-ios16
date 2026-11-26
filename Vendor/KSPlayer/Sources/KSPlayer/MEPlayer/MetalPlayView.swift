@@ -332,7 +332,7 @@ extension MetalPlayView {
             let sar = pixelBuffer.aspectRatio
             if pictureInPictureActive, let pictureInPictureFrame {
                 guard pictureInPictureFrame(pixelBuffer, cmtime) else { return false }
-            } else if let pixelBuffer = pixelBuffer.cvPixelBuffer, usesDisplayLayer {
+            } else if let pixelBuffer = pixelBuffer.cvPixelBuffer, usesDisplayLayer, frame.dolbyVision == nil {
                 if let dar = options.customizeDar(sar: sar, par: par) {
                     pixelBuffer.aspectRatio = CGSize(width: dar.width, height: dar.height * par.width / par.height)
                 }
@@ -357,10 +357,12 @@ extension MetalPlayView {
                 checkFormatDescription(pixelBuffer: pixelBuffer)
                 #if !os(tvOS)
                 if #available(iOS 16, *) {
-                    metalView.metalLayer.edrMetadata = frame.edrMetadata
+                    // Dolby frames are tone-mapped to SDR by the colour
+                    // stage; never attach the HDR10 EDR metadata for them.
+                    metalView.metalLayer.edrMetadata = frame.dolbyVision == nil ? frame.edrMetadata : nil
                 }
                 #endif
-                guard metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size) else { return false }
+                guard metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, dolbyVision: frame.dolbyVision) else { return false }
                 if !displayView.isHidden {
                     displayView.isHidden = true
                     metalView.isHidden = false
@@ -491,7 +493,7 @@ class MetalView: UIView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: retry)
     }
 
-    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize) -> Bool {
+    func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum, size: CGSize, dolbyVision: DolbyVisionFrameMetadata? = nil) -> Bool {
         if pendingClear { invalidateDrawable() }
         guard render.hasCapacity else { return false }
         if drawableDisplay != display { invalidateDrawable(); drawableDisplay = display }
@@ -517,6 +519,33 @@ class MetalView: UIView {
                 KSLog("[video] CAMetalLayer wantsExtendedDynamicRangeContent \(metalLayer.wantsExtendedDynamicRangeContent)")
             }
             #endif
+        }
+        if let dolbyVision {
+            // Build 42: the Dolby colour stage outputs display-referred
+            // sRGB. The layer must not reinterpret the frame's BT.2020/PQ
+            // attachments, and EDR stays off so the shader's tone map is
+            // the only mapping applied.
+            let srgb = CGColorSpace(name: CGColorSpace.sRGB)
+            if metalLayer.colorspace != srgb {
+                invalidateDrawable()
+                metalLayer.colorspace = srgb
+            }
+            #if !os(tvOS)
+            if #available(iOS 16.0, *) {
+                metalLayer.wantsExtendedDynamicRangeContent = false
+            }
+            #endif
+            guard let drawable = nextReadyDrawable() else { return false }
+            // Same normalization YUVColorConversion performs: a texture
+            // sample is the stored code over (2^texelDepth - 1), shifted
+            // back to the top of its texel; the shader wants the sample
+            // code over 2^bl_bit_depth.
+            let depth = Int(pixelBuffer.bitDepth)
+            let storedShift = depth > 8 ? max(0, 16 - depth - Int(pixelBuffer.leftShift)) : 0
+            let texelDenominator: Float = depth > 8 ? 65535 : 255
+            let inputScale = texelDenominator / Float(1 << storedShift) / Float(1 << dolbyVision.blBitDepth)
+            let uniform = dolbyVision.uniformData(inputScale: inputScale)
+            return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable, dolbyVision: uniform)
         }
         guard let drawable = nextReadyDrawable() else { return false }
         return render.draw(pixelBuffer: pixelBuffer, display: display, drawable: drawable)

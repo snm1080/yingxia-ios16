@@ -80,6 +80,132 @@ half3 shaderDeLinearize(half3 rgb) {
     return rgb;
 }
 
+// ---------------------------------------------------------------------------
+// Build 42: Dolby Vision Profile 5 colour stage (libplacebo's pipeline).
+// The uniform block is a flat float4 array packed by
+// DolbyVisionFrameMetadata.uniformData in DolbyVisionColor.swift:
+//   0..2   yccToRGB matrix columns      3     yccOffset.xyz, inputScale
+//   4..6   LMS matrix columns           7     sourcePeakPQ, displayPeakPQ,
+//                                             displayPeakNorm, unused
+//   8      pivotLo                      9     pivotHi
+//   10..18 reshaping pivots (3/component) 19   numPivots per component
+//   20..43 per-piece coefficients       44..187 MMR coefficients
+// ---------------------------------------------------------------------------
+
+float doviPQToLinear(float e) {
+    float e1 = pow(max(e, 0.0), 2610.0 / 16384.0);
+    return pow(max(e1 - 3424.0 / 4096.0, 0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * e1), 16384.0 / 2610.0);
+}
+
+float doviLinearToPQ(float y) {
+    float y1 = pow(max(y, 0.0), 2610.0 / 16384.0);
+    return pow((3424.0 / 4096.0 + 2413.0 / 128.0 * y1) / (1.0 + 2392.0 / 128.0 * y1), 2523.0 / 32.0);
+}
+
+float doviPivot(constant float4* p, int comp, int index) {
+    return p[10 + comp * 3 + index / 4][index % 4];
+}
+
+float doviReshape(int comp, float3 sig, constant float4* p) {
+    float s = sig[comp];
+    int numPieces = int(p[19][comp] + 0.5) - 1;
+    int piece = numPieces - 1;
+    for (int i = 0; i < numPieces; i++) {
+        if (s < doviPivot(p, comp, i + 1)) { piece = i; break; }
+    }
+    float4 coeffs = p[20 + comp * 8 + piece];
+    if (coeffs.w < 0.5) {
+        // Polynomial piece (order 1 or 2), Horner form.
+        return clamp((coeffs.z * s + coeffs.y) * s + coeffs.x, 0.0, 1.0);
+    }
+    // MMR piece: constant + per-order dot products over sig, the pairwise
+    // cross terms, and their powers — libplacebo's evaluation order.
+    int order = int(coeffs.y + 0.5);
+    int base = 44 + comp * 48 + piece * 6;
+    float4 sigX = float4(sig.x * sig.y, sig.x * sig.z, sig.y * sig.z,
+                         (sig.x * sig.y) * (sig.y * sig.z));
+    float value = coeffs.x;
+    value += dot(p[base].xyz, sig);
+    value += dot(p[base + 1], sigX);
+    if (order >= 2) {
+        float3 sig2 = sig * sig;
+        float4 sigX2 = sigX * sigX;
+        value += dot(p[base + 2].xyz, sig2);
+        value += dot(p[base + 3], sigX2);
+        if (order >= 3) {
+            value += dot(p[base + 4].xyz, sig2 * sig);
+            value += dot(p[base + 5], sigX2 * sigX);
+        }
+    }
+    return clamp(value, 0.0, 1.0);
+}
+
+// ITU-R BT.2390 EETF, applied in the PQ domain as libplacebo applies it
+// (knee_offset = 1.0; source minimum is 0, so black adaptation is identity).
+float doviToneMapPQ(float pq, float srcPeakPQ, float dstPeakPQ) {
+    if (srcPeakPQ <= 0.0 || pq <= 0.0) { return pq; }
+    float maxLum = dstPeakPQ / srcPeakPQ;
+    float x = pq / srcPeakPQ;
+    float ks = 2.0 * maxLum - 1.0;
+    if (ks < 1.0) {
+        float tb = clamp((x - ks) / (1.0 - ks), 0.0, 1.0);
+        float tb2 = tb * tb;
+        float tb3 = tb2 * tb;
+        float pb = (2.0 * tb3 - 3.0 * tb2 + 1.0) * ks
+                 + (tb3 - 2.0 * tb2 + tb) * (1.0 - ks)
+                 + (-2.0 * tb3 + 3.0 * tb2) * maxLum;
+        x = x < ks ? x : pb;
+    }
+    return x * srcPeakPQ;
+}
+
+fragment half4 displayDolbyVisionTexture(VertexOut in [[ stage_in ]],
+                                         texture2d<half> lumaTexture [[ texture(0) ]],
+                                         texture2d<half> chromaTexture [[ texture(1) ]],
+                                         sampler textureSampler [[ sampler(0) ]],
+                                         constant float4* dovi [[ buffer(0) ]])
+{
+    float3 ipt;
+    ipt.x = float(lumaTexture.sample(textureSampler, in.textureCoordinate).r);
+    ipt.yz = float2(chromaTexture.sample(textureSampler, in.textureCoordinate).rg);
+    ipt *= dovi[3].w; // texture sample -> sample code / 2^bl_bit_depth
+
+    // Reshaping operates on the full signal vector (MMR reads all three
+    // components), clamped to each component's pivot range first.
+    float3 sig = clamp(ipt, dovi[8].xyz, dovi[9].xyz);
+    float3 reshaped = float3(doviReshape(0, sig, dovi),
+                             doviReshape(1, sig, dovi),
+                             doviReshape(2, sig, dovi));
+
+    // IPT -> RGB in the PQ domain, then linearize and apply the LMS matrix
+    // (RPU rgb_to_lms precomposed with the BT.2020 HPE LMS->RGB matrix).
+    float3x3 yccToRGB = float3x3(dovi[0].xyz, dovi[1].xyz, dovi[2].xyz);
+    float3 rgbPQ = yccToRGB * (reshaped - dovi[3].xyz);
+    float3 linear = float3(doviPQToLinear(rgbPQ.x), doviPQToLinear(rgbPQ.y), doviPQToLinear(rgbPQ.z));
+    float3x3 lmsMatrix = float3x3(dovi[4].xyz, dovi[5].xyz, dovi[6].xyz);
+    linear = lmsMatrix * linear;
+
+    // Tone map the peak component; scale every channel by the same ratio
+    // in linear light so hue is preserved.
+    float peak = max(max(linear.x, linear.y), linear.z);
+    if (peak > 0.0) {
+        float mappedPeak = doviPQToLinear(doviToneMapPQ(doviLinearToPQ(peak), dovi[7].x, dovi[7].y));
+        linear *= mappedPeak / peak;
+    }
+
+    // Gamut-convert BT.2020 -> BT.709 (linear, D65), normalize to the
+    // 100-nit SDR target, and encode sRGB for the layer.
+    float3x3 gamut = float3x3(float3(1.660491, -0.124550, -0.018151),
+                              float3(-0.587641, 1.132900, -0.100579),
+                              float3(-0.072850, -0.008349, 1.118730));
+    linear = gamut * linear;
+    linear = clamp(linear / dovi[7].z, 0.0, 1.0);
+    float3 srgb = mix(12.92 * linear,
+                      1.055 * pow(linear, float3(1.0 / 2.4)) - 0.055,
+                      step(float3(0.0031308), linear));
+    return half4(half3(srgb), half(1));
+}
+
 fragment half4 displayYCCTexture(VertexOut in [[ stage_in ]],
                                   texture2d<half> lumaTexture [[ texture(0) ]],
                                   texture2d<half> chromaTexture [[ texture(1) ]],

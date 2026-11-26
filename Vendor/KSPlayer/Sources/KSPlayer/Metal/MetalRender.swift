@@ -61,8 +61,15 @@ class MetalRender {
         return true
     }
 
+    private lazy var dolbyPipeline10 = MetalRender.makePipelineState(fragmentFunction: "displayDolbyVisionTexture", bitDepth: 10)
+    private lazy var dolbyPipeline8 = MetalRender.makePipelineState(fragmentFunction: "displayDolbyVisionTexture")
+
+    private func dolbyPipelineState(bitDepth: Int32) -> MTLRenderPipelineState {
+        bitDepth > 8 ? dolbyPipeline10 : dolbyPipeline8
+    }
+
     @MainActor
-    @discardableResult func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable) -> Bool {
+    @discardableResult func draw(pixelBuffer: PixelBufferProtocol, display: DisplayEnum = .plane, drawable: CAMetalDrawable, dolbyVision: Data? = nil) -> Bool {
         guard submissionGate.begin() else { return false }
         let inputTextures = pixelBuffer.textures()
         renderPassDescriptor.colorAttachments[0].texture = drawable.texture
@@ -71,14 +78,26 @@ class MetalRender {
             return false
         }
         encoder.pushDebugGroup("RenderFrame")
-        let state = display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
+        // Build 42: Dolby Vision frames (biplanar, plane display) take the
+        // dedicated colour-stage pipeline; every other frame keeps the
+        // existing pipeline and fragment buffers exactly.
+        let useDolbyStage = dolbyVision != nil && display == .plane && pixelBuffer.planeCount == 2
+        let state = useDolbyStage ? dolbyPipelineState(bitDepth: pixelBuffer.bitDepth) : display.pipeline(planeCount: pixelBuffer.planeCount, bitDepth: pixelBuffer.bitDepth)
         encoder.setRenderPipelineState(state)
         encoder.setFragmentSamplerState(samplerState, index: 0)
         for (index, texture) in inputTextures.enumerated() {
             texture.label = "texture\(index)"
             encoder.setFragmentTexture(texture, index: index)
         }
-        setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
+        if useDolbyStage, let dolbyVision {
+            dolbyVision.withUnsafeBytes { rawBuffer in
+                if let baseAddress = rawBuffer.baseAddress {
+                    encoder.setFragmentBytes(baseAddress, length: dolbyVision.count, index: 0)
+                }
+            }
+        } else {
+            setFragmentBuffer(pixelBuffer: pixelBuffer, encoder: encoder)
+        }
         display.set(encoder: encoder)
         encoder.popDebugGroup()
         encoder.endEncoding()

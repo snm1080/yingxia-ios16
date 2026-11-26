@@ -97,3 +97,48 @@ completes a frame within one GOP) completes the current packet with
 terminal path (track `.failed` → the DV error surface for
 `requiresNativeDolbyVision` tracks). This deviation must be re-applied after
 every future Vendor sync.
+
+---
+
+## Fourth local deviation: Dolby Vision Profile 5 FFmpeg route + GPU colour stage (2026-11-26, our build 42)
+
+The native 'dvhe' VideoToolbox session wedges after one frame for Profile 5
+on iPadOS 16 / A12 (the failure the third deviation guards against), so
+build 42 stops sending P5 to the native decoder at all — the split
+mpv/SenPlayer use (FFmpeg videotoolbox hwaccel for the base layer, GPU
+shaders for the RPU):
+
+- `Sources/KSPlayer/MEPlayer/MEPlayerItemTrack.swift` (`makeDecode`):
+  tracks with `dovi.dv_profile == 5` return `FFmpegDecode` before the
+  native branches. P7->P8.1 converted tracks keep the native route; all
+  non-P5 behaviour is unchanged. The third deviation's 120-packet guard
+  stays in `VideoToolboxDecode` as the last-resort net for that route.
+- `Sources/KSPlayer/MEPlayer/MEPlayerItemTrack.swift`
+  (`makePacketQueue`): the packet queue is hard-bounded (1024 packets,
+  `expanding: false`) so a wedged decoder can no longer flood memory.
+- `Sources/KSPlayer/MEPlayer/FFmpegDecode.swift`: (a) 120 consecutive
+  frame-less video packets arm a decoder-level codec-context rebuild,
+  resuming at the next keyframe, instead of relying on the app-level
+  reopen; (b) `AV_FRAME_DATA_DOVI_METADATA` side data is parsed into
+  `DolbyVisionFrameMetadata` and attached to the produced
+  `VideoVTBFrame` (`Sources/KSPlayer/MEPlayer/Model.swift`) instead of
+  being read and discarded.
+- `Sources/KSPlayer/Metal/DolbyVisionColor.swift` (new),
+  `Sources/KSPlayer/Metal/Shaders.metal` (`displayDolbyVisionTexture`),
+  `Sources/KSPlayer/Metal/MetalRender.swift`,
+  `Sources/KSPlayer/MEPlayer/MetalPlayView.swift`: frames carrying parsed
+  RPU metadata bypass the sample-buffer display layer and render through
+  a dedicated Metal pipeline performing RPU reshaping (polynomial + MMR)
+  -> ycc_to_rgb (PQ domain) -> PQ EOTF -> LMS matrix -> BT.2390 tone
+  mapping to 100 nits -> BT.2020->BT.709 -> sRGB. The layer is forced to
+  sRGB with EDR off for these frames. HDR10/HLG/SDR frames are untouched.
+  Approximations vs libplacebo: source peak comes from the RPU color
+  metadata (not per-frame L1 ext blocks), and libplacebo's BT.2446a /
+  gamut-desaturation refinements are not ported; the EOTF->matrix round
+  trip is composed directly in linear light.
+- `Sources/KSPlayer/AVPlayer/KSOptions.swift`: adds
+  `onPlaybackDiagnostic`, a free-form diagnostic channel the app forwards
+  into its diagnostics log (DV routing, hwaccel format, RPU presence,
+  rebuild events).
+
+This deviation must be re-applied after every future Vendor sync.
