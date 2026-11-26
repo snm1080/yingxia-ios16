@@ -276,6 +276,12 @@ struct KSPlaybackChapter: Identifiable, Equatable {
                 Diagnostics.shared.record(.warning, "player.decoder", "error=\(PlaybackFailureDiagnostics.codes(error)) \(self.failureDiagnostic)")
             }
         }
+        options.onPlaybackDiagnostic = { @Sendable [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, self.mediaID == mediaID, self.openID == activeOpen else { return }
+                Diagnostics.shared.record(.info, "player.decoder", message)
+            }
+        }
         options.hardwareDecode = decoder != "software"
         options.asynchronousDecompression = decoder != "software"
         options.autoDeInterlace = true

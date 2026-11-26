@@ -486,15 +486,29 @@ extension SyncPlayerItemTrack {
             if mediaType == .subtitle {
                 return SubtitleDecode(assetTrack: assetTrack, options: options)
             } else {
-                if mediaType == .video, self is AsyncPlayerItemTrack<Frame>,
+                if mediaType == .video, assetTrack.dovi?.dv_profile == 5 {
+                    // Build 42: Dolby Vision Profile 5 must not use the native
+                    // 'dvhe' VideoToolbox session — it emits one frame and then
+                    // wedges on iPadOS 16 / A12 (see the build-29 guard in
+                    // VideoToolboxDecode). Decode the base layer as plain HEVC
+                    // through FFmpeg with its standard videotoolbox hwaccel
+                    // and apply the RPU in the GPU colour stage instead
+                    // (DolbyVisionColor.swift), the same split mpv/SenPlayer
+                    // use. P7->P8.1 converted tracks keep the native route
+                    // below; all non-P5 behaviour is unchanged.
+                    options.onVideoDecoderChanged?("FFmpeg")
+                    options.onPlaybackDiagnostic?("dv route=ffmpeg profile=5 hwaccel=videotoolbox native=skipped")
+                    return FFmpegDecode(assetTrack: assetTrack, options: options)
+                } else if mediaType == .video, self is AsyncPlayerItemTrack<Frame>,
                    options.asynchronousDecompression, options.hardwareDecode,
                    let session = DecompressionSession(assetTrack: assetTrack, options: options)
                 {
                     options.onVideoDecoderChanged?("VideoToolbox")
                     return VideoToolboxDecode(options: options, session: session)
                 } else if mediaType == .video, assetTrack.requiresNativeDolbyVision {
-                    // P5 and converted P8.1 require their native Dolby/RPU
-                    // processing; ordinary software HEVC would lose that work.
+                    // Converted P8.1 requires its native Dolby/RPU processing;
+                    // ordinary software HEVC would lose that work. (Profile 5
+                    // is handled by the FFmpeg route above since build 42.)
                     return UnavailableDolbyVisionDecode()
                 } else {
                     if mediaType == .video { options.onVideoDecoderChanged?("FFmpeg") }

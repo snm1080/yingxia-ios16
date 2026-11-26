@@ -112,6 +112,10 @@ open class KSOptions {
     public var onVideoDecoderFailed: ((String) -> Void)?
     /// Structured native error before fallback/terminal notification, without input URLs.
     public var onVideoDecoderError: ((NSError) -> Void)?
+    /// Build 42: free-form diagnostic lines from the decode layer (decoder
+    /// routing, Dolby Vision colour stage, decoder-level session rebuilds),
+    /// forwarded by the app into its diagnostics log.
+    public var onPlaybackDiagnostic: ((String) -> Void)?
     /// A recovery keeps the selected stream in both ordinary and companion inputs.
     public var preferredAudioTrackID: Int32?
     public var hardwareDecode = KSOptions.hardwareDecode
