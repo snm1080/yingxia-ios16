@@ -430,6 +430,10 @@ public final class VideoVTBFrame: MEFrame {
     public let fps: Float
     public let isDovi: Bool
     public var edrMetaData: EDRMetaData? = nil
+    /// Build 42: parsed Dolby Vision RPU for this frame (Profile 5 path).
+    /// Non-nil only when FFmpegDecode extracted AV_FRAME_DATA_DOVI_METADATA;
+    /// its presence routes the frame through the GPU Dolby colour stage.
+    public var dolbyVision: DolbyVisionFrameMetadata?
     var corePixelBuffer: PixelBufferProtocol?
     init(fps: Float, isDovi: Bool) {
         self.fps = fps

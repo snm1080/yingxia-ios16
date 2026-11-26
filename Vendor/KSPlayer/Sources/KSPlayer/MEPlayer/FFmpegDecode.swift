@@ -31,6 +31,9 @@ class FFmpegDecode: DecodeProtocol {
     private var starvedVideoPackets = 0
     private var awaitingRebuildKeyFrame = false
     private var decoderRebuildCount = 0
+    // Build 42: one-time Dolby path diagnostic state.
+    private var sawDolbyRPUBuffer = false
+    private var reportedDolbyPath = false
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions, hardwareDecode: Bool? = nil) {
         self.options = options
         self.assetTrack = assetTrack
@@ -109,6 +112,7 @@ class FFmpegDecode: DecodeProtocol {
                 var displayData: MasteringDisplayMetadata?
                 var contentData: ContentLightMetadata?
                 var ambientViewingEnvironment: AmbientViewingEnvironment?
+                var dolbyMetadata: DolbyVisionFrameMetadata?
 
                 // filter之后，side_data信息会丢失，所以放在这里
                 if inputFrame.pointee.nb_side_data > 0 {
@@ -141,13 +145,14 @@ class FFmpegDecode: DecodeProtocol {
                                     options.sei(string: str)
                                 }
                             } else if sideData.type == AV_FRAME_DATA_DOVI_RPU_BUFFER {
-                                let data = sideData.data.withMemoryRebound(to: [UInt8].self, capacity: 1) { $0 }
+                                // The raw RPU bytes are superseded by the parsed
+                                // AVDOVIMetadata below; presence noted for logging.
+                                sawDolbyRPUBuffer = true
                             } else if sideData.type == AV_FRAME_DATA_DOVI_METADATA { // AVDOVIMetadata
+                                // Build 42: parse the RPU instead of discarding
+                                // it; the GPU colour stage consumes it per frame.
                                 let data = sideData.data.withMemoryRebound(to: AVDOVIMetadata.self, capacity: 1) { $0 }
-                                let header = av_dovi_get_header(data)
-                                let mapping = av_dovi_get_mapping(data)
-                                let color = av_dovi_get_color(data)
-                                // frame.corePixelBuffer?.transferFunction = kCVImageBufferTransferFunction_ITU_R_2020
+                                dolbyMetadata = DolbyVisionFrameMetadata.parse(data)
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_PLUS { // AVDynamicHDRPlus
                                 let data = sideData.data.withMemoryRebound(to: AVDynamicHDRPlus.self, capacity: 1) { $0 }.pointee
                             } else if sideData.type == AV_FRAME_DATA_DYNAMIC_HDR_VIVID { // AVDynamicHDRVivid
@@ -184,6 +189,12 @@ class FFmpegDecode: DecodeProtocol {
                     }
                 }
 
+                if packet.assetTrack.dovi != nil, !reportedDolbyPath {
+                    reportedDolbyPath = true
+                    let formatName = inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue ? "videotoolbox" : "software"
+                    options.onPlaybackDiagnostic?("dv ffmpeg format=\(formatName) rpu=\(dolbyMetadata != nil ? "parsed" : "absent") rpu-buffer=\(sawDolbyRPUBuffer ? "present" : "absent") colour-stage=\(dolbyMetadata != nil ? "on" : "off")")
+                }
+
                 filter.filter(options: options, inputFrame: inputFrame) { avframe in
                     do {
                         var frame = try frameChange.change(avframe: avframe)
@@ -194,6 +205,7 @@ class FFmpegDecode: DecodeProtocol {
                             if displayData != nil || contentData != nil || ambientViewingEnvironment != nil {
                                 videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
                             }
+                            videoFrame.dolbyVision = dolbyMetadata
                         }
                         frame.timebase = filter.timebase
                         // frame.timebase = Timebase(avframe.pointee.time_base)
