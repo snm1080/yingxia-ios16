@@ -116,6 +116,12 @@ open class KSOptions {
     /// routing, Dolby Vision colour stage, decoder-level session rebuilds),
     /// forwarded by the app into its diagnostics log.
     public var onPlaybackDiagnostic: ((String) -> Void)?
+    /// Build 43: Dolby Vision colour-stage switch, set by the app from
+    /// its player settings. True (the default) routes Profile 5 frames
+    /// through the GPU colour stage; false renders them through the
+    /// legacy shader path instead (base layer only, no RPU applied),
+    /// for A/B diagnosis of the colour stage.
+    public var dolbyVisionColorStageEnabled = true
     /// A recovery keeps the selected stream in both ordinary and companion inputs.
     public var preferredAudioTrackID: Int32?
     public var hardwareDecode = KSOptions.hardwareDecode

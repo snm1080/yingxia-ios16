@@ -282,6 +282,9 @@ struct KSPlaybackChapter: Identifiable, Equatable {
                 Diagnostics.shared.record(.info, "player.decoder", message)
             }
         }
+        // Build 43: Dolby colour-stage bypass from the player settings
+        // (default on = colour stage active).
+        options.dolbyVisionColorStageEnabled = UserDefaults.standard.object(forKey: "local.playback.dolbyColorStage") as? Bool ?? true
         options.hardwareDecode = decoder != "software"
         options.asynchronousDecompression = decoder != "software"
         options.autoDeInterlace = true

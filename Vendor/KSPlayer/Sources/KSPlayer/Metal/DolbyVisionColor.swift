@@ -82,6 +82,37 @@ public struct DolbyVisionFrameMetadata {
         }
     }
 
+    /// Build 43: one-line dump of the parsed values for the diagnostics
+    /// log. Reports magnitudes (pivot ranges, coefficient ranges), not
+    /// just presence, so a parse that collapsed to zeros is visible in
+    /// the export.
+    public var diagnosticSummary: String {
+        func fmt(_ value: Float) -> String { String(format: "%.4f", value) }
+        var parts: [String] = []
+        parts.append("bldepth=\(blBitDepth)")
+        parts.append("srcpq=\(fmt(sourcePeakPQ))")
+        let row0 = [yccToRGBColumns[0].x, yccToRGBColumns[1].x, yccToRGBColumns[2].x]
+        parts.append("yccrow0=[\(row0.map(fmt).joined(separator: ","))]")
+        for comp in 0 ..< 3 {
+            let pieceCount = max(0, min(8, Int(numPivots[comp]) - 1))
+            var polyLo = Float.greatestFiniteMagnitude
+            var polyHi = -Float.greatestFiniteMagnitude
+            var hasMMR = false
+            for piece in 0 ..< pieceCount {
+                let slot = coeffs[comp * 8 + piece]
+                if slot.w == 1 {
+                    hasMMR = true
+                } else {
+                    polyLo = min(polyLo, slot.x, slot.y, slot.z)
+                    polyHi = max(polyHi, slot.x, slot.y, slot.z)
+                }
+            }
+            let poly = polyLo <= polyHi ? "[\(fmt(polyLo)),\(fmt(polyHi))]" : "none"
+            parts.append("c\(comp){piv=\(Int(numPivots[comp])) prange=[\(fmt(pivotLo[comp])),\(fmt(pivotHi[comp]))] poly=\(poly) mmr=\(hasMMR ? "yes" : "no")}")
+        }
+        return parts.joined(separator: " ")
+    }
+
     /// Parses one frame's AVDOVIMetadata side data. Returns nil when the
     /// header is out of range, so the caller falls back to the legacy path.
     public static func parse(_ metadata: UnsafeMutablePointer<AVDOVIMetadata>) -> DolbyVisionFrameMetadata? {

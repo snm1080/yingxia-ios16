@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import CoreVideo
 import Foundation
 import FFmpegKit
 class FFmpegDecode: DecodeProtocol {
@@ -34,6 +35,8 @@ class FFmpegDecode: DecodeProtocol {
     // Build 42: one-time Dolby path diagnostic state.
     private var sawDolbyRPUBuffer = false
     private var reportedDolbyPath = false
+    // Build 43: one-time RPU/frame dump state (black-picture localization).
+    private var reportedDolbyDump = false
     required init(assetTrack: FFmpegAssetTrack, options: KSOptions, hardwareDecode: Bool? = nil) {
         self.options = options
         self.assetTrack = assetTrack
@@ -192,7 +195,11 @@ class FFmpegDecode: DecodeProtocol {
                 if packet.assetTrack.dovi != nil, !reportedDolbyPath {
                     reportedDolbyPath = true
                     let formatName = inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue ? "videotoolbox" : "software"
-                    options.onPlaybackDiagnostic?("dv ffmpeg format=\(formatName) rpu=\(dolbyMetadata != nil ? "parsed" : "absent") rpu-buffer=\(sawDolbyRPUBuffer ? "present" : "absent") colour-stage=\(dolbyMetadata != nil ? "on" : "off")")
+                    // Build 43: colour-stage reports the settings bypass
+                    // as its own value so an export shows which renderer
+                    // the session actually used.
+                    let colourStage = dolbyMetadata == nil ? "off" : (options.dolbyVisionColorStageEnabled ? "on" : "bypass-legacy")
+                    options.onPlaybackDiagnostic?("dv ffmpeg format=\(formatName) rpu=\(dolbyMetadata != nil ? "parsed" : "absent") rpu-buffer=\(sawDolbyRPUBuffer ? "present" : "absent") colour-stage=\(colourStage)")
                 }
 
                 filter.filter(options: options, inputFrame: inputFrame) { avframe in
@@ -206,6 +213,22 @@ class FFmpegDecode: DecodeProtocol {
                                 videoFrame.edrMetaData = EDRMetaData(displayData: displayData, contentData: contentData, ambientViewingEnvironment: ambientViewingEnvironment)
                             }
                             videoFrame.dolbyVision = dolbyMetadata
+                            if let dolbyMetadata, !reportedDolbyDump {
+                                reportedDolbyDump = true
+                                // Build 43: one-shot per-session dumps so a
+                                // black picture can be localized from the
+                                // diagnostics export alone: what the RPU
+                                // parse produced (values, not presence),
+                                // and whether the decoded base layer itself
+                                // carries picture before any shader runs.
+                                let cvBuffer = pixelBuffer.cvPixelBuffer
+                                let planes = cvBuffer.map { CVPixelBufferGetPlaneCount($0) } ?? pixelBuffer.planeCount
+                                let formatCode = cvBuffer.map { Self.fourCC(CVPixelBufferGetPixelFormatType($0)) } ?? "unknown"
+                                options.onPlaybackDiagnostic?("dv rpu-dump \(dolbyMetadata.diagnosticSummary) planes=\(planes) format=\(formatCode)")
+                                if let cvBuffer {
+                                    options.onPlaybackDiagnostic?("dv frame-dump \(Self.frameSampleStats(cvBuffer))")
+                                }
+                            }
                         }
                         frame.timebase = filter.timebase
                         // frame.timebase = Timebase(avframe.pointee.time_base)
@@ -368,5 +391,73 @@ class FFmpegDecode: DecodeProtocol {
         if codecContext != nil {
             avcodec_flush_buffers(codecContext)
         }
+    }
+
+    /// Build 43: renders a pixel format OSType as its four-character code
+    /// when printable, else as hex.
+    private static func fourCC(_ code: OSType) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF), UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF), UInt8(code & 0xFF),
+        ]
+        if bytes.allSatisfy({ $0 >= 0x20 && $0 < 0x7F }),
+           let string = String(bytes: bytes, encoding: .ascii)
+        {
+            return string
+        }
+        return String(format: "0x%08x", code)
+    }
+
+    /// Build 43: min/max sample values of one decoded frame's planes,
+    /// read straight from the CVPixelBuffer (strided scan, first Dolby
+    /// frame of a session only). Ten-bit samples are reported as 10-bit
+    /// code values (stored value >> 6). A base layer that is already
+    /// black before the shader shows up here as a collapsed range.
+    private static func frameSampleStats(_ pixelBuffer: CVPixelBuffer) -> String {
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let tenBit = format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            || format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+        let eightBit = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        guard tenBit || eightBit else { return "stats=unsupported-format" }
+        guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else {
+            return "stats=lock-failed"
+        }
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        var segments: [String] = []
+        for plane in 0 ..< CVPixelBufferGetPlaneCount(pixelBuffer) {
+            guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, plane) else { continue }
+            let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, plane)
+            let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)
+            let rowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane)
+            var lo = Int.max
+            var hi = Int.min
+            if tenBit {
+                for y in stride(from: 0, to: height, by: 2) {
+                    let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt16.self)
+                    var x = 0
+                    while x < width {
+                        let value = Int(row[x]) >> 6
+                        if value < lo { lo = value }
+                        if value > hi { hi = value }
+                        x += 2
+                    }
+                }
+            } else {
+                for y in stride(from: 0, to: height, by: 2) {
+                    let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+                    var x = 0
+                    while x < width {
+                        let value = Int(row[x])
+                        if value < lo { lo = value }
+                        if value > hi { hi = value }
+                        x += 2
+                    }
+                }
+            }
+            let label = plane == 0 ? "y" : (plane == 1 ? "cbcr" : "p\(plane)")
+            segments.append("\(label)=[\(lo),\(hi)]")
+        }
+        return segments.joined(separator: " ")
     }
 }

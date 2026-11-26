@@ -65,6 +65,7 @@ struct LocalAdSettingsView: View {
 #if os(iOS)
 struct LocalPlayerSettingsView: View {
     @AppStorage(PlaybackInfo.key) private var showsPlaybackInfo = false
+    @AppStorage("local.playback.dolbyColorStage") private var dolbyColorStage = true
     @AppStorage("local.playback.osd") private var showsOSD = true
     @AppStorage("local.playback.osd.title") private var osdTitle = true
     @AppStorage("local.playback.osd.resolution") private var osdResolution = true
@@ -86,6 +87,9 @@ struct LocalPlayerSettingsView: View {
                 Toggle("进度", isOn: $osdProgress)
                 Toggle("网速", isOn: $osdSpeed)
             }.disabled(!showsOSD)
+            SettingsGroup(title: "杜比视界", footer: "诊断开关：关闭后，杜比视界 P5 片源改走旧渲染路径，只有基底画面（颜色不准但有画面），用于对比定位色彩级问题。下次播放生效。") {
+                Toggle("杜比色彩级", isOn: $dolbyColorStage)
+            }
         }
     }
 }

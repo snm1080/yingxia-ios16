@@ -355,14 +355,19 @@ extension MetalPlayView {
                     size = KSOptions.sceneSize
                 }
                 checkFormatDescription(pixelBuffer: pixelBuffer)
+                // Build 43: the settings bypass drops the parsed metadata
+                // at this hand-off, so the frame renders through the
+                // legacy shader (base layer only) and keeps its EDR
+                // metadata like any other HDR frame.
+                let stageMetadata = options.dolbyVisionColorStageEnabled ? frame.dolbyVision : nil
                 #if !os(tvOS)
                 if #available(iOS 16, *) {
                     // Dolby frames are tone-mapped to SDR by the colour
                     // stage; never attach the HDR10 EDR metadata for them.
-                    metalView.metalLayer.edrMetadata = frame.dolbyVision == nil ? frame.edrMetadata : nil
+                    metalView.metalLayer.edrMetadata = stageMetadata == nil ? frame.edrMetadata : nil
                 }
                 #endif
-                guard metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, dolbyVision: frame.dolbyVision) else { return false }
+                guard metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: size, dolbyVision: stageMetadata) else { return false }
                 if !displayView.isHidden {
                     displayView.isHidden = true
                     metalView.isHidden = false

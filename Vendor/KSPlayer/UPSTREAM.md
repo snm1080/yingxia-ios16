@@ -140,5 +140,14 @@ shaders for the RPU):
   `onPlaybackDiagnostic`, a free-form diagnostic channel the app forwards
   into its diagnostics log (DV routing, hwaccel format, RPU presence,
   rebuild events).
+- Build 43 (2026-11-26) extends this deviation with diagnostics only,
+  after the build-42 colour stage produced a black picture on device
+  while the decode route itself verified healthy: `KSOptions` adds
+  `dolbyVisionColorStageEnabled` (set by the app from its player
+  settings; false drops the parsed metadata at the `MetalPlayView`
+  hand-off so P5 frames render through the legacy shader path, base
+  layer only), and `FFmpegDecode` emits one-shot `dv rpu-dump`
+  (parsed RPU value ranges via `DolbyVisionFrameMetadata.diagnosticSummary`)
+  and `dv frame-dump` (decoded-plane sample min/max) lines per session.
 
 This deviation must be re-applied after every future Vendor sync.
