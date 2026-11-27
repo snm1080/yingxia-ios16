@@ -9,6 +9,70 @@ import AVFoundation
 import CoreVideo
 import Foundation
 import FFmpegKit
+
+/// Build 47: the last real VideoToolbox OSStatus behind an
+/// AVERROR_UNKNOWN, scraped from FFmpeg's own av_log output.
+/// FFmpeg 8.1's videotoolbox hwaccel (ff_videotoolbox_common_end_frame)
+/// logs `Failed to decode frame (<name>, <status>)` at error level
+/// when VTDecompressionSessionDecodeFrame fails, and its output
+/// callback logs `vt decoder cb: output image buffer is null:
+/// <status>, reconfig <0|1>` at warning level when a frame comes
+/// back empty — in both cases immediately before returning the
+/// AVERROR_UNKNOWN that is all Swift ever sees. The av_log callback
+/// in MEPlayerItem forwards those two lines here; FFmpegDecode's
+/// native-codec witness line consumes the value, so a status is
+/// attached to exactly one sighting. Thread-safe: the av_log
+/// callback can fire on any FFmpeg thread, the read happens on the
+/// decode thread in the same call stack that produced the error.
+final class VTDecodeFailureLog {
+    static let shared = VTDecodeFailureLog()
+    private let lock = NSLock()
+    private var status: Int32?
+    private var recordedAt = Date.distantPast
+
+    private init() {}
+
+    func record(formattedLine: String) {
+        guard let parsed = Self.parse(formattedLine) else { return }
+        lock.lock()
+        status = parsed
+        recordedAt = Date()
+        lock.unlock()
+    }
+
+    /// The most recent status if it is at most 5 seconds old;
+    /// consuming clears it either way, so a stale status is never
+    /// attached to a later, unrelated sighting.
+    func consumeRecentStatus() -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let status, Date().timeIntervalSince(recordedAt) <= 5 else {
+            self.status = nil
+            return nil
+        }
+        self.status = nil
+        return status
+    }
+
+    private static func parse(_ line: String) -> Int32? {
+        // "Failed to decode frame (bad data, -12909)"
+        if line.hasPrefix("Failed to decode frame") {
+            guard let open = line.lastIndex(of: "("), let close = line.lastIndex(of: ")"), open < close else { return nil }
+            let inner = line[line.index(after: open) ..< close]
+            guard let last = inner.split(separator: ",").last else { return nil }
+            return Int32(last.trimmingCharacters(in: .whitespaces))
+        }
+        // "vt decoder cb: output image buffer is null: -12909, reconfig 1"
+        let callbackPrefix = "vt decoder cb: output image buffer is null:"
+        if line.hasPrefix(callbackPrefix) {
+            let rest = line.dropFirst(callbackPrefix.count)
+            guard let first = rest.split(separator: ",").first else { return nil }
+            return Int32(first.trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+}
+
 class FFmpegDecode: DecodeProtocol {
     private let options: KSOptions
     private let assetTrack: FFmpegAssetTrack
@@ -48,11 +112,37 @@ class FFmpegDecode: DecodeProtocol {
     // and every AVERROR_UNKNOWN sighting emits a witness line
     // (`dv nativecodec seen site=… absorbed=… reason=…`); see
     // shouldRebuildForNativeCodecError and UPSTREAM.md.
+    // Build 47: build 46's absorption fired, but at a poisoned stream
+    // position every rebuilt context re-failed within a packet or two
+    // (Sam's build-46 export: 4 clusters of 15–35 sightings, each
+    // burning the whole budget of 4 against rebuilds that produced
+    // zero frames, then the app-level reopen repeating the cycle —
+    // while the export's two isolated incidents were cured by a
+    // single rebuild each). The rebuild now escalates how much
+    // stream it drops: a context that fails again before proving
+    // itself (30 frame-producing packets) makes the next rebuild
+    // skip extra GOPs (0, 1, 2, 4), so the budget of 4 spans ~11
+    // GOPs instead of 4; a context that does prove itself restores
+    // the budget (budget per genuinely-rebuilt session). Sightings
+    // that arrive while a rebuild is already pending are absorbed
+    // without consuming budget (`absorbed=pending`), and the witness
+    // line gains `vtstatus=` — the real VideoToolbox OSStatus FFmpeg
+    // logs just before collapsing it to AVERROR_UNKNOWN, scraped by
+    // VTDecodeFailureLog. See UPSTREAM.md.
     private var starvedVideoPackets = 0
     private var awaitingRebuildKeyFrame = false
     private var decoderRebuildCount = 0
     private var nativeCodecErrorRebuilds = 0
     private var pendingRebuildReason = "starved"
+    // Build 47: native-codec incident state. framesSinceRebuild
+    // counts frame-producing video packets since the current codec
+    // context was created (init or last rebuild); 30 is the proof
+    // threshold — a healthy context produces frames continuously,
+    // while build 46's poisoned rebuilds died within 1–2 packets.
+    private var nativeCodecFramesSinceRebuild = 0
+    private var nativeCodecFramelessStreak = 0
+    private var pendingRebuildSkipKeyFrames = 0
+    private var nativeCodecPendingWitnessLogged = false
     // Build 46: whether this video context is backed by the VideoToolbox
     // hwaccel, recorded from our own state (see shouldRebuild... below):
     // true when hardware decode was requested at init — the exact
@@ -99,8 +189,18 @@ class FFmpegDecode: DecodeProtocol {
             // rebuild failed, codecContext is nil and the guard below turns
             // this keyframe into the terminal decoder error.
             guard packet.isKeyFrame else { return }
+            // Build 47: a native-codec rebuild armed after consecutive
+            // frameless failures first drops extra whole GOPs (the
+            // keyframes counted here), so the new context resumes past
+            // the poisoned region instead of re-feeding its next GOP.
+            // The starved path always arms with a skip of 0.
+            if pendingRebuildSkipKeyFrames > 0 {
+                pendingRebuildSkipKeyFrames -= 1
+                return
+            }
             rebuildCodecContext()
             awaitingRebuildKeyFrame = false
+            nativeCodecPendingWitnessLogged = false
         }
         guard let codecContext else {
             completionHandler(.failure(NSError(description: "The media decoder could not be opened.")))
@@ -324,6 +424,21 @@ class FFmpegDecode: DecodeProtocol {
         guard mediaType == .video else { return }
         if producedFrame {
             starvedVideoPackets = 0
+            // Build 47: proof accounting for the native-codec budget.
+            // A rebuilt context that sustains 30 frame-producing
+            // packets has genuinely recovered, so the incident is
+            // over: restore the rebuild budget and clear the
+            // frameless streak. Fewer frames than that and a further
+            // failure is the same incident continuing (build 46's
+            // poisoned rebuilds produced at most a frame or two).
+            nativeCodecFramesSinceRebuild += 1
+            if nativeCodecFramesSinceRebuild >= 30,
+               nativeCodecErrorRebuilds > 0 || nativeCodecFramelessStreak > 0
+            {
+                nativeCodecErrorRebuilds = 0
+                nativeCodecFramelessStreak = 0
+                options.onPlaybackDiagnostic?("dv nativecodec budget restored frames=30")
+            }
         } else if !awaitingRebuildKeyFrame {
             starvedVideoPackets += 1
             if starvedVideoPackets >= 120 {
@@ -346,6 +461,9 @@ class FFmpegDecode: DecodeProtocol {
         }
         filter.flush()
         starvedVideoPackets = 0
+        // Build 47: the new context starts unproven for the
+        // native-codec incident accounting.
+        nativeCodecFramesSinceRebuild = 0
         decoderRebuildCount += 1
         KSLog("FFmpegDecode: codec context rebuilt (count \(decoderRebuildCount))")
         options.onPlaybackDiagnostic?("decoder rebuild count=\(decoderRebuildCount) reason=\(pendingRebuildReason)")
@@ -380,8 +498,45 @@ class FFmpegDecode: DecodeProtocol {
     /// export proves coverage either way. Software decode (no hwaccel
     /// requested, no VT frame) and audio still return false and keep
     /// the pre-build-45 behaviour exactly.
+    ///
+    /// Build 47: three refinements from Sam's build-46 export, where
+    /// the absorption fired but could not cross a poisoned region.
+    /// (1) Pending suppression: a sighting that arrives while a
+    /// rebuild is already armed is absorbed without consuming budget
+    /// or re-arming (`absorbed=pending`, witnessed once per pending
+    /// window). The packet-drop guard at the top of decodeFrame
+    /// already keeps send/receive unreachable while a rebuild is
+    /// pending, so this is a belt-and-braces invariant — but it makes
+    /// "budget is only spent at arming time" hold by construction,
+    /// not by call-flow luck. (2) Escalation: if the context being
+    /// replaced never proved itself (< 30 frame-producing packets
+    /// since it was created), the failure continues the same
+    /// incident, so the rebuild skips extra GOPs before resuming
+    /// (0, 1, 2, 4 extra keyframes across consecutive frameless
+    /// failures) — one GOP per rebuild could not cross the multi-GOP
+    /// poisoned regions in the export, and each attempt burned
+    /// budget. A context that had proved itself starts the ladder
+    /// over. (3) The witness line gains `vtstatus=`: the real
+    /// VideoToolbox OSStatus, which FFmpeg 8.1's videotoolbox
+    /// hwaccel logs ("Failed to decode frame (bad data, -12909)" /
+    /// "vt decoder cb: output image buffer is null: -12909, ...")
+    /// immediately before collapsing it to AVERROR_UNKNOWN; the
+    /// av_log callback in MEPlayerItem scrapes those two lines into
+    /// VTDecodeFailureLog, and the value is consumed here so it is
+    /// attached to exactly the sighting that produced it.
     private func shouldRebuildForNativeCodecError(mediaType: AVFoundation.AVMediaType, error: Int32, site: String) -> Bool {
         guard error == AVError.unknown.code else { return false }
+        // Build 47 (1): a rebuild is already armed and packets are
+        // being dropped until it lands; a further sighting in this
+        // window is the same incident, not a new one. Absorb it
+        // without spending budget, witnessed once per window.
+        if awaitingRebuildKeyFrame {
+            if !nativeCodecPendingWitnessLogged {
+                nativeCodecPendingWitnessLogged = true
+                options.onPlaybackDiagnostic?("dv nativecodec seen site=\(site) absorbed=pending reason=rebuild-pending code=\(error)\(vtStatusSuffix())")
+            }
+            return true
+        }
         let absorbed: Bool
         let reason: String
         if mediaType != .video {
@@ -399,15 +554,38 @@ class FFmpegDecode: DecodeProtocol {
         }
         // Witness first: the line is emitted on every sighting, before
         // the caller acts on the decision, absorbed or not.
-        options.onPlaybackDiagnostic?("dv nativecodec seen site=\(site) absorbed=\(absorbed ? "yes" : "no") reason=\(reason) code=\(error)")
+        options.onPlaybackDiagnostic?("dv nativecodec seen site=\(site) absorbed=\(absorbed ? "yes" : "no") reason=\(reason) code=\(error)\(vtStatusSuffix())")
         guard absorbed else { return false }
         nativeCodecErrorRebuilds += 1
+        // Build 47 (2): escalate the drop when the outgoing context
+        // never proved itself; a proven context (≥ 30 frame-producing
+        // packets) marks a new, isolated incident and restarts the
+        // ladder. Skip ladder indexed by the frameless streak.
+        let skipKeyFrames: Int
+        if nativeCodecFramesSinceRebuild >= 30 {
+            nativeCodecFramelessStreak = 0
+            skipKeyFrames = 0
+        } else {
+            let ladder = [0, 1, 2, 4]
+            skipKeyFrames = ladder[min(nativeCodecFramelessStreak, ladder.count - 1)]
+            nativeCodecFramelessStreak += 1
+        }
+        pendingRebuildSkipKeyFrames = skipKeyFrames
         awaitingRebuildKeyFrame = true
+        nativeCodecPendingWitnessLogged = false
         pendingRebuildReason = "native-codec-error"
         starvedVideoPackets = 0
-        KSLog("FFmpegDecode: VT session failed (AVERROR_UNKNOWN) at \(site); rebuilding codec context at next keyframe (\(nativeCodecErrorRebuilds)/4)")
-        options.onPlaybackDiagnostic?("decoder rebuild reason=native-codec-error count=\(nativeCodecErrorRebuilds)")
+        KSLog("FFmpegDecode: VT session failed (AVERROR_UNKNOWN) at \(site); rebuilding codec context at next keyframe (\(nativeCodecErrorRebuilds)/4), skipping \(skipKeyFrames) extra GOPs")
+        options.onPlaybackDiagnostic?("decoder rebuild reason=native-codec-error count=\(nativeCodecErrorRebuilds) skipgops=\(skipKeyFrames)")
         return true
+    }
+
+    /// Build 47: ` vtstatus=<OSStatus>` when VTDecodeFailureLog holds
+    /// a status scraped from FFmpeg's log within the last 5 seconds
+    /// (consumed by the read), else an empty string.
+    private func vtStatusSuffix() -> String {
+        guard let status = VTDecodeFailureLog.shared.consumeRecentStatus() else { return "" }
+        return " vtstatus=\(status)"
     }
 
     private func prepareLivePacket(_ packet: Packet) -> Bool {
@@ -468,6 +646,14 @@ class FFmpegDecode: DecodeProtocol {
         awaitingLiveVideoKeyFrame = false
         starvedVideoPackets = 0
         awaitingRebuildKeyFrame = false
+        // Build 47: a seek moves to a new position, so the pending
+        // skip and the incident proof/streak restart with it. The
+        // rebuild budget itself is only restored by the 30-frame
+        // proof in noteDecodeProgress.
+        pendingRebuildSkipKeyFrames = 0
+        nativeCodecPendingWitnessLogged = false
+        nativeCodecFramesSinceRebuild = 0
+        nativeCodecFramelessStreak = 0
         bestEffortTimestamp = Int64(0)
         // seek之后要清空下，不然解码可能还会有缓存，导致返回的数据是之前seek的。
         avcodec_flush_buffers(codecContext)
@@ -487,6 +673,11 @@ class FFmpegDecode: DecodeProtocol {
         awaitingLiveVideoKeyFrame = false
         starvedVideoPackets = 0
         awaitingRebuildKeyFrame = false
+        // Build 47: same incident-state reset as doFlushCodec.
+        pendingRebuildSkipKeyFrames = 0
+        nativeCodecPendingWitnessLogged = false
+        nativeCodecFramesSinceRebuild = 0
+        nativeCodecFramelessStreak = 0
         bestEffortTimestamp = Int64(0)
         filter.flush()
         if codecContext != nil {

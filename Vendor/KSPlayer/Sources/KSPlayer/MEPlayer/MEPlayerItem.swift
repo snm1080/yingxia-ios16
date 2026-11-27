@@ -173,11 +173,23 @@ public final class MEPlayerItem: Sendable {
             // their String/varargs formatting when nobody consumes the message.
             // idet's DEBUG output still drives automatic interlace detection.
             let parserMissing = strncmp(format, "parser not found for codec", 26) == 0
-            guard level <= KSOptions.logLevel.rawValue || filterOptions?.autoDeInterlace == true || parserMissing else { return }
+            // Build 47: FFmpeg's videotoolbox hwaccel logs the real
+            // VideoToolbox OSStatus on these two lines immediately
+            // before returning the AVERROR_UNKNOWN the decode layer
+            // sees. Like parserMissing, they bypass the log-level
+            // guard so the status is captured at any log setting;
+            // VTDecodeFailureLog (FFmpegDecode.swift) holds it for
+            // the native-codec witness line.
+            let vtDecodeFailure = strncmp(format, "Failed to decode frame", 22) == 0
+                || strncmp(format, "vt decoder cb: output image buffer is null", 42) == 0
+            guard level <= KSOptions.logLevel.rawValue || filterOptions?.autoDeInterlace == true || parserMissing || vtDecodeFailure else { return }
             var log = String(cString: format)
             let arguments: CVaListPointer? = args
             if let arguments {
                 log = NSString(format: log, arguments: arguments) as String
+            }
+            if vtDecodeFailure {
+                VTDecodeFailureLog.shared.record(formattedLine: log)
             }
             filterOptions?.filter(log: log)
             // 找不到解码器

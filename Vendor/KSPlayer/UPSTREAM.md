@@ -236,5 +236,71 @@ shaders for the RPU):
     coverage either way. Absorption mechanics, the budget of 4,
     and all build-42/43/44/45 diagnostics are unchanged; software
     decode and audio still surface the error exactly as before.
+- Build 47 (2026-11-27) fixes the rebuild's effectiveness, which
+  Sam's build-46 diagnostics export (E005 window, 98 witness
+  lines) isolated: detection was proven (81 absorptions), but at
+  a poisoned stream position every rebuilt context re-failed at
+  send-packet within a packet or two — 4 clusters of 15–35
+  sightings each burned the whole per-instance budget of 4 on
+  rebuilds that produced zero frames, surfaced the error, and
+  the app-level reopen repeated the identical cycle (position
+  stuck at 227–233 s across 4 instances). The export's two
+  isolated incidents were each cured by a single rebuild and
+  played on, so the machinery was right for spots and wrong for
+  regions. Code forensics for the three candidate mechanisms:
+  * Budget burn in the pending window (sightings between arming
+    and the rebuild landing): does not occur — the drop guard at
+    the top of `decodeFrame` returns every packet before
+    send/receive while `awaitingRebuildKeyFrame` is set, and the
+    export's clusters interleave exactly one rebuild execution
+    per absorption. `shouldRebuildForNativeCodecError` still
+    gained a defensive pending branch (absorbed without budget,
+    witnessed once per window as `absorbed=pending
+    reason=rebuild-pending`) so the invariant holds by
+    construction.
+  * Rebuild re-poisoning: the rebuilt context is configured
+    identically to the original (`createContext`:
+    parameters-to-context from codecpar extradata + the same
+    get_format install + open2, for init and rebuild alike), and
+    the failed packet is dropped, never retried — the first
+    packet a rebuilt context receives is the resume keyframe, a
+    different packet from the one that failed. What does not
+    change is the input region: dropping exactly one GOP per
+    rebuild cannot cross a region that is hostile for several
+    GOPs.
+  * The real OSStatus: FFmpeg 8.1's videotoolbox hwaccel
+    (`ff_videotoolbox_common_end_frame`, release/8.1 source)
+    returns AVERROR_UNKNOWN both when
+    VTDecompressionSessionDecodeFrame fails — logging
+    `Failed to decode frame (<name>, <status>)` at error level
+    first, and flagging its own internal session restart for
+    malfunction/invalid-session — and when the output callback
+    delivers no image buffer, which the callback itself logs at
+    warning level (`vt decoder cb: output image buffer is null:
+    <status>, reconfig <0|1>`). The status is reachable only
+    through av_log; KSPlayer's callback in `MEPlayerItem.swift`
+    now scrapes those two lines (bypassing the log-level guard
+    like the existing parser-missing case) into
+    `VTDecodeFailureLog` (FFmpegDecode.swift), and the witness
+    line consumes it as a `vtstatus=` suffix.
+  Fix (`FFmpegDecode.swift`): consecutive-failure escalation
+  plus per-session budget. A native-codec absorption whose
+  outgoing context produced < 30 frame-producing packets since
+  it was created counts as the same incident: the frameless
+  streak advances and the armed rebuild drops extra whole GOPs
+  before resuming (skip ladder 0, 1, 2, 4 extra keyframes), so
+  the budget of 4 spans ~11 GOPs. A context that sustains 30
+  frame-producing packets restores the budget and clears the
+  streak (`dv nativecodec budget restored frames=30`) — the
+  budget is per genuinely-rebuilt session, so isolated
+  incidents scattered across a long session no longer
+  accumulate toward a false exhaustion, while a poisoned
+  region still exhausts and surfaces the error to the
+  app-level badspot ladder as before. The arm diagnostic line
+  gains `skipgops=`; all build 42–46 diagnostic lines are
+  otherwise unchanged, and the starved rebuild path, software
+  decode and audio are untouched. Seek resets
+  (doFlushCodec/decode) clear the pending skip, streak and
+  proof counter along with the existing flags.
 
 This deviation must be re-applied after every future Vendor sync.
