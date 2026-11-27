@@ -29,9 +29,24 @@ class FFmpegDecode: DecodeProtocol {
     // frame-less video packets; at the build-29 threshold (120) rebuild the
     // codec context here and resume at the next keyframe (the PlayKit
     // pattern) instead of relying on the app-level wholesale reopen.
+    // Build 45: the same machinery now also absorbs a hard VT session
+    // failure — avcodec reporting AVERROR_UNKNOWN (-1313558101), which is
+    // what FFmpeg 8.1's videotoolbox hwaccel returns when
+    // VTDecompressionSessionDecodeFrame fails (bad data / decoder
+    // malfunction / invalid session; the raw OSStatus is only in
+    // FFmpeg's own log). Build 44's on-device sessions showed this error
+    // killing playback within the first GOP after a start/seek on some
+    // files, deterministically at the same position across wholesale
+    // app-level retries (which re-feed the same GOP into a fresh
+    // session). Rebuilding here and dropping to the NEXT keyframe
+    // changes the input, which is what breaks the determinism. Bounded
+    // per decoder instance; once the budget is spent the error surfaces
+    // exactly as before.
     private var starvedVideoPackets = 0
     private var awaitingRebuildKeyFrame = false
     private var decoderRebuildCount = 0
+    private var nativeCodecErrorRebuilds = 0
+    private var pendingRebuildReason = "starved"
     // Build 42: one-time Dolby path diagnostic state.
     private var sawDolbyRPUBuffer = false
     private var reportedDolbyPath = false
@@ -74,6 +89,7 @@ class FFmpegDecode: DecodeProtocol {
         guard prepareLivePacket(packet) else { return }
         let sendResult = avcodec_send_packet(codecContext, packet.corePacket)
         if sendResult < 0, sendResult != AVError.tryAgain.code {
+            if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
             if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
             completionHandler(.failure(NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: sendResult)))
             return
@@ -263,6 +279,7 @@ class FFmpegDecode: DecodeProtocol {
                 } else if result == AVError.tryAgain.code {
                     break
                 } else {
+                    if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: result) { break }
                     if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: result) { break }
                     let error = NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
                     KSLog(error)
@@ -287,6 +304,7 @@ class FFmpegDecode: DecodeProtocol {
             starvedVideoPackets += 1
             if starvedVideoPackets >= 120 {
                 awaitingRebuildKeyFrame = true
+                pendingRebuildReason = "starved"
                 KSLog("FFmpegDecode: no frames for 120 consecutive packets; rebuilding codec context at next keyframe")
                 options.onPlaybackDiagnostic?("decoder starved packets=120 rebuild=armed")
             }
@@ -306,7 +324,33 @@ class FFmpegDecode: DecodeProtocol {
         starvedVideoPackets = 0
         decoderRebuildCount += 1
         KSLog("FFmpegDecode: codec context rebuilt (count \(decoderRebuildCount))")
-        options.onPlaybackDiagnostic?("decoder rebuild count=\(decoderRebuildCount) reason=starved")
+        options.onPlaybackDiagnostic?("decoder rebuild count=\(decoderRebuildCount) reason=\(pendingRebuildReason)")
+        pendingRebuildReason = "starved"
+    }
+
+    /// Build 45: is this error a dead VideoToolbox session behind the
+    /// FFmpeg hwaccel? FFmpeg 8.1's videotoolbox end-frame maps every
+    /// VTDecompressionSessionDecodeFrame failure (bad data, decoder
+    /// malfunction, invalid session) to AVERROR_UNKNOWN (-1313558101)
+    /// and returns it from send/receive; the app used to surface it as
+    /// the terminal 「当前设备无法解码这条杜比视界视频」. Absorb it
+    /// instead: arm the build-42 rebuild at the next keyframe and drop
+    /// the offending packet/GOP silently (the resync paths set the
+    /// no-completion-handler precedent). Gated to video contexts that
+    /// actually carry a VT hw device, so software decode and audio keep
+    /// build-44 behaviour exactly. Budget: 4 rebuilds per decoder
+    /// instance; past that, return false and let the error surface.
+    private func shouldRebuildForNativeCodecError(mediaType: AVFoundation.AVMediaType, error: Int32) -> Bool {
+        guard mediaType == .video, error == AVError.unknown.code,
+              codecContext?.pointee.hw_device_ctx != nil else { return false }
+        guard nativeCodecErrorRebuilds < 4 else { return false }
+        nativeCodecErrorRebuilds += 1
+        awaitingRebuildKeyFrame = true
+        pendingRebuildReason = "native-codec-error"
+        starvedVideoPackets = 0
+        KSLog("FFmpegDecode: VT session failed (AVERROR_UNKNOWN); rebuilding codec context at next keyframe (\(nativeCodecErrorRebuilds)/4)")
+        options.onPlaybackDiagnostic?("decoder rebuild reason=native-codec-error count=\(nativeCodecErrorRebuilds)")
+        return true
     }
 
     private func prepareLivePacket(_ packet: Packet) -> Bool {

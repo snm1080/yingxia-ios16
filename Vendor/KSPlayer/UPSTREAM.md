@@ -162,5 +162,30 @@ shaders for the RPU):
   geometry): `MetalRender` re-renders the first Dolby frame of a
   session into a shared offscreen texture and logs its RGB min/max,
   splitting shader-math faults from presentation faults in the export.
+- Build 45 (2026-11-27) hardens two things build 44's on-device test
+  exposed. (1) The `dv out-dump` readback itself crashed the app
+  twice: EXC_BREAKPOINT in swift_slowAlloc via
+  _ContiguousArrayBuffer.init on the Metal completion-dispatch
+  thread — `dolbyOutputStats` allocated a full-frame [UInt8] sized
+  from the texture's live dimensions inside the command-buffer
+  completion handler. It now validates width/height/format against
+  hard caps before allocating, reads back one sampled row at a time
+  into a single ≤32 KB row buffer, and scans with scalar
+  accumulators: no data-dependent allocation is reachable from the
+  handler, and the reported ranges are unchanged. (2) Some files
+  died with `KSPlayerErrorDomain:13 / KSPlayer.NativeCodec:-1313558101`
+  — that code is FFmpeg's AVERROR_UNKNOWN (FFERRTAG 'UNKN'), which
+  FFmpeg 8.1's videotoolbox hwaccel returns for every
+  VTDecompressionSessionDecodeFrame failure (bad data / malfunction /
+  invalid session; the raw OSStatus never reaches Swift). It fired
+  within the first GOP after a start/seek, deterministically at the
+  same position across wholesale app-level retries. `FFmpegDecode`
+  now absorbs AVERROR_UNKNOWN on VT-backed video contexts
+  (`hw_device_ctx != nil`) into the build-42 rebuild machinery:
+  drop to the next keyframe, recreate the codec context + VT
+  session, resume — at most 4 times per decoder instance, logged as
+  `decoder rebuild reason=native-codec-error count=N`; past the
+  budget the error surfaces exactly as before. Software decode,
+  audio, and the user-facing error mapping are untouched.
 
 This deviation must be re-applied after every future Vendor sync.

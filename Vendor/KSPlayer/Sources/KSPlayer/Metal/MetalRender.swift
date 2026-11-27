@@ -152,41 +152,70 @@ class MetalRender {
     /// Strided CPU readback of one rendered Dolby frame: per-channel
     /// min/max in the texture's native code values (0...1023 for
     /// bgr10a2Unorm, 0...255 for bgra8Unorm).
+    ///
+    /// Build 45: this runs inside a Metal command-buffer completion
+    /// handler (queue `com.Metal.CompletionQueueDispatch`). Build 44
+    /// allocated a full-frame [UInt8] sized from the texture's live
+    /// dimensions here (plus a fresh 3-element array per sampled
+    /// pixel); two on-device crashes — EXC_BREAKPOINT in
+    /// swift_slowAlloc.cold.1 via _ContiguousArrayBuffer.init on the
+    /// completion-dispatch thread — trace to that allocation. The
+    /// readback now validates every dimension against a hard cap
+    /// before allocating anything, reads back one sampled row at a
+    /// time into a single bounded row buffer (≤ 32 KB), and keeps the
+    /// scan itself allocation-free (scalar accumulators), so no
+    /// data-dependent allocation is reachable from the handler. The
+    /// sampled pixels and the reported ranges are unchanged.
     private static func dolbyOutputStats(texture: MTLTexture) -> String {
         let width = texture.width
         let height = texture.height
-        let bytesPerRow = width * 4
-        var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
-        bytes.withUnsafeMutableBytes { pointer in
-            if let baseAddress = pointer.baseAddress {
-                texture.getBytes(baseAddress, bytesPerRow: bytesPerRow, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
-            }
-        }
-        var lo = [UInt32](repeating: UInt32.max, count: 3)
-        var hi = [UInt32](repeating: 0, count: 3)
         let isPacked10 = texture.pixelFormat == .bgr10a2Unorm
+        guard width > 0, height > 0, width <= 8192, height <= 8192,
+              isPacked10 || texture.pixelFormat == .bgra8Unorm
+        else {
+            return "dv out-dump skipped=bad-texture \(width)x\(height) format=\(texture.pixelFormat.rawValue)"
+        }
+        let bytesPerRow = width * 4
+        var row = [UInt8](repeating: 0, count: bytesPerRow)
+        var loR = UInt32.max, loG = UInt32.max, loB = UInt32.max
+        var hiR = UInt32(0), hiG = UInt32(0), hiB = UInt32(0)
         let stride = 16
         var y = 0
         while y < height {
-            var x = 0
-            while x < width {
-                let offset = y * bytesPerRow + x * 4
-                let components: [UInt32]
-                if isPacked10 {
-                    let word = UInt32(bytes[offset]) | UInt32(bytes[offset + 1]) << 8 | UInt32(bytes[offset + 2]) << 16 | UInt32(bytes[offset + 3]) << 24
-                    components = [word & 0x3FF, (word >> 10) & 0x3FF, (word >> 20) & 0x3FF] // r, g, b
-                } else {
-                    components = [UInt32(bytes[offset + 2]), UInt32(bytes[offset + 1]), UInt32(bytes[offset])] // r, g, b
+            let copied = row.withUnsafeMutableBytes { pointer -> Bool in
+                guard let baseAddress = pointer.baseAddress else { return false }
+                texture.getBytes(baseAddress, bytesPerRow: bytesPerRow, from: MTLRegionMake2D(0, y, width, 1), mipmapLevel: 0)
+                return true
+            }
+            if copied {
+                var x = 0
+                while x < width {
+                    let offset = x * 4
+                    let r: UInt32
+                    let g: UInt32
+                    let b: UInt32
+                    if isPacked10 {
+                        let word = UInt32(row[offset]) | UInt32(row[offset + 1]) << 8 | UInt32(row[offset + 2]) << 16 | UInt32(row[offset + 3]) << 24
+                        r = word & 0x3FF
+                        g = (word >> 10) & 0x3FF
+                        b = (word >> 20) & 0x3FF
+                    } else {
+                        r = UInt32(row[offset + 2])
+                        g = UInt32(row[offset + 1])
+                        b = UInt32(row[offset])
+                    }
+                    if r < loR { loR = r }
+                    if r > hiR { hiR = r }
+                    if g < loG { loG = g }
+                    if g > hiG { hiG = g }
+                    if b < loB { loB = b }
+                    if b > hiB { hiB = b }
+                    x += stride
                 }
-                for channel in 0 ..< 3 {
-                    lo[channel] = min(lo[channel], components[channel])
-                    hi[channel] = max(hi[channel], components[channel])
-                }
-                x += stride
             }
             y += stride
         }
-        return "dv out-dump r=[\(lo[0]),\(hi[0])] g=[\(lo[1]),\(hi[1])] b=[\(lo[2]),\(hi[2])]"
+        return "dv out-dump r=[\(loR),\(hiR)] g=[\(loG),\(hiG)] b=[\(loB),\(hiB)]"
     }
 
     private func setFragmentBuffer(pixelBuffer: PixelBufferProtocol, encoder: MTLRenderCommandEncoder) {
