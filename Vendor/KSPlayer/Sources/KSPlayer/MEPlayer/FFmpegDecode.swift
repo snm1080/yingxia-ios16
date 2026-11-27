@@ -42,11 +42,25 @@ class FFmpegDecode: DecodeProtocol {
     // changes the input, which is what breaks the determinism. Bounded
     // per decoder instance; once the budget is spent the error surfaces
     // exactly as before.
+    // Build 46: on device, build 45's absorption never fired — its
+    // hw_device_ctx gate read nil even in sessions actively producing
+    // VideoToolbox frames. The gate now uses decoder-recorded state
+    // and every AVERROR_UNKNOWN sighting emits a witness line
+    // (`dv nativecodec seen site=… absorbed=… reason=…`); see
+    // shouldRebuildForNativeCodecError and UPSTREAM.md.
     private var starvedVideoPackets = 0
     private var awaitingRebuildKeyFrame = false
     private var decoderRebuildCount = 0
     private var nativeCodecErrorRebuilds = 0
     private var pendingRebuildReason = "starved"
+    // Build 46: whether this video context is backed by the VideoToolbox
+    // hwaccel, recorded from our own state (see shouldRebuild... below):
+    // true when hardware decode was requested at init — the exact
+    // condition under which createContext installs the get_format
+    // callback — and latched on if a VideoToolbox-format frame is ever
+    // produced. Build 45 instead read codecContext.hw_device_ctx back
+    // from FFmpeg, which proved unreliable (see UPSTREAM.md).
+    private var vtBackedVideoContext = false
     // Build 42: one-time Dolby path diagnostic state.
     private var sawDolbyRPUBuffer = false
     private var reportedDolbyPath = false
@@ -63,6 +77,12 @@ class FFmpegDecode: DecodeProtocol {
             KSLog(error as CustomStringConvertible)
         }
         codecContext?.pointee.time_base = assetTrack.timebase.rational
+        // Build 46: snapshot the hwaccel request exactly as createContext
+        // evaluated it (it installs the get_format callback only for a
+        // video context with hardware decode on). Snapshotting in init
+        // keeps the flag consistent with the context actually opened,
+        // even if the shared options object is mutated later.
+        vtBackedVideoContext = assetTrack.mediaType == .video && (hardwareDecode ?? options.hardwareDecode)
         filter = MEFilter(timebase: assetTrack.timebase, isAudio: assetTrack.mediaType == .audio, nominalFrameRate: assetTrack.nominalFrameRate, options: options)
         if assetTrack.mediaType == .video {
             frameChange = VideoSwresample(fps: assetTrack.nominalFrameRate, isDovi: assetTrack.dovi != nil,
@@ -89,7 +109,7 @@ class FFmpegDecode: DecodeProtocol {
         guard prepareLivePacket(packet) else { return }
         let sendResult = avcodec_send_packet(codecContext, packet.corePacket)
         if sendResult < 0, sendResult != AVError.tryAgain.code {
-            if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
+            if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: sendResult, site: "send-packet") { return }
             if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: sendResult) { return }
             completionHandler(.failure(NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: sendResult)))
             return
@@ -122,6 +142,10 @@ class FFmpegDecode: DecodeProtocol {
                 producedFrame = true
                 if packet.assetTrack.mediaType == .audio { audioResynchronizationPackets = 0 }
                 if packet.assetTrack.mediaType == .video {
+                    // Build 46: a produced VideoToolbox-format frame is
+                    // direct evidence this context decodes through the
+                    // hwaccel; latch it for the absorption gate.
+                    if inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue { vtBackedVideoContext = true }
                     let decoder = inputFrame.pointee.format == AV_PIX_FMT_VIDEOTOOLBOX.rawValue ? "VideoToolbox (FFmpeg)" : "FFmpeg software"
                     if reportedVideoDecoder != decoder {
                         reportedVideoDecoder = decoder
@@ -279,7 +303,7 @@ class FFmpegDecode: DecodeProtocol {
                 } else if result == AVError.tryAgain.code {
                     break
                 } else {
-                    if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: result) { break }
+                    if shouldRebuildForNativeCodecError(mediaType: packet.assetTrack.mediaType, error: result, site: "receive-frame") { break }
                     if shouldResynchronizePacket(mediaType: packet.assetTrack.mediaType, error: result) { break }
                     let error = NSError(errorCode: packet.assetTrack.mediaType == .audio ? .codecAudioReceiveFrame : .codecVideoReceiveFrame, avErrorCode: result)
                     KSLog(error)
@@ -336,19 +360,52 @@ class FFmpegDecode: DecodeProtocol {
     /// the terminal 「当前设备无法解码这条杜比视界视频」. Absorb it
     /// instead: arm the build-42 rebuild at the next keyframe and drop
     /// the offending packet/GOP silently (the resync paths set the
-    /// no-completion-handler precedent). Gated to video contexts that
-    /// actually carry a VT hw device, so software decode and audio keep
-    /// build-44 behaviour exactly. Budget: 4 rebuilds per decoder
+    /// no-completion-handler precedent). Budget: 4 rebuilds per decoder
     /// instance; past that, return false and let the error surface.
-    private func shouldRebuildForNativeCodecError(mediaType: AVFoundation.AVMediaType, error: Int32) -> Bool {
-        guard mediaType == .video, error == AVError.unknown.code,
-              codecContext?.pointee.hw_device_ctx != nil else { return false }
-        guard nativeCodecErrorRebuilds < 4 else { return false }
+    ///
+    /// Build 46: build 45's gate also required
+    /// `codecContext.hw_device_ctx != nil`, and on device that read
+    /// nil in EVERY failing session — including sessions that had just
+    /// produced AV_PIX_FMT_VIDEOTOOLBOX frames through the same
+    /// decoder — so the absorption never fired once (build-45 export,
+    /// 2026-11-27: 72+ occurrences of the error, zero rebuild lines).
+    /// The field is written only inside the get_format callback
+    /// (AVFFmpegExtension.swift) under frame threading and is read
+    /// nowhere else in the codebase; it is not a reliable witness of
+    /// VT activity. The gate now uses our own recorded state
+    /// (`vtBackedVideoContext`: hwaccel requested at init, latched on
+    /// by any produced VideoToolbox-format frame), and every
+    /// AVERROR_UNKNOWN sighting at either call site emits a
+    /// `dv nativecodec seen` witness line with the decision, so an
+    /// export proves coverage either way. Software decode (no hwaccel
+    /// requested, no VT frame) and audio still return false and keep
+    /// the pre-build-45 behaviour exactly.
+    private func shouldRebuildForNativeCodecError(mediaType: AVFoundation.AVMediaType, error: Int32, site: String) -> Bool {
+        guard error == AVError.unknown.code else { return false }
+        let absorbed: Bool
+        let reason: String
+        if mediaType != .video {
+            absorbed = false
+            reason = "not-video"
+        } else if !vtBackedVideoContext {
+            absorbed = false
+            reason = "not-vt-backed"
+        } else if nativeCodecErrorRebuilds >= 4 {
+            absorbed = false
+            reason = "budget-exhausted"
+        } else {
+            absorbed = true
+            reason = "vt-session-failure"
+        }
+        // Witness first: the line is emitted on every sighting, before
+        // the caller acts on the decision, absorbed or not.
+        options.onPlaybackDiagnostic?("dv nativecodec seen site=\(site) absorbed=\(absorbed ? "yes" : "no") reason=\(reason) code=\(error)")
+        guard absorbed else { return false }
         nativeCodecErrorRebuilds += 1
         awaitingRebuildKeyFrame = true
         pendingRebuildReason = "native-codec-error"
         starvedVideoPackets = 0
-        KSLog("FFmpegDecode: VT session failed (AVERROR_UNKNOWN); rebuilding codec context at next keyframe (\(nativeCodecErrorRebuilds)/4)")
+        KSLog("FFmpegDecode: VT session failed (AVERROR_UNKNOWN) at \(site); rebuilding codec context at next keyframe (\(nativeCodecErrorRebuilds)/4)")
         options.onPlaybackDiagnostic?("decoder rebuild reason=native-codec-error count=\(nativeCodecErrorRebuilds)")
         return true
     }

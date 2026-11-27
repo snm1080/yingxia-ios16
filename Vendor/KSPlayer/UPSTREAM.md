@@ -187,5 +187,54 @@ shaders for the RPU):
   `decoder rebuild reason=native-codec-error count=N`; past the
   budget the error surfaces exactly as before. Software decode,
   audio, and the user-facing error mapping are untouched.
+- Build 46 (2026-11-27) fixes build 45's absorption, which never
+  fired once on device, and adds the witness that proves it.
+  Forensics, from the code and Sam's build-45 diagnostics export
+  (5,644 lines; the error appears 72 times in the E005 pattern
+  family, with zero `decoder rebuild` lines anywhere):
+  * Where the surfaced error is built: `KSPlayerErrorDomain:13` is
+    `KSPlayerErrorCode.codecVideoReceiveFrame` (PlayerDefines.swift,
+    13th case), and the `KSPlayer.NativeCodec:<code>` underlying
+    error is wrapped from the decode completion's `AVError` in
+    `MEPlayerItemTrack.doDecode`'s failure path. The only sites in
+    the player that construct that error pair are
+    `FFmpegDecode.decodeFrame`'s send-packet failure
+    (FFmpegDecode.swift, `avcodec_send_packet`) and receive-frame
+    failure (`avcodec_receive_frame`) — exhaustive check:
+    `VideoToolboxDecode` wraps OSStatus codes instead (the export
+    shows its -12909 as a separate line), `DolbyVisionLayerProbe`
+    is software-only and swallows all errors, the resample/filter
+    completion cannot produce this pair, and `createContext`
+    failures throw codes 8/10, never 13. So build 45's hook WAS
+    consulted at both of its sites and returned false.
+  * Why it returned false: the error-code and media-type conditions
+    provably matched (the vendored shim defines
+    `swift_AVERROR_UNKNOWN = AVERROR_UNKNOWN` = -1313558101, and
+    code 13 is chosen only for the non-audio — video — track). The
+    failing condition was the third: `codecContext.hw_device_ctx`.
+    That field is assigned exactly once, inside the `get_format`
+    callback in AVFFmpegExtension.swift, and was read nowhere else
+    in the codebase; decoding runs frame-threaded
+    (`decoderOptions["threads"] = "auto"` in KSOptions), and the
+    export gives the counterfactual — build-45 sessions that had
+    just produced `AV_PIX_FMT_VIDEOTOOLBOX` frames through the
+    same decoder instance (`dv ffmpeg format=videotoolbox` +
+    `dv frame-dump` lines) failed after a seek with the error
+    still unabsorbed, repeatedly. Reading the field back is not a
+    reliable witness of VT activity under FFmpeg 8.1.
+  * Fix: the gate now uses state the decoder records itself —
+    `vtBackedVideoContext`, snapshotted in init from the exact
+    condition `createContext` uses to install the get_format
+    callback (video + hardware decode requested), and latched on
+    when a VideoToolbox-format frame is produced. The
+    `hw_device_ctx` read is gone. Every AVERROR_UNKNOWN sighting
+    at either call site first emits a witness line,
+    `dv nativecodec seen site=send-packet|receive-frame
+    absorbed=yes|no reason=vt-session-failure|not-vt-backed|
+    budget-exhausted|not-video code=-1313558101`, before the
+    caller acts on the decision, so the next export proves
+    coverage either way. Absorption mechanics, the budget of 4,
+    and all build-42/43/44/45 diagnostics are unchanged; software
+    decode and audio still surface the error exactly as before.
 
 This deviation must be re-applied after every future Vendor sync.
